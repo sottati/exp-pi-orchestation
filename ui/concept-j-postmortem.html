@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>pi-agent — Postmortem (Concept J)</title>
+<style>
+  :root {
+    --bg: #1A1A2E;
+    --card: #16213E;
+    --card-hover: #1a2847;
+    --error: #EF4444;
+    --error-dim: rgba(239, 68, 68, 0.15);
+    --warning: #F59E0B;
+    --warning-dim: rgba(245, 158, 11, 0.12);
+    --success: #10B981;
+    --text: #E2E8F0;
+    --text-dim: #94A3B8;
+    --text-muted: #64748B;
+    --border: #2D3A5C;
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    --radius: 8px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 14px;
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+
+  header {
+    background: linear-gradient(135deg, var(--card) 0%, #1a1a2e 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 24px 32px;
+  }
+
+  header .top-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+
+  header .brand {
+    font-size: 13px;
+    color: var(--text-muted);
+    letter-spacing: 0.5px;
+  }
+
+  header .brand span { color: var(--error); font-weight: 600; }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .badge-error {
+    background: var(--error-dim);
+    color: var(--error);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+  }
+
+  .badge-error::before {
+    content: '';
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--error);
+    animation: pulse-dot 2s infinite;
+  }
+
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  header h1 {
+    font-size: 22px;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+
+  header h1 code {
+    font-family: var(--mono);
+    color: var(--error);
+    background: var(--error-dim);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 18px;
+  }
+
+  .incident-meta {
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+
+  .incident-meta strong { color: var(--text); font-weight: 500; }
+
+  main {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 24px 32px 64px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+  }
+
+  .card-title {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text-muted);
+    margin-bottom: 16px;
+    font-weight: 600;
+  }
+
+  /* Error Summary */
+  .error-summary {
+    border-left: 3px solid var(--error);
+  }
+
+  .error-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+
+  .error-stat label {
+    display: block;
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+  }
+
+  .error-stat .val {
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  .error-stat .val.err { color: var(--error); }
+  .error-stat .val.warn { color: var(--warning); }
+
+  .error-message-box {
+    background: var(--error-dim);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    border-radius: 6px;
+    padding: 12px 16px;
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--error);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .error-message-box .icon { font-size: 18px; flex-shrink: 0; }
+
+  /* Attempt Timeline */
+  .timeline-bar {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 20px;
+    align-items: stretch;
+  }
+
+  .attempt-block {
+    flex: 1;
+    background: rgba(239, 68, 68, 0.06);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    border-radius: 6px;
+    padding: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+  }
+
+  .attempt-block:hover {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.4);
+  }
+
+  .attempt-block.selected {
+    border-color: var(--error);
+    background: rgba(239, 68, 68, 0.15);
+    box-shadow: 0 0 12px rgba(239, 68, 68, 0.15);
+  }
+
+  .attempt-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .attempt-label .x-mark {
+    color: var(--error);
+    font-size: 16px;
+    font-weight: 700;
+  }
+
+  .attempt-bar-track {
+    height: 6px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 3px;
+    overflow: hidden;
+    display: flex;
+  }
+
+  .attempt-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+  }
+
+  .fill-started { background: var(--success); flex: 1; }
+  .fill-tool { background: var(--warning); flex: 3; }
+  .fill-error { background: var(--error); flex: 1; }
+
+  .attempt-dur {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 6px;
+    font-family: var(--mono);
+  }
+
+  /* Trace Events */
+  .trace-list { display: flex; flex-direction: column; gap: 2px; }
+
+  .trace-event {
+    display: grid;
+    grid-template-columns: 100px 140px 1fr auto;
+    gap: 12px;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 13px;
+    align-items: center;
+    transition: background 0.15s;
+  }
+
+  .trace-event:hover { background: rgba(255,255,255,0.03); }
+
+  .trace-ts {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .trace-type {
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    text-align: center;
+    font-weight: 500;
+  }
+
+  .trace-type.task_started { background: rgba(16,185,129,0.15); color: var(--success); }
+  .trace-type.tool_start { background: var(--warning-dim); color: var(--warning); }
+  .trace-type.tool_end_ok { background: rgba(16,185,129,0.15); color: var(--success); }
+  .trace-type.tool_end_err { background: var(--error-dim); color: var(--error); }
+  .trace-type.task_failed { background: var(--error-dim); color: var(--error); font-weight: 700; }
+
+  .trace-detail { color: var(--text-dim); }
+  .trace-detail .err-text { color: var(--error); font-family: var(--mono); font-size: 12px; }
+
+  .trace-agent {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-align: right;
+    font-family: var(--mono);
+  }
+
+  /* Narrative */
+  .narrative {
+    color: var(--text-dim);
+    line-height: 1.8;
+    font-size: 14px;
+  }
+
+  .narrative strong { color: var(--text); }
+  .narrative code {
+    font-family: var(--mono);
+    background: rgba(255,255,255,0.06);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 13px;
+    color: var(--warning);
+  }
+
+  /* Thread Messages */
+  .thread-messages { display: flex; flex-direction: column; gap: 10px; }
+
+  .thread-msg {
+    display: flex;
+    gap: 12px;
+    padding: 10px 14px;
+    border-radius: 6px;
+    background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(255,255,255,0.04);
+  }
+
+  .thread-msg .agent-tag {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--warning);
+    white-space: nowrap;
+    min-width: 80px;
+    padding-top: 2px;
+  }
+
+  .thread-msg .msg-body {
+    color: var(--text-dim);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .thread-msg .msg-body code {
+    font-family: var(--mono);
+    color: var(--error);
+    background: var(--error-dim);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 12px;
+  }
+
+  .thread-msg .msg-ts {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--mono);
+    margin-top: 4px;
+  }
+
+  /* Parallel Tasks */
+  .parallel-tasks {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  .par-task {
+    padding: 12px 16px;
+    background: rgba(255,255,255,0.02);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
+  .par-task .par-name {
+    font-weight: 600;
+    font-size: 13px;
+    margin-bottom: 4px;
+  }
+
+  .par-task .par-status {
+    font-size: 12px;
+    font-family: var(--mono);
+  }
+
+  .par-task .par-status.ok { color: var(--success); }
+  .par-task .par-status.running { color: var(--warning); }
+
+  /* Copy Button */
+  .btn-copy {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-copy:hover {
+    background: var(--card-hover);
+    border-color: var(--text-muted);
+  }
+
+  .btn-copy.copied {
+    border-color: var(--success);
+    color: var(--success);
+  }
+
+  .btn-copy svg { width: 16px; height: 16px; }
+
+  .actions-row {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+  }
+
+  /* Sections row */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+
+  @media (max-width: 800px) {
+    .error-grid { grid-template-columns: 1fr 1fr; }
+    .two-col { grid-template-columns: 1fr; }
+    .parallel-tasks { grid-template-columns: 1fr; }
+    .timeline-bar { flex-direction: column; }
+    main { padding: 16px; }
+    header { padding: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="top-row">
+    <div class="brand">pi-agent <span>postmortem</span></div>
+    <span class="badge badge-error">Failed — 3 Attempts</span>
+  </div>
+  <h1><code>task-4</code> Deploy to staging</h1>
+  <div class="incident-meta">
+    <span>Session <strong>ses_a7f2c</strong></span>
+    <span>Run <strong>run_0041</strong></span>
+    <span>Agent <strong>orchestrator</strong></span>
+    <span>Duration <strong>47.2s</strong> total</span>
+    <span>Opened <strong>2026-03-13 14:22:08 UTC</strong></span>
+  </div>
+</header>
+
+<main>
+  <!-- Error Summary Card -->
+  <div class="card error-summary">
+    <div class="card-title">Error Summary</div>
+    <div class="error-grid">
+      <div class="error-stat">
+        <label>Classification</label>
+        <div class="val err">Connection Error</div>
+      </div>
+      <div class="error-stat">
+        <label>Attempts</label>
+        <div class="val warn">3 / 3</div>
+      </div>
+      <div class="error-stat">
+        <label>Time to Failure</label>
+        <div class="val">47.2s</div>
+      </div>
+      <div class="error-stat">
+        <label>Agent</label>
+        <div class="val">code</div>
+      </div>
+    </div>
+    <div class="error-message-box">
+      <span class="icon">&#x26A0;</span>
+      <span>ECONNREFUSED 127.0.0.1:5432 — Connection refused. Is the database server running on host "127.0.0.1" and accepting TCP/IP connections on port 5432?</span>
+    </div>
+  </div>
+
+  <!-- Attempt Timeline -->
+  <div class="card">
+    <div class="card-title">Attempt Timeline</div>
+    <div class="timeline-bar" id="timeline-bar">
+      <div class="attempt-block selected" data-attempt="0">
+        <div class="attempt-label">Attempt 1 <span class="x-mark">&times;</span></div>
+        <div class="attempt-bar-track">
+          <div class="attempt-bar-fill fill-started"></div>
+          <div class="attempt-bar-fill fill-tool"></div>
+          <div class="attempt-bar-fill fill-error"></div>
+        </div>
+        <div class="attempt-dur">14:22:08 — 14:22:19 (11.4s)</div>
+      </div>
+      <div class="attempt-block" data-attempt="1">
+        <div class="attempt-label">Attempt 2 <span class="x-mark">&times;</span></div>
+        <div class="attempt-bar-track">
+          <div class="attempt-bar-fill fill-started"></div>
+          <div class="attempt-bar-fill fill-tool"></div>
+          <div class="attempt-bar-fill fill-error"></div>
+        </div>
+        <div class="attempt-dur">14:22:22 — 14:22:37 (15.1s)</div>
+      </div>
+      <div class="attempt-block" data-attempt="2">
+        <div class="attempt-label">Attempt 3 <span class="x-mark">&times;</span></div>
+        <div class="attempt-bar-track">
+          <div class="attempt-bar-fill fill-started"></div>
+          <div class="attempt-bar-fill fill-tool"></div>
+          <div class="attempt-bar-fill fill-error"></div>
+        </div>
+        <div class="attempt-dur">14:22:40 — 14:22:55 (15.7s)</div>
+      </div>
+    </div>
+    <div class="trace-list" id="trace-list"></div>
+  </div>
+
+  <!-- What Happened + Correlation -->
+  <div class="two-col">
+    <div class="card">
+      <div class="card-title">What Happened</div>
+      <div class="narrative">
+        The <strong>orchestrator</strong> agent delegated <code>task-4</code> ("Deploy to staging") to the
+        <strong>code</strong> agent. The code agent invoked <code>deploy_exec</code>, which attempted to connect
+        to a PostgreSQL instance at <code>127.0.0.1:5432</code> for pre-deploy migration checks.<br><br>
+        The connection was <strong>refused on all 3 attempts</strong>, with consistent <code>ECONNREFUSED</code>
+        errors and no change in behavior between retries. The retry backoff was ~3s / ~3s, suggesting
+        fixed-interval retries without jitter.<br><br>
+        <strong>Root cause:</strong> The PostgreSQL service was not running on the target host. No connectivity
+        was established during any attempt — the failure is deterministic, not transient.
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Correlation — Parallel Tasks</div>
+      <div class="parallel-tasks">
+        <div class="par-task">
+          <div class="par-name">task-2 — Lint codebase</div>
+          <div class="par-status ok">completed (8.3s)</div>
+        </div>
+        <div class="par-task">
+          <div class="par-name">task-3 — Run test suite</div>
+          <div class="par-status ok">completed (22.1s)</div>
+        </div>
+        <div class="par-task">
+          <div class="par-name">task-5 — Notify Slack</div>
+          <div class="par-status running">blocked (awaiting task-4)</div>
+        </div>
+        <div class="par-task">
+          <div class="par-name">task-6 — Update changelog</div>
+          <div class="par-status ok">completed (3.4s)</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Thread Messages -->
+  <div class="card">
+    <div class="card-title">Related Thread Messages</div>
+    <div class="thread-messages" id="thread-messages"></div>
+  </div>
+
+  <!-- Actions -->
+  <div class="actions-row">
+    <button class="btn-copy" id="btn-copy" onclick="copyReport()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+        <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+      </svg>
+      Copy Postmortem Report
+    </button>
+  </div>
+</main>
+
+<script>
+// ---- Mock Data ----
+
+const task = {
+  jobId: "job_0041_4",
+  agentId: "code",
+  task: "Deploy to staging",
+  status: "failed",
+  attempts: 3,
+  createdAt: "2026-03-13T14:22:05.112Z",
+  startedAt: "2026-03-13T14:22:08.330Z",
+  finishedAt: "2026-03-13T14:22:55.530Z",
+  error: "ECONNREFUSED 127.0.0.1:5432"
+};
+
+const attempts = [
+  {
+    label: "Attempt 1",
+    traces: [
+      { eventId: "ev_4001", timestamp: "14:22:08.330", type: "task_started", status: "ok", agentId: "code" },
+      { eventId: "ev_4002", timestamp: "14:22:08.812", type: "tool_start", status: "ok", agentId: "code", toolName: "deploy_exec" },
+      { eventId: "ev_4003", timestamp: "14:22:18.934", type: "tool_end", status: "error", agentId: "code", toolName: "deploy_exec", error: "ECONNREFUSED 127.0.0.1:5432" },
+      { eventId: "ev_4004", timestamp: "14:22:19.710", type: "task_failed", status: "error", agentId: "code", error: "Connection refused (attempt 1/3)" }
+    ]
+  },
+  {
+    label: "Attempt 2",
+    traces: [
+      { eventId: "ev_4005", timestamp: "14:22:22.840", type: "task_started", status: "ok", agentId: "code" },
+      { eventId: "ev_4006", timestamp: "14:22:23.105", type: "tool_start", status: "ok", agentId: "code", toolName: "deploy_exec" },
+      { eventId: "ev_4007", timestamp: "14:22:36.221", type: "tool_end", status: "error", agentId: "code", toolName: "deploy_exec", error: "ECONNREFUSED 127.0.0.1:5432" },
+      { eventId: "ev_4008", timestamp: "14:22:37.009", type: "task_failed", status: "error", agentId: "code", error: "Connection refused (attempt 2/3)" }
+    ]
+  },
+  {
+    label: "Attempt 3",
+    traces: [
+      { eventId: "ev_4009", timestamp: "14:22:40.190", type: "task_started", status: "ok", agentId: "code" },
+      { eventId: "ev_4010", timestamp: "14:22:40.448", type: "tool_start", status: "ok", agentId: "code", toolName: "deploy_exec" },
+      { eventId: "ev_4011", timestamp: "14:22:54.817", type: "tool_end", status: "error", agentId: "code", toolName: "deploy_exec", error: "ECONNREFUSED 127.0.0.1:5432" },
+      { eventId: "ev_4012", timestamp: "14:22:55.530", type: "task_failed", status: "error", agentId: "code", error: "All 3 attempts exhausted — task permanently failed" }
+    ]
+  }
+];
+
+const envelopes = [
+  { envelopeId: "env_0091", fromAgentId: "orchestrator", toAgentId: "code", content: "Deploy current build to staging. Run migrations first, then swap the deployment.", timestamp: "14:22:05.112" },
+  { envelopeId: "env_0092", fromAgentId: "code", toAgentId: "orchestrator", content: "Starting deploy_exec. Connecting to database for pre-deploy migration check...", timestamp: "14:22:08.812" },
+  { envelopeId: "env_0093", fromAgentId: "code", toAgentId: "orchestrator", content: "Attempt 1 failed: <code>ECONNREFUSED 127.0.0.1:5432</code>. Database unreachable. Retrying in 3s.", timestamp: "14:22:19.710" },
+  { envelopeId: "env_0094", fromAgentId: "code", toAgentId: "orchestrator", content: "Attempt 2 failed: same error. Database still unreachable. Retrying in 3s.", timestamp: "14:22:37.009" },
+  { envelopeId: "env_0095", fromAgentId: "code", toAgentId: "orchestrator", content: "Attempt 3 failed. All retries exhausted. <code>ECONNREFUSED 127.0.0.1:5432</code>. Task permanently failed.", timestamp: "14:22:55.530" },
+  { envelopeId: "env_0096", fromAgentId: "orchestrator", toAgentId: "user", content: "Deploy to staging failed after 3 attempts. PostgreSQL at 127.0.0.1:5432 is unreachable. Downstream task-5 (Notify Slack) is blocked.", timestamp: "14:22:56.010" }
+];
+
+// ---- Render ----
+
+function renderTraces(attemptIndex) {
+  const list = document.getElementById("trace-list");
+  const traces = attempts[attemptIndex].traces;
+  list.innerHTML = traces.map(t => {
+    const typeCls = t.type === "tool_end"
+      ? (t.status === "error" ? "tool_end_err" : "tool_end_ok")
+      : t.type;
+    const detail = t.error
+      ? `<span class="err-text">${t.error}</span>`
+      : (t.toolName ? t.toolName : "&mdash;");
+    return `<div class="trace-event">
+      <span class="trace-ts">${t.timestamp}</span>
+      <span class="trace-type ${typeCls}">${t.type}</span>
+      <span class="trace-detail">${detail}</span>
+      <span class="trace-agent">${t.agentId || ""}</span>
+    </div>`;
+  }).join("");
+}
+
+function renderMessages() {
+  const el = document.getElementById("thread-messages");
+  el.innerHTML = envelopes.map(e => {
+    return `<div class="thread-msg">
+      <div class="agent-tag">${e.fromAgentId}</div>
+      <div>
+        <div class="msg-body">${e.content}</div>
+        <div class="msg-ts">${e.timestamp} &middot; ${e.envelopeId} &rarr; ${e.toAgentId}</div>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+// Timeline click
+document.getElementById("timeline-bar").addEventListener("click", (ev) => {
+  const block = ev.target.closest(".attempt-block");
+  if (!block) return;
+  document.querySelectorAll(".attempt-block").forEach(b => b.classList.remove("selected"));
+  block.classList.add("selected");
+  renderTraces(parseInt(block.dataset.attempt));
+});
+
+// Copy report
+function copyReport() {
+  const lines = [
+    `# Postmortem: task-4 — Deploy to staging`,
+    ``,
+    `**Status:** Failed after ${task.attempts} attempts`,
+    `**Agent:** ${task.agentId}`,
+    `**Error:** ${task.error}`,
+    `**Classification:** Connection Error — ECONNREFUSED`,
+    `**Duration:** 47.2s (${task.startedAt} → ${task.finishedAt})`,
+    `**Session:** ses_a7f2c | **Run:** run_0041`,
+    ``,
+    `## Timeline`,
+    ``
+  ];
+  attempts.forEach((a, i) => {
+    lines.push(`### ${a.label}`);
+    a.traces.forEach(t => {
+      const detail = t.error || t.toolName || "";
+      lines.push(`- \`${t.timestamp}\` **${t.type}** ${detail}`);
+    });
+    lines.push("");
+  });
+  lines.push(`## Root Cause`);
+  lines.push(`PostgreSQL service not running on 127.0.0.1:5432. All 3 connection attempts were deterministically refused — not a transient failure.`);
+  lines.push("");
+  lines.push(`## Thread Messages`);
+  lines.push("");
+  envelopes.forEach(e => {
+    const clean = e.content.replace(/<\/?code>/g, "`");
+    lines.push(`- **${e.fromAgentId} → ${e.toAgentId}** (${e.timestamp}): ${clean}`);
+  });
+  lines.push("");
+  lines.push(`## Parallel Tasks`);
+  lines.push(`- task-2 Lint codebase — completed (8.3s)`);
+  lines.push(`- task-3 Run test suite — completed (22.1s)`);
+  lines.push(`- task-5 Notify Slack — blocked (awaiting task-4)`);
+  lines.push(`- task-6 Update changelog — completed (3.4s)`);
+  lines.push("");
+  lines.push(`---`);
+  lines.push(`Generated by pi-agent postmortem • ${new Date().toISOString()}`);
+
+  const text = lines.join("\n");
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById("btn-copy");
+    btn.classList.add("copied");
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg> Copied!`;
+    setTimeout(() => {
+      btn.classList.remove("copied");
+      btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg> Copy Postmortem Report`;
+    }, 2000);
+  });
+}
+
+// Init
+renderTraces(0);
+renderMessages();
+</script>
+</body>
+</html>

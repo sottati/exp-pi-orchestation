@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>pi-agent — Live Monitor (Concept K)</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #09090B;
+    --card-bg: #18181B;
+    --card-bg-hover: #1F1F23;
+    --border: #27272A;
+    --text: #FAFAFA;
+    --text-muted: #A1A1AA;
+    --text-faint: #71717A;
+    --green: #22C55E;
+    --yellow: #EAB308;
+    --red: #EF4444;
+    --purple: #8B5CF6;
+    --teal: #10B981;
+    --amber: #F59E0B;
+    --radius: 10px;
+    --gap: 12px;
+  }
+
+  body {
+    background: var(--bg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 13px;
+    color: var(--text);
+    height: 100vh;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    overflow: hidden;
+    padding: var(--gap);
+    gap: var(--gap);
+  }
+
+  /* ── Header ── */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 4px;
+  }
+  .header h1 { font-size: 15px; font-weight: 600; letter-spacing: -0.02em; }
+  .header h1 span { color: var(--text-faint); font-weight: 400; }
+  .header .status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--green);
+    display: inline-block;
+    margin-right: 8px;
+    animation: pulse-dot 2s infinite;
+  }
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  .header .session { color: var(--text-faint); font-size: 12px; }
+
+  /* ── Main Area ── */
+  .main {
+    display: grid;
+    grid-template-columns: 1fr 280px;
+    grid-template-rows: auto 1fr;
+    gap: var(--gap);
+    min-height: 0;
+  }
+
+  /* ── Metric Cards Grid ── */
+  .metrics {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: var(--gap);
+  }
+  .metric-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    transition: border-color 0.6s ease, background 0.2s;
+    position: relative;
+    overflow: hidden;
+  }
+  .metric-card:hover { background: var(--card-bg-hover); }
+  .metric-card .label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .metric-card .value-row { display: flex; align-items: baseline; gap: 6px; }
+  .metric-card .value { font-size: 26px; font-weight: 700; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+  .metric-card .unit { font-size: 12px; color: var(--text-faint); }
+  .metric-card .trend { font-size: 13px; margin-left: auto; }
+  .trend.up { color: var(--red); }
+  .trend.down { color: var(--green); }
+  .trend.flat { color: var(--text-faint); }
+  .sparkline-wrap { height: 32px; margin-top: 4px; }
+  .sparkline-wrap canvas { width: 100%; height: 100%; display: block; }
+
+  /* ── Activity Feed ── */
+  .feed {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .feed-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    flex-shrink: 0;
+  }
+  .feed-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+  }
+  .feed-item {
+    padding: 8px 16px;
+    display: grid;
+    grid-template-columns: 60px 80px 1fr;
+    gap: 10px;
+    align-items: center;
+    font-size: 12px;
+    border-bottom: 1px solid #1E1E22;
+    animation: fade-in 0.3s ease;
+  }
+  @keyframes fade-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .feed-item .ts { color: var(--text-faint); font-variant-numeric: tabular-nums; }
+  .feed-item .type {
+    font-weight: 600;
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    text-align: center;
+    white-space: nowrap;
+  }
+  .type-tool_start { background: #1E3A5F; color: #60A5FA; }
+  .type-tool_end { background: #1A3324; color: #4ADE80; }
+  .type-llm_call { background: #2D1B4E; color: #A78BFA; }
+  .type-task_queued { background: #3B2C0A; color: #FACC15; }
+  .type-task_done { background: #1A3324; color: #4ADE80; }
+  .type-error { background: #3B1111; color: #FCA5A5; }
+  .feed-item .detail { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ── Agent Status Panel ── */
+  .agents-panel {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .agents-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    flex-shrink: 0;
+  }
+  .agents-list { padding: 8px 16px; display: flex; flex-direction: column; gap: 12px; }
+  .agent-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 0;
+  }
+  .agent-circle {
+    width: 36px; height: 36px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; font-weight: 700; color: #fff;
+    position: relative;
+    flex-shrink: 0;
+  }
+  .agent-circle.active::after {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: 50%;
+    border: 2px solid currentColor;
+    opacity: 0.4;
+    animation: heartbeat 2s ease-in-out infinite;
+  }
+  @keyframes heartbeat {
+    0%, 100% { transform: scale(1); opacity: 0.4; }
+    50% { transform: scale(1.15); opacity: 0; }
+  }
+  .agent-info { flex: 1; }
+  .agent-name { font-size: 13px; font-weight: 600; }
+  .agent-status-text { font-size: 11px; color: var(--text-faint); margin-top: 1px; }
+  .agent-badge {
+    font-size: 10px; padding: 2px 8px; border-radius: 999px;
+    font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .badge-active { background: #1A3324; color: var(--green); }
+  .badge-idle { background: #27272A; color: var(--text-faint); }
+
+  /* ── Agent Stats ── */
+  .agent-stats {
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+    margin-top: auto;
+  }
+  .agent-stats .stat-row {
+    display: flex; justify-content: space-between;
+    font-size: 12px; color: var(--text-faint);
+    padding: 3px 0;
+  }
+  .agent-stats .stat-row .stat-val { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+  /* ── Alert Bar ── */
+  .alert-bar {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 42px;
+    transition: border-color 0.4s;
+  }
+  .alert-bar.warn { border-color: var(--yellow); }
+  .alert-bar.crit { border-color: var(--red); }
+  .alert-icon { font-size: 14px; flex-shrink: 0; }
+  .alert-messages { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; }
+  .alert-msg { display: flex; align-items: center; gap: 6px; }
+  .alert-msg .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .alert-msg.warn .dot { background: var(--yellow); }
+  .alert-msg.crit .dot { background: var(--red); }
+  .alert-msg span { color: var(--text-muted); }
+  .alert-clear { color: var(--text-faint); font-size: 11px; margin-left: auto; }
+
+  /* ── Scrollbar ── */
+  .feed-list::-webkit-scrollbar { width: 4px; }
+  .feed-list::-webkit-scrollbar-track { background: transparent; }
+  .feed-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* ── Responsive ── */
+  @media (max-width: 900px) {
+    .metrics { grid-template-columns: repeat(3, 1fr); }
+    .main { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1><span class="status-dot"></span>pi-agent <span>— Live Monitor (Concept K)</span></h1>
+  <div class="session">session abc-1f2e</div>
+</div>
+
+<div class="main">
+  <div class="metrics" id="metrics"></div>
+  <div class="feed">
+    <div class="feed-header">Activity Feed</div>
+    <div class="feed-list" id="feed-list"></div>
+  </div>
+  <div class="agents-panel">
+    <div class="agents-header">Agent Status</div>
+    <div class="agents-list" id="agents-list"></div>
+    <div class="agent-stats" id="agent-stats"></div>
+  </div>
+</div>
+
+<div class="alert-bar" id="alert-bar">
+  <div class="alert-icon">&#9888;</div>
+  <div class="alert-messages" id="alert-messages"></div>
+  <div class="alert-clear">auto-dismiss</div>
+</div>
+
+<script>
+// ── State ──
+const HISTORY_LEN = 20;
+
+const state = {
+  metrics: {
+    tasksMin:     { label: 'Tasks / min',    value: 2.4,  unit: '/min', history: [], thresholds: [5, 8],   higherBad: true,  fmt: v => v.toFixed(1) },
+    errorRate:    { label: 'Error Rate',     value: 12,   unit: '%',    history: [], thresholds: [10, 25], higherBad: true,  fmt: v => v.toFixed(1) },
+    p95Latency:   { label: 'P95 Latency',    value: 3.2,  unit: 's',    history: [], thresholds: [3, 6],   higherBad: true,  fmt: v => v.toFixed(1) },
+    activeAgents: { label: 'Active Agents',  value: 2,    unit: '/ 3',  history: [], thresholds: [1, 0],   higherBad: false, fmt: v => Math.round(v) },
+    queueDepth:   { label: 'Queue Depth',    value: 1,    unit: 'tasks',history: [], thresholds: [5, 10],  higherBad: true,  fmt: v => Math.round(v) },
+    uptime:       { label: 'Uptime',         value: 272,  unit: '',     history: [], thresholds: [null],    higherBad: false, fmt: v => fmtUptime(v) },
+  },
+  agents: [
+    { id: 'orchestrator', label: 'Orchestrator', color: '#8B5CF6', status: 'active', tasks: 14, lastSeen: 'now' },
+    { id: 'code',         label: 'Code',         color: '#10B981', status: 'active', tasks: 8,  lastSeen: 'now' },
+    { id: 'math',         label: 'Math',         color: '#F59E0B', status: 'idle',   tasks: 3,  lastSeen: '2m ago' },
+  ],
+  feed: [],
+  startTime: Date.now(),
+};
+
+function fmtUptime(secs) {
+  const m = Math.floor(secs / 60);
+  const s = Math.floor(secs % 60);
+  return `${m}m ${String(s).padStart(2, '0')}s`;
+}
+
+function fmtTime(d) {
+  return d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+// ── Threshold color ──
+function thresholdColor(metric) {
+  const { value, thresholds, higherBad } = metric;
+  if (!thresholds || thresholds[0] === null) return 'var(--border)';
+  const [warn, crit] = thresholds;
+  if (higherBad) {
+    if (value >= crit) return 'var(--red)';
+    if (value >= warn) return 'var(--yellow)';
+    return 'var(--green)';
+  } else {
+    if (value <= crit) return 'var(--red)';
+    if (value <= warn) return 'var(--yellow)';
+    return 'var(--green)';
+  }
+}
+
+function trendArrow(history) {
+  if (history.length < 3) return { arrow: '—', cls: 'flat' };
+  const recent = history.slice(-3);
+  const diff = recent[2] - recent[0];
+  if (Math.abs(diff) < 0.15) return { arrow: '—', cls: 'flat' };
+  return diff > 0 ? { arrow: '\u2191', cls: 'up' } : { arrow: '\u2193', cls: 'down' };
+}
+
+// ── Sparkline drawing ──
+function drawSparkline(canvas, history, color) {
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, h);
+
+  if (history.length < 2) return;
+  const min = Math.min(...history) * 0.9;
+  const max = Math.max(...history) * 1.1 || 1;
+  const range = max - min || 1;
+
+  ctx.beginPath();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.lineJoin = 'round';
+
+  for (let i = 0; i < history.length; i++) {
+    const x = (i / (HISTORY_LEN - 1)) * w;
+    const y = h - ((history[i] - min) / range) * h;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // gradient fill
+  const last = history.length - 1;
+  const lx = (last / (HISTORY_LEN - 1)) * w;
+  const ly = h - ((history[last] - min) / range) * h;
+  ctx.lineTo(lx, h);
+  ctx.lineTo(0, h);
+  ctx.closePath();
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, color + '30');
+  grad.addColorStop(1, color + '00');
+  ctx.fillStyle = grad;
+  ctx.fill();
+}
+
+// ── Mock feed events ──
+const EVENT_TYPES = ['tool_start', 'tool_end', 'llm_call', 'task_queued', 'task_done', 'error'];
+const EVENT_DETAILS = {
+  tool_start: ['execute_code starting', 'read_file analysis.ts', 'web_search query', 'delegate_task math'],
+  tool_end:   ['execute_code completed (0.8s)', 'read_file done (0.1s)', 'web_search done (1.2s)', 'delegate_task resolved'],
+  llm_call:   ['orchestrator turn #3', 'code agent reasoning', 'planning next step', 'evaluating results'],
+  task_queued: ['compute factorial(20)', 'analyze sentiment', 'parse CSV data', 'validate schema'],
+  task_done:  ['factorial result: 2.4e18', 'sentiment: positive', 'CSV parsed: 142 rows', 'schema valid'],
+  error:      ['timeout after 5s', 'rate limit exceeded', 'parse error line 42', 'connection reset'],
+};
+const AGENT_IDS = ['orchestrator', 'code', 'math'];
+
+function randomEvent() {
+  const typeIdx = Math.random() < 0.08 ? 5 : Math.floor(Math.random() * 5);
+  const type = EVENT_TYPES[typeIdx];
+  const details = EVENT_DETAILS[type];
+  const agentId = type === 'error' ? AGENT_IDS[Math.floor(Math.random() * 3)]
+    : type.startsWith('task') ? 'orchestrator'
+    : AGENT_IDS[Math.floor(Math.random() * 2)];
+  return {
+    time: new Date(),
+    type,
+    agent: agentId,
+    detail: details[Math.floor(Math.random() * details.length)],
+  };
+}
+
+// ── Seed initial feed ──
+for (let i = 0; i < 8; i++) {
+  const ev = randomEvent();
+  ev.time = new Date(Date.now() - (8 - i) * 2500);
+  state.feed.push(ev);
+}
+
+// ── Seed metric history ──
+Object.values(state.metrics).forEach(m => {
+  for (let i = 0; i < 10; i++) {
+    m.history.push(m.value + (Math.random() - 0.5) * m.value * 0.2);
+  }
+});
+
+// ── Render Metrics ──
+function renderMetrics() {
+  const container = document.getElementById('metrics');
+  container.innerHTML = '';
+  for (const [key, m] of Object.entries(state.metrics)) {
+    const color = thresholdColor(m);
+    const { arrow, cls } = key === 'uptime' ? { arrow: '', cls: '' } : trendArrow(m.history);
+    const card = document.createElement('div');
+    card.className = 'metric-card';
+    card.style.borderColor = color;
+    card.innerHTML = `
+      <div class="label">${m.label}</div>
+      <div class="value-row">
+        <div class="value">${m.fmt(m.value)}</div>
+        <div class="unit">${m.unit}</div>
+        ${arrow ? `<div class="trend ${cls}">${arrow}</div>` : ''}
+      </div>
+      <div class="sparkline-wrap"><canvas id="spark-${key}"></canvas></div>
+    `;
+    container.appendChild(card);
+  }
+  // draw sparklines
+  for (const [key, m] of Object.entries(state.metrics)) {
+    const canvas = document.getElementById(`spark-${key}`);
+    if (canvas) {
+      const c = thresholdColor(m);
+      const resolvedColor = c.startsWith('var(')
+        ? getComputedStyle(document.documentElement).getPropertyValue(c.slice(4, -1)).trim()
+        : c;
+      drawSparkline(canvas, m.history, resolvedColor || '#22C55E');
+    }
+  }
+}
+
+// ── Render Feed ──
+function renderFeed() {
+  const list = document.getElementById('feed-list');
+  list.innerHTML = '';
+  const items = state.feed.slice(-10).reverse();
+  for (const ev of items) {
+    const el = document.createElement('div');
+    el.className = 'feed-item';
+    el.innerHTML = `
+      <span class="ts">${fmtTime(ev.time)}</span>
+      <span class="type type-${ev.type}">${ev.type.replace('_', ' ')}</span>
+      <span class="detail"><strong>${ev.agent}</strong> &middot; ${ev.detail}</span>
+    `;
+    list.appendChild(el);
+  }
+}
+
+// ── Render Agents ──
+function renderAgents() {
+  const list = document.getElementById('agents-list');
+  list.innerHTML = '';
+  for (const a of state.agents) {
+    const isActive = a.status === 'active';
+    const initials = a.label.charAt(0);
+    const el = document.createElement('div');
+    el.className = 'agent-row';
+    el.innerHTML = `
+      <div class="agent-circle ${isActive ? 'active' : ''}" style="background:${a.color}; color:${a.color}">${initials}</div>
+      <div class="agent-info">
+        <div class="agent-name">${a.label}</div>
+        <div class="agent-status-text">${a.tasks} tasks completed &middot; ${a.lastSeen}</div>
+      </div>
+      <div class="agent-badge ${isActive ? 'badge-active' : 'badge-idle'}">${a.status}</div>
+    `;
+    list.appendChild(el);
+  }
+  // stats
+  const stats = document.getElementById('agent-stats');
+  const total = state.agents.reduce((s, a) => s + a.tasks, 0);
+  const active = state.agents.filter(a => a.status === 'active').length;
+  stats.innerHTML = `
+    <div class="stat-row"><span>Total tasks completed</span><span class="stat-val">${total}</span></div>
+    <div class="stat-row"><span>Active / Total</span><span class="stat-val">${active} / ${state.agents.length}</span></div>
+    <div class="stat-row"><span>Mean tasks/agent</span><span class="stat-val">${(total / state.agents.length).toFixed(1)}</span></div>
+  `;
+}
+
+// ── Render Alerts ──
+function renderAlerts() {
+  const bar = document.getElementById('alert-bar');
+  const msgs = document.getElementById('alert-messages');
+  const alerts = [];
+  const m = state.metrics;
+
+  if (m.errorRate.value >= 25) alerts.push({ text: `Error rate critical: ${m.errorRate.fmt(m.errorRate.value)}%`, level: 'crit' });
+  else if (m.errorRate.value >= 10) alerts.push({ text: `Error rate elevated: ${m.errorRate.fmt(m.errorRate.value)}%`, level: 'warn' });
+
+  if (m.p95Latency.value >= 6) alerts.push({ text: `P95 latency critical: ${m.p95Latency.fmt(m.p95Latency.value)}s`, level: 'crit' });
+  else if (m.p95Latency.value >= 3) alerts.push({ text: `P95 latency high: ${m.p95Latency.fmt(m.p95Latency.value)}s`, level: 'warn' });
+
+  if (m.queueDepth.value >= 10) alerts.push({ text: `Queue depth critical: ${m.queueDepth.fmt(m.queueDepth.value)}`, level: 'crit' });
+  else if (m.queueDepth.value >= 5) alerts.push({ text: `Queue depth elevated: ${m.queueDepth.fmt(m.queueDepth.value)}`, level: 'warn' });
+
+  const hasCrit = alerts.some(a => a.level === 'crit');
+  bar.className = 'alert-bar' + (hasCrit ? ' crit' : alerts.length ? ' warn' : '');
+
+  if (alerts.length === 0) {
+    msgs.innerHTML = '<span style="color:var(--text-faint)">All systems nominal</span>';
+  } else {
+    msgs.innerHTML = alerts.map(a =>
+      `<div class="alert-msg ${a.level}"><div class="dot"></div><span>${a.text}</span></div>`
+    ).join('');
+  }
+}
+
+// ── Update loop ──
+function jitter(val, pct) {
+  return val + (Math.random() - 0.5) * val * pct;
+}
+
+function pushHistory(metric, val) {
+  metric.history.push(val);
+  if (metric.history.length > HISTORY_LEN) metric.history.shift();
+}
+
+function tick() {
+  const m = state.metrics;
+
+  // fluctuate metrics
+  m.tasksMin.value = Math.max(0.1, jitter(m.tasksMin.value, 0.25));
+  pushHistory(m.tasksMin, m.tasksMin.value);
+
+  m.errorRate.value = Math.max(0, Math.min(40, jitter(m.errorRate.value, 0.3)));
+  pushHistory(m.errorRate, m.errorRate.value);
+
+  m.p95Latency.value = Math.max(0.2, jitter(m.p95Latency.value, 0.2));
+  pushHistory(m.p95Latency, m.p95Latency.value);
+
+  // agents occasionally toggle
+  if (Math.random() < 0.1) {
+    const mathAgent = state.agents[2];
+    mathAgent.status = mathAgent.status === 'idle' ? 'active' : 'idle';
+    mathAgent.lastSeen = mathAgent.status === 'active' ? 'now' : '0s ago';
+  }
+  m.activeAgents.value = state.agents.filter(a => a.status === 'active').length;
+  pushHistory(m.activeAgents, m.activeAgents.value);
+
+  m.queueDepth.value = Math.max(0, Math.round(jitter(Math.max(m.queueDepth.value, 0.5), 0.6)));
+  pushHistory(m.queueDepth, m.queueDepth.value);
+
+  // uptime ticks in real time (handled separately)
+  m.uptime.value = 272 + (Date.now() - state.startTime) / 1000;
+  pushHistory(m.uptime, m.uptime.value);
+
+  // increment task counters occasionally
+  if (Math.random() < 0.3) {
+    const a = state.agents[Math.floor(Math.random() * state.agents.filter(x => x.status === 'active').length)];
+    if (a) a.tasks++;
+  }
+
+  // new feed event
+  state.feed.push(randomEvent());
+  if (state.feed.length > 50) state.feed.shift();
+
+  renderMetrics();
+  renderFeed();
+  renderAgents();
+  renderAlerts();
+}
+
+// ── Uptime real-time ticker (every second) ──
+function tickUptime() {
+  const m = state.metrics.uptime;
+  m.value = 272 + (Date.now() - state.startTime) / 1000;
+  // update only the uptime card value display
+  const cards = document.querySelectorAll('.metric-card');
+  if (cards[5]) {
+    const valEl = cards[5].querySelector('.value');
+    if (valEl) valEl.textContent = m.fmt(m.value);
+  }
+}
+
+// ── Init ──
+renderMetrics();
+renderFeed();
+renderAgents();
+renderAlerts();
+
+setInterval(tick, 2000);
+setInterval(tickUptime, 1000);
+</script>
+
+</body>
+</html>

@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>pi-agent — Session Replay (Concept I)</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0C0A09;
+    --bg-raised: #1C1917;
+    --bg-surface: #292524;
+    --accent: #A78BFA;
+    --accent-dim: rgba(167, 139, 250, 0.15);
+    --accent-glow: rgba(167, 139, 250, 0.3);
+    --text: #E7E5E4;
+    --text-muted: #A8A29E;
+    --text-faint: #78716C;
+    --border: #292524;
+    --green: #4ADE80;
+    --green-dim: rgba(74, 222, 128, 0.15);
+    --amber: #FBBF24;
+    --amber-dim: rgba(251, 191, 36, 0.15);
+    --panel-w: 300px;
+    --transport-h: 72px;
+    --header-h: 48px;
+  }
+
+  body {
+    background: var(--bg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 13px;
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── Header ── */
+  .header {
+    height: var(--header-h);
+    background: var(--bg-raised);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+  .header-title { font-weight: 600; font-size: 14px; color: var(--text); }
+  .header-sub { color: var(--text-faint); font-size: 12px; }
+  .header-badge {
+    margin-left: auto;
+    background: var(--accent-dim);
+    color: var(--accent);
+    padding: 2px 10px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+
+  /* ── Main layout ── */
+  .main { display: flex; flex: 1; overflow: hidden; }
+
+  /* ── Replay area ── */
+  .replay-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .message-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    scroll-behavior: smooth;
+  }
+  .message-list::-webkit-scrollbar { width: 4px; }
+  .message-list::-webkit-scrollbar-thumb { background: var(--bg-surface); border-radius: 2px; }
+
+  /* ── Chat messages ── */
+  .msg {
+    max-width: 520px;
+    padding: 10px 14px;
+    border-radius: 12px;
+    font-size: 13px;
+    line-height: 1.5;
+    opacity: 0;
+    animation-fill-mode: forwards;
+    animation-duration: 0.35s;
+    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .msg.visible { opacity: 1; }
+  .msg-left {
+    align-self: flex-start;
+    background: var(--bg-surface);
+    border-bottom-left-radius: 4px;
+    animation-name: slideLeft;
+  }
+  .msg-right {
+    align-self: flex-end;
+    background: var(--accent-dim);
+    border-bottom-right-radius: 4px;
+    animation-name: slideRight;
+  }
+  .msg-agent {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent);
+    margin-bottom: 3px;
+  }
+  .msg-content { color: var(--text); }
+  .msg-ts { font-size: 10px; color: var(--text-faint); margin-top: 4px; }
+
+  /* ── Delegation event ── */
+  .evt-delegation {
+    align-self: center;
+    background: var(--amber-dim);
+    border: 1px solid rgba(251, 191, 36, 0.25);
+    padding: 8px 18px;
+    border-radius: 20px;
+    font-size: 12px;
+    color: var(--amber);
+    text-align: center;
+    opacity: 0;
+    animation-fill-mode: forwards;
+    animation-duration: 0.5s;
+    animation-name: pulse;
+  }
+  .evt-delegation .evt-label { font-weight: 600; }
+
+  /* ── Task completion event ── */
+  .evt-completion {
+    align-self: center;
+    background: var(--green-dim);
+    border: 1px solid rgba(74, 222, 128, 0.25);
+    padding: 8px 18px;
+    border-radius: 20px;
+    font-size: 12px;
+    color: var(--green);
+    text-align: center;
+    opacity: 0;
+    animation-fill-mode: forwards;
+    animation-duration: 0.5s;
+    animation-name: pulse;
+  }
+  .evt-completion .check {
+    display: inline-block;
+    animation: checkPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    transform: scale(0);
+  }
+
+  @keyframes slideLeft {
+    from { opacity: 0; transform: translateX(-24px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes slideRight {
+    from { opacity: 0; transform: translateX(24px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes pulse {
+    0%   { opacity: 0; transform: scale(0.92); }
+    50%  { opacity: 1; transform: scale(1.04); }
+    100% { opacity: 1; transform: scale(1); }
+  }
+  @keyframes checkPop {
+    0%   { transform: scale(0) rotate(-20deg); }
+    100% { transform: scale(1) rotate(0); }
+  }
+
+  /* ── Transport controls ── */
+  .transport {
+    height: var(--transport-h);
+    background: var(--bg-raised);
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    gap: 16px;
+    flex-shrink: 0;
+  }
+  .btn-play {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, transform 0.1s;
+    flex-shrink: 0;
+  }
+  .btn-play:hover { background: #B89CFF; }
+  .btn-play:active { transform: scale(0.94); }
+  .btn-play svg { fill: #0C0A09; width: 14px; height: 14px; }
+
+  .scrubber-wrap {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .time-label { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; min-width: 36px; }
+  .scrubber {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 1;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--bg-surface);
+    outline: none;
+    cursor: pointer;
+  }
+  .scrubber::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid var(--bg-raised);
+    cursor: grab;
+    box-shadow: 0 0 6px var(--accent-glow);
+  }
+
+  .speed-group { display: flex; gap: 4px; flex-shrink: 0; }
+  .btn-speed {
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn-speed:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-speed.active {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  /* ── Side panel ── */
+  .side-panel {
+    width: var(--panel-w);
+    background: var(--bg-raised);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+  .panel-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+  }
+  .event-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 0;
+  }
+  .event-list::-webkit-scrollbar { width: 4px; }
+  .event-list::-webkit-scrollbar-thumb { background: var(--bg-surface); border-radius: 2px; }
+
+  .event-item {
+    padding: 8px 16px;
+    border-left: 3px solid transparent;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .event-item:hover { background: rgba(255,255,255,0.03); }
+  .event-item.active {
+    background: var(--accent-dim);
+    border-left-color: var(--accent);
+  }
+  .event-item.past { opacity: 0.5; }
+  .evt-icon {
+    width: 22px; height: 22px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .evt-icon.msg-icon { background: var(--accent-dim); color: var(--accent); }
+  .evt-icon.deleg-icon { background: var(--amber-dim); color: var(--amber); }
+  .evt-icon.done-icon { background: var(--green-dim); color: var(--green); }
+  .evt-info { flex: 1; min-width: 0; }
+  .evt-title { font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .evt-detail { font-size: 11px; color: var(--text-faint); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .evt-time { font-size: 10px; color: var(--text-faint); flex-shrink: 0; font-variant-numeric: tabular-nums; margin-top: 2px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-title">Session Replay</div>
+  <div class="header-sub">session_a1b2c3 — 10 events, 15.0s</div>
+  <div class="header-badge">Concept I</div>
+</div>
+
+<div class="main">
+  <div class="replay-area">
+    <div class="message-list" id="msgList"></div>
+    <div class="transport">
+      <button class="btn-play" id="btnPlay" title="Play / Pause">
+        <svg id="iconPlay" viewBox="0 0 16 16"><polygon points="4,2 14,8 4,14"/></svg>
+        <svg id="iconPause" viewBox="0 0 16 16" style="display:none"><rect x="3" y="2" width="3.5" height="12" rx="1"/><rect x="9.5" y="2" width="3.5" height="12" rx="1"/></svg>
+      </button>
+      <div class="scrubber-wrap">
+        <span class="time-label" id="timeCurrent">0.0s</span>
+        <input type="range" class="scrubber" id="scrubber" min="0" max="1000" value="0">
+        <span class="time-label" id="timeTotal">15.0s</span>
+      </div>
+      <div class="speed-group">
+        <button class="btn-speed active" data-speed="1">1x</button>
+        <button class="btn-speed" data-speed="2">2x</button>
+        <button class="btn-speed" data-speed="5">5x</button>
+        <button class="btn-speed" data-speed="10">10x</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="side-panel">
+    <div class="panel-header">Event Timeline</div>
+    <div class="event-list" id="evtList"></div>
+  </div>
+</div>
+
+<script>
+// ── Mock data ──
+const T0 = 0;
+const events = [
+  { id: 'e01', type: 'message', envelopeId: 'env-001', threadId: 'th-main', fromAgentId: 'user', toAgentId: 'orchestrator', content: 'Build a REST API for the task manager with CRUD endpoints.', timestamp: 0 },
+  { id: 'e02', type: 'message', envelopeId: 'env-002', threadId: 'th-main', fromAgentId: 'orchestrator', toAgentId: 'user', content: 'Understood. I\'ll delegate the API scaffolding to the code agent and the schema design to the planner.', timestamp: 1800 },
+  { id: 'e03', type: 'task_started', taskId: 'task-101', agentId: 'code', task: 'Scaffold REST API with routes for /tasks (GET, POST, PUT, DELETE)', timestamp: 3200 },
+  { id: 'e04', type: 'task_started', taskId: 'task-102', agentId: 'planner', task: 'Design SQLite schema for task records', timestamp: 3800 },
+  { id: 'e05', type: 'message', envelopeId: 'env-003', threadId: 'th-code', fromAgentId: 'code', toAgentId: 'orchestrator', content: 'Setting up Bun.serve() with route handlers. Using typed request params for task ID.', timestamp: 5500 },
+  { id: 'e06', type: 'task_completed', taskId: 'task-102', agentId: 'planner', result: 'Schema: tasks(id TEXT PK, title TEXT, status TEXT, created_at INT, updated_at INT)', timestamp: 7200 },
+  { id: 'e07', type: 'message', envelopeId: 'env-004', threadId: 'th-code', fromAgentId: 'code', toAgentId: 'orchestrator', content: 'API routes complete. Integrated the schema from planner. All four CRUD endpoints wired up.', timestamp: 9800 },
+  { id: 'e08', type: 'task_completed', taskId: 'task-101', agentId: 'code', result: 'REST API scaffolded: GET/POST/PUT/DELETE /tasks, using bun:sqlite', timestamp: 11000 },
+  { id: 'e09', type: 'message', envelopeId: 'env-005', threadId: 'th-main', fromAgentId: 'orchestrator', toAgentId: 'user', content: 'Both tasks completed. The API is ready with all CRUD endpoints backed by SQLite. Want me to add tests?', timestamp: 13000 },
+  { id: 'e10', type: 'message', envelopeId: 'env-006', threadId: 'th-main', fromAgentId: 'user', toAgentId: 'orchestrator', content: 'Yes, add integration tests using bun:test.', timestamp: 15000 },
+];
+
+const totalDuration = 15000; // ms
+
+// ── State ──
+let playing = false;
+let speed = 1;
+let playheadMs = 0;
+let lastFrameTime = null;
+let rafId = null;
+
+// ── DOM refs ──
+const msgList = document.getElementById('msgList');
+const evtList = document.getElementById('evtList');
+const btnPlay = document.getElementById('btnPlay');
+const iconPlay = document.getElementById('iconPlay');
+const iconPause = document.getElementById('iconPause');
+const scrubber = document.getElementById('scrubber');
+const timeCurrent = document.getElementById('timeCurrent');
+const speedBtns = document.querySelectorAll('.btn-speed');
+
+// ── Build side panel ──
+events.forEach((ev, i) => {
+  const el = document.createElement('div');
+  el.className = 'event-item';
+  el.dataset.index = i;
+
+  let iconClass, iconChar, title, detail;
+  if (ev.type === 'message') {
+    iconClass = 'msg-icon';
+    iconChar = ev.fromAgentId === 'user' ? '→' : '←';
+    title = `${ev.fromAgentId} → ${ev.toAgentId}`;
+    detail = ev.content;
+  } else if (ev.type === 'task_started') {
+    iconClass = 'deleg-icon';
+    iconChar = '⚡';
+    title = `Delegated to ${ev.agentId}`;
+    detail = ev.task;
+  } else {
+    iconClass = 'done-icon';
+    iconChar = '✓';
+    title = `${ev.agentId} completed`;
+    detail = ev.result;
+  }
+
+  el.innerHTML = `
+    <div class="evt-icon ${iconClass}">${iconChar}</div>
+    <div class="evt-info">
+      <div class="evt-title">${title}</div>
+      <div class="evt-detail">${detail}</div>
+    </div>
+    <div class="evt-time">${(ev.timestamp / 1000).toFixed(1)}s</div>
+  `;
+  el.addEventListener('click', () => seekTo(ev.timestamp));
+  evtList.appendChild(el);
+});
+
+// ── Render helpers ──
+function renderMessages() {
+  msgList.innerHTML = '';
+  events.forEach((ev, i) => {
+    if (ev.timestamp > playheadMs) return;
+
+    let el;
+    if (ev.type === 'message') {
+      const isLeft = ev.fromAgentId !== 'user';
+      el = document.createElement('div');
+      el.className = `msg ${isLeft ? 'msg-left' : 'msg-right'} visible`;
+      el.innerHTML = `
+        <div class="msg-agent">${ev.fromAgentId}</div>
+        <div class="msg-content">${ev.content}</div>
+        <div class="msg-ts">${(ev.timestamp / 1000).toFixed(1)}s — ${ev.envelopeId}</div>
+      `;
+    } else if (ev.type === 'task_started') {
+      el = document.createElement('div');
+      el.className = 'evt-delegation visible';
+      el.style.animationName = 'pulse';
+      el.innerHTML = `<span class="evt-label">⚡ Delegated to ${ev.agentId}:</span> ${ev.task}`;
+    } else {
+      el = document.createElement('div');
+      el.className = 'evt-completion visible';
+      el.innerHTML = `<span class="check">✓</span> <strong>${ev.agentId}</strong> completed: ${ev.result}`;
+    }
+    msgList.appendChild(el);
+  });
+  msgList.scrollTop = msgList.scrollHeight;
+}
+
+// Track which events have been rendered to apply animations only to new ones
+let renderedCount = 0;
+
+function renderIncremental() {
+  const visibleEvents = events.filter(e => e.timestamp <= playheadMs);
+  const newCount = visibleEvents.length;
+
+  // Remove events beyond playhead (for scrub-back)
+  if (newCount < renderedCount) {
+    renderedCount = 0;
+    msgList.innerHTML = '';
+  }
+
+  for (let i = renderedCount; i < newCount; i++) {
+    const ev = visibleEvents[i];
+    let el;
+    if (ev.type === 'message') {
+      const isLeft = ev.fromAgentId !== 'user';
+      el = document.createElement('div');
+      el.className = `msg ${isLeft ? 'msg-left' : 'msg-right'}`;
+      el.innerHTML = `
+        <div class="msg-agent">${ev.fromAgentId}</div>
+        <div class="msg-content">${ev.content}</div>
+        <div class="msg-ts">${(ev.timestamp / 1000).toFixed(1)}s — ${ev.envelopeId}</div>
+      `;
+    } else if (ev.type === 'task_started') {
+      el = document.createElement('div');
+      el.className = 'evt-delegation';
+      el.innerHTML = `<span class="evt-label">⚡ Delegated to ${ev.agentId}:</span> ${ev.task}`;
+    } else {
+      el = document.createElement('div');
+      el.className = 'evt-completion';
+      el.innerHTML = `<span class="check">✓</span> <strong>${ev.agentId}</strong> completed: ${ev.result}`;
+    }
+    msgList.appendChild(el);
+    msgList.scrollTop = msgList.scrollHeight;
+  }
+  renderedCount = newCount;
+}
+
+function updateSidebar() {
+  const items = evtList.querySelectorAll('.event-item');
+  let activeIdx = -1;
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].timestamp <= playheadMs) { activeIdx = i; break; }
+  }
+  items.forEach((el, i) => {
+    el.classList.toggle('active', i === activeIdx);
+    el.classList.toggle('past', i < activeIdx);
+  });
+  // Scroll active into view
+  if (activeIdx >= 0) {
+    items[activeIdx].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+}
+
+function updateTransport() {
+  scrubber.value = Math.round((playheadMs / totalDuration) * 1000);
+  timeCurrent.textContent = (playheadMs / 1000).toFixed(1) + 's';
+}
+
+// ── Playback loop ──
+function tick(now) {
+  if (!playing) return;
+  if (lastFrameTime === null) lastFrameTime = now;
+  const delta = (now - lastFrameTime) * speed;
+  lastFrameTime = now;
+  playheadMs = Math.min(playheadMs + delta, totalDuration);
+
+  renderIncremental();
+  updateSidebar();
+  updateTransport();
+
+  if (playheadMs >= totalDuration) {
+    pause();
+    return;
+  }
+  rafId = requestAnimationFrame(tick);
+}
+
+function play() {
+  if (playheadMs >= totalDuration) {
+    // Reset if at end
+    playheadMs = 0;
+    renderedCount = 0;
+    msgList.innerHTML = '';
+  }
+  playing = true;
+  lastFrameTime = null;
+  iconPlay.style.display = 'none';
+  iconPause.style.display = 'block';
+  rafId = requestAnimationFrame(tick);
+}
+
+function pause() {
+  playing = false;
+  iconPlay.style.display = 'block';
+  iconPause.style.display = 'none';
+  if (rafId) cancelAnimationFrame(rafId);
+}
+
+function seekTo(ms) {
+  playheadMs = Math.max(0, Math.min(ms, totalDuration));
+  renderedCount = 0;
+  msgList.innerHTML = '';
+  renderIncremental();
+  updateSidebar();
+  updateTransport();
+  lastFrameTime = null;
+}
+
+// ── Event listeners ──
+btnPlay.addEventListener('click', () => playing ? pause() : play());
+
+scrubber.addEventListener('input', () => {
+  const ms = (parseInt(scrubber.value) / 1000) * totalDuration;
+  seekTo(ms);
+});
+
+speedBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    speed = parseInt(btn.dataset.speed);
+    speedBtns.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  });
+});
+
+// Keyboard: space = play/pause, left/right = seek
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') { e.preventDefault(); playing ? pause() : play(); }
+  if (e.code === 'ArrowRight') { seekTo(playheadMs + 1000); }
+  if (e.code === 'ArrowLeft') { seekTo(playheadMs - 1000); }
+});
+
+// ── Init ──
+updateSidebar();
+updateTransport();
+</script>
+</body>
+</html>

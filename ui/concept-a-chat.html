@@ -1,0 +1,1005 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>pi-agent — Chat UI (Concept A)</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:          #1A1D23;
+    --bg-2:        #21252D;
+    --bg-3:        #272B35;
+    --bg-4:        #2E3340;
+    --border:      #363C4A;
+    --text:        #E2E8F0;
+    --text-dim:    #8892A4;
+    --text-xdim:   #4A5568;
+    --user:        #2563EB;
+    --orch:        #8B5CF6;
+    --code:        #10B981;
+    --math:        #F59E0B;
+    --status-run:  #3B82F6;
+    --status-ok:   #10B981;
+    --status-fail: #EF4444;
+    --status-idle: #6B7280;
+    --radius:      8px;
+    --radius-sm:   4px;
+    --panel-w:     320px;
+    --detail-w:    300px;
+  }
+
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; overflow: hidden; }
+
+  /* ── Layout ──────────────────────────────────────────────────────────── */
+  #app { display: flex; height: 100vh; }
+
+  #sidebar {
+    width: var(--panel-w);
+    min-width: var(--panel-w);
+    background: var(--bg-2);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  #main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--bg);
+  }
+
+  #detail {
+    width: var(--detail-w);
+    min-width: var(--detail-w);
+    background: var(--bg-2);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transition: width 0.2s ease, min-width 0.2s ease;
+  }
+  #detail.hidden { width: 0; min-width: 0; border-left: none; }
+
+  /* ── Sidebar ─────────────────────────────────────────────────────────── */
+  .sidebar-header {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .sidebar-header .logo {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    color: var(--text);
+  }
+  .sidebar-header .logo span { color: var(--orch); }
+
+  .sidebar-section { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+  .section-label {
+    padding: 12px 16px 6px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    color: var(--text-xdim);
+  }
+
+  .section-scroll { overflow-y: auto; flex: 1; }
+  .section-scroll::-webkit-scrollbar { width: 4px; }
+  .section-scroll::-webkit-scrollbar-track { background: transparent; }
+  .section-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* Agents */
+  .agent-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 16px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .agent-item:hover { background: var(--bg-3); }
+
+  .agent-avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .agent-avatar.orch-1  { background: #3D2B6E; color: var(--orch); }
+  .agent-avatar.code-1  { background: #0D3B2E; color: var(--code); }
+  .agent-avatar.math-1  { background: #3B2E0D; color: var(--math); }
+  .agent-avatar.user    { background: #1A3566; color: var(--user); }
+
+  .agent-info { flex: 1; min-width: 0; }
+  .agent-name { font-size: 13px; font-weight: 600; }
+  .agent-id   { font-size: 11px; color: var(--text-dim); }
+
+  .status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .status-dot.running { background: var(--status-run); box-shadow: 0 0 6px var(--status-run); animation: pulse 1.5s infinite; }
+  .status-dot.idle    { background: var(--status-idle); }
+  .status-dot.completed { background: var(--status-ok); }
+  .status-dot.failed  { background: var(--status-fail); }
+
+  @keyframes pulse {
+    0%,100% { opacity: 1; }
+    50%      { opacity: 0.4; }
+  }
+
+  /* Threads */
+  .thread-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 16px;
+    cursor: pointer;
+    transition: background 0.15s;
+    border-left: 3px solid transparent;
+  }
+  .thread-item:hover   { background: var(--bg-3); }
+  .thread-item.active  { background: var(--bg-4); border-left-color: var(--orch); }
+
+  .thread-icon { font-size: 13px; flex-shrink: 0; }
+  .thread-info { flex: 1; min-width: 0; }
+  .thread-name { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .thread-meta { font-size: 11px; color: var(--text-dim); margin-top: 1px; }
+
+  .thread-count {
+    background: var(--bg-4);
+    color: var(--text-dim);
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 10px;
+  }
+
+  /* Tasks */
+  .task-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 16px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .task-item:hover { background: var(--bg-3); }
+
+  .task-info { flex: 1; min-width: 0; }
+  .task-desc { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .task-meta { font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+
+  .status-pill {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 10px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .status-pill.running   { background: #1D3A5F; color: #60A5FA; }
+  .status-pill.completed { background: #0D3B2E; color: #34D399; }
+  .status-pill.failed    { background: #3B1515; color: #F87171; }
+  .status-pill.idle      { background: var(--bg-3); color: var(--text-dim); }
+
+  .sidebar-divider { height: 1px; background: var(--border); margin: 4px 0; }
+
+  /* ── Chat header ─────────────────────────────────────────────────────── */
+  #chat-header {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--bg-2);
+  }
+  #chat-header .header-icon { font-size: 15px; }
+  #chat-title { font-size: 15px; font-weight: 600; flex: 1; }
+  #chat-sub   { font-size: 12px; color: var(--text-dim); }
+  #toggle-detail {
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 5px 10px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 12px;
+    transition: background 0.15s, color 0.15s;
+  }
+  #toggle-detail:hover { background: var(--bg-4); color: var(--text); }
+
+  /* ── Messages ────────────────────────────────────────────────────────── */
+  #messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 20px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  #messages::-webkit-scrollbar { width: 5px; }
+  #messages::-webkit-scrollbar-track { background: transparent; }
+  #messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .msg-group { display: flex; flex-direction: column; gap: 2px; margin-bottom: 14px; }
+
+  .msg-sender-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 5px;
+  }
+  .msg-sender-row .agent-avatar { width: 24px; height: 24px; font-size: 9px; }
+  .msg-sender-name { font-size: 12px; font-weight: 700; }
+  .msg-sender-time { font-size: 11px; color: var(--text-xdim); }
+
+  .msg-bubble {
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    line-height: 1.55;
+    cursor: pointer;
+    transition: filter 0.15s;
+    max-width: 92%;
+    word-break: break-word;
+  }
+  .msg-bubble:hover { filter: brightness(1.12); }
+
+  .msg-bubble.from-user  { background: var(--user);  align-self: flex-end; border-radius: var(--radius) var(--radius) 2px var(--radius); }
+  .msg-bubble.from-orch  { background: var(--bg-3); border-left: 3px solid var(--orch); }
+  .msg-bubble.from-code  { background: var(--bg-3); border-left: 3px solid var(--code); }
+  .msg-bubble.from-math  { background: var(--bg-3); border-left: 3px solid var(--math); }
+
+  .msg-bubble code, .msg-bubble pre {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 12px;
+    background: rgba(0,0,0,0.3);
+    border-radius: 3px;
+    padding: 2px 5px;
+  }
+  .msg-bubble pre { padding: 10px; margin-top: 6px; overflow-x: auto; white-space: pre; }
+
+  /* Delegation divider */
+  .delegation-divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 0;
+    cursor: pointer;
+    margin: 6px 0;
+  }
+  .delegation-divider .dl-line { flex: 1; height: 1px; background: var(--border); }
+  .delegation-divider .dl-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    font-size: 11px;
+    color: var(--text-dim);
+    white-space: nowrap;
+    transition: background 0.15s, color 0.15s;
+  }
+  .delegation-divider:hover .dl-pill { background: var(--bg-4); color: var(--text); }
+  .delegation-divider .dl-icon { font-size: 12px; }
+
+  /* ── Input bar ───────────────────────────────────────────────────────── */
+  #input-bar {
+    padding: 14px 20px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 10px;
+    background: var(--bg-2);
+  }
+  #msg-input {
+    flex: 1;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 9px 14px;
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.15s;
+    font-family: inherit;
+  }
+  #msg-input::placeholder { color: var(--text-xdim); }
+  #msg-input:focus { border-color: var(--orch); }
+  #send-btn {
+    background: var(--orch);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius);
+    padding: 9px 18px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+    font-family: inherit;
+  }
+  #send-btn:hover { background: #7C3AED; }
+
+  /* ── Detail panel ────────────────────────────────────────────────────── */
+  #detail-header {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  #detail-title { font-size: 13px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.6px; }
+  #detail-close {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 16px;
+    padding: 0 4px;
+    line-height: 1;
+  }
+  #detail-close:hover { color: var(--text); }
+
+  #detail-body { flex: 1; overflow-y: auto; padding: 16px; }
+  #detail-body::-webkit-scrollbar { width: 4px; }
+  #detail-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .detail-empty {
+    color: var(--text-xdim);
+    font-size: 13px;
+    text-align: center;
+    margin-top: 40px;
+    line-height: 1.8;
+  }
+
+  .detail-section { margin-bottom: 20px; }
+  .detail-section-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    color: var(--text-xdim);
+    margin-bottom: 8px;
+  }
+  .detail-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .detail-field { display: flex; flex-direction: column; gap: 2px; }
+  .detail-field-key {
+    font-size: 10px;
+    color: var(--text-dim);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .detail-field-val {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 11px;
+    color: var(--text);
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 4px 8px;
+    word-break: break-all;
+  }
+  .detail-field-val.na { color: var(--text-xdim); font-style: italic; }
+
+  .detail-content-preview {
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-dim);
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    margin-top: 4px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .detail-agent-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-top: 4px;
+  }
+  .detail-agent-tag.orch-1 { background: #3D2B6E; color: var(--orch); }
+  .detail-agent-tag.code-1 { background: #0D3B2E; color: var(--code); }
+  .detail-agent-tag.math-1 { background: #3B2E0D; color: var(--math); }
+  .detail-agent-tag.user   { background: #1A3566; color: var(--user); }
+
+  /* empty state */
+  #empty-state {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-xdim);
+    gap: 10px;
+  }
+  #empty-state .es-icon { font-size: 40px; opacity: 0.4; }
+  #empty-state .es-text { font-size: 14px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- SIDEBAR -->
+  <aside id="sidebar">
+    <div class="sidebar-header">
+      <div class="logo">pi<span>-agent</span></div>
+    </div>
+    <div class="sidebar-section" style="flex:0 0 auto">
+      <div class="section-label">Agents</div>
+      <div id="agents-list"></div>
+    </div>
+    <div class="sidebar-divider"></div>
+    <div class="sidebar-section" style="flex:1;min-height:0">
+      <div class="section-label">Threads</div>
+      <div class="section-scroll" id="threads-list"></div>
+    </div>
+    <div class="sidebar-divider"></div>
+    <div class="sidebar-section" style="flex:1;min-height:0">
+      <div class="section-label">Tasks</div>
+      <div class="section-scroll" id="tasks-list"></div>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <main id="main">
+    <div id="chat-header">
+      <span class="header-icon">💬</span>
+      <div style="flex:1">
+        <div id="chat-title">Select a thread</div>
+        <div id="chat-sub"></div>
+      </div>
+      <button id="toggle-detail">Details ›</button>
+    </div>
+    <div id="messages">
+      <div id="empty-state">
+        <div class="es-icon">⟡</div>
+        <div class="es-text">Select a thread to view messages</div>
+      </div>
+    </div>
+    <div id="input-bar">
+      <input id="msg-input" type="text" placeholder="Message orchestrator…" />
+      <button id="send-btn">Send</button>
+    </div>
+  </main>
+
+  <!-- DETAIL PANEL -->
+  <aside id="detail">
+    <div id="detail-header">
+      <span id="detail-title">Envelope Detail</span>
+      <button id="detail-close">×</button>
+    </div>
+    <div id="detail-body">
+      <div class="detail-empty">Click any message<br>to inspect correlation IDs</div>
+    </div>
+  </aside>
+</div>
+
+<script>
+// ── Mock data ───────────────────────────────────────────────────────────────
+const AGENTS = [
+  { id: "orch-1", name: "orchestrator", status: "idle"    },
+  { id: "code-1", name: "code",         status: "running" },
+  { id: "math-1", name: "math",         status: "idle"    },
+];
+
+const THREADS = [
+  { id: "thread-1", name: "user ↔ orchestrator", from: "user",   to: "orch-1", count: 3 },
+  { id: "thread-2", name: "orch ↔ code",          from: "orch-1", to: "code-1", count: 4 },
+  { id: "thread-3", name: "orch ↔ math",          from: "orch-1", to: "math-1", count: 3 },
+];
+
+// Each item is either an envelope or a delegation divider
+const ENVELOPES = {
+  "thread-1": [
+    {
+      type: "envelope",
+      id: "env-1-1", threadId: "thread-1",
+      fromAgentId: "user", toAgentId: "orch-1",
+      runId: "run-abc123", turnId: "turn-01", taskId: null,
+      content: "Solve (x²-4)/(x-2) and write a Python fibonacci implementation",
+      timestamp: "14:02:11",
+    },
+    {
+      type: "envelope",
+      id: "env-1-2", threadId: "thread-1",
+      fromAgentId: "orch-1", toAgentId: "user",
+      runId: "run-abc123", turnId: "turn-02", taskId: null,
+      content: "I'll delegate both tasks in parallel — fibonacci to the code agent and the algebra simplification to the math agent.",
+      timestamp: "14:02:13",
+    },
+    {
+      type: "delegation",
+      id: "del-1-1", threadId: "thread-1",
+      taskId: "task-1", agentId: "code-1",
+      label: "→ code · Write fibonacci Python",
+      timestamp: "14:02:14",
+      runId: "run-abc123", turnId: "turn-03",
+    },
+    {
+      type: "delegation",
+      id: "del-1-2", threadId: "thread-1",
+      taskId: "task-2", agentId: "math-1",
+      label: "→ math · Simplify (x²-4)/(x-2)",
+      timestamp: "14:02:14",
+      runId: "run-abc123", turnId: "turn-03",
+    },
+  ],
+  "thread-2": [
+    {
+      type: "envelope",
+      id: "env-2-1", threadId: "thread-2",
+      fromAgentId: "orch-1", toAgentId: "code-1",
+      runId: "run-abc123", turnId: "turn-03", taskId: "task-1",
+      content: "Write a fibonacci function in Python.",
+      timestamp: "14:02:14",
+    },
+    {
+      type: "envelope",
+      id: "env-2-2", threadId: "thread-2",
+      fromAgentId: "code-1", toAgentId: "orch-1",
+      runId: "run-abc123", turnId: "turn-04", taskId: "task-1",
+      content: "def fib(n):\n    return n if n <= 1 else fib(n-1) + fib(n-2)",
+      timestamp: "14:02:15",
+      isCode: true,
+    },
+    {
+      type: "envelope",
+      id: "env-2-3", threadId: "thread-2",
+      fromAgentId: "orch-1", toAgentId: "code-1",
+      runId: "run-abc123", turnId: "turn-05", taskId: "task-3",
+      content: "Also add memoization to make it efficient.",
+      timestamp: "14:02:16",
+    },
+    {
+      type: "envelope",
+      id: "env-2-4", threadId: "thread-2",
+      fromAgentId: "code-1", toAgentId: "orch-1",
+      runId: "run-abc123", turnId: "turn-06", taskId: "task-3",
+      content: "from functools import lru_cache\n\n@lru_cache(maxsize=None)\ndef fib(n):\n    return n if n <= 1 else fib(n-1) + fib(n-2)",
+      timestamp: "14:02:18",
+      isCode: true,
+    },
+  ],
+  "thread-3": [
+    {
+      type: "envelope",
+      id: "env-3-1", threadId: "thread-3",
+      fromAgentId: "orch-1", toAgentId: "math-1",
+      runId: "run-abc123", turnId: "turn-03", taskId: "task-2",
+      content: "Simplify (x²-4)/(x-2).",
+      timestamp: "14:02:14",
+    },
+    {
+      type: "envelope",
+      id: "env-3-2", threadId: "thread-3",
+      fromAgentId: "math-1", toAgentId: "orch-1",
+      runId: "run-abc123", turnId: "turn-04", taskId: "task-2",
+      content: "(x²-4)/(x-2) = x+2, where x ≠ 2",
+      timestamp: "14:02:15",
+    },
+    {
+      type: "envelope",
+      id: "env-3-3", threadId: "thread-3",
+      fromAgentId: "orch-1", toAgentId: "math-1",
+      runId: "run-abc123", turnId: "turn-05", taskId: "task-2",
+      content: "Please show the factoring steps.",
+      timestamp: "14:02:16",
+    },
+    {
+      type: "envelope",
+      id: "env-3-4", threadId: "thread-3",
+      fromAgentId: "math-1", toAgentId: "orch-1",
+      runId: "run-abc123", turnId: "turn-06", taskId: "task-2",
+      content: "Factor numerator: x²-4 = (x+2)(x-2)\nDivide both sides by (x-2):\n(x+2)(x-2)/(x-2) → x+2\nTherefore (x²-4)/(x-2) = x+2, x ≠ 2",
+      timestamp: "14:02:17",
+    },
+  ],
+};
+
+const TASKS = [
+  { id: "task-1", status: "completed", description: "Write fibonacci Python",    agentId: "code-1", attempts: 1, duration: "1.2s" },
+  { id: "task-2", status: "completed", description: "Simplify (x²-4)/(x-2)",    agentId: "math-1", attempts: 1, duration: "0.8s" },
+  { id: "task-3", status: "running",   description: "Generate unit tests for fibonacci", agentId: "code-1", attempts: 1 },
+  { id: "task-4", status: "failed",    description: "Deploy to staging",          agentId: "orch-1", attempts: 3, error: "Connection refused" },
+];
+
+// ── State ────────────────────────────────────────────────────────────────────
+let activeThreadId = null;
+let detailOpen = true;
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function agentColor(id) {
+  if (id === "orch-1") return "var(--orch)";
+  if (id === "code-1") return "var(--code)";
+  if (id === "math-1") return "var(--math)";
+  return "var(--user)";
+}
+
+function agentInitials(id) {
+  if (id === "orch-1") return "OR";
+  if (id === "code-1") return "CO";
+  if (id === "math-1") return "MA";
+  return "U";
+}
+
+function agentLabel(id) {
+  if (id === "orch-1") return "orchestrator";
+  if (id === "code-1") return "code";
+  if (id === "math-1") return "math";
+  return "user";
+}
+
+function agentBubbleClass(id) {
+  if (id === "orch-1") return "from-orch";
+  if (id === "code-1") return "from-code";
+  if (id === "math-1") return "from-math";
+  return "from-user";
+}
+
+// ── Render sidebar ───────────────────────────────────────────────────────────
+function renderAgents() {
+  const el = document.getElementById("agents-list");
+  el.innerHTML = AGENTS.map(a => `
+    <div class="agent-item">
+      <div class="agent-avatar ${a.id}">${agentInitials(a.id)}</div>
+      <div class="agent-info">
+        <div class="agent-name">${a.name}</div>
+        <div class="agent-id">${a.id}</div>
+      </div>
+      <div class="status-dot ${a.status}"></div>
+    </div>
+  `).join("");
+}
+
+function renderThreads() {
+  const el = document.getElementById("threads-list");
+  el.innerHTML = THREADS.map(t => `
+    <div class="thread-item ${t.id === activeThreadId ? "active" : ""}"
+         data-tid="${t.id}" onclick="selectThread('${t.id}')">
+      <span class="thread-icon">⟷</span>
+      <div class="thread-info">
+        <div class="thread-name">${t.name}</div>
+        <div class="thread-meta">${t.id}</div>
+      </div>
+      <span class="thread-count">${t.count}</span>
+    </div>
+  `).join("");
+}
+
+function renderTasks() {
+  const el = document.getElementById("tasks-list");
+  el.innerHTML = TASKS.map(t => `
+    <div class="task-item" onclick="showTaskDetail('${t.id}')">
+      <div class="status-dot ${t.status}" style="margin-top:5px"></div>
+      <div class="task-info">
+        <div class="task-desc">${t.description}</div>
+        <div class="task-meta">${t.id} · ${agentLabel(t.agentId)}${t.duration ? " · " + t.duration : ""}${t.error ? " · " + t.error : ""}</div>
+      </div>
+      <span class="status-pill ${t.status}">${t.status}</span>
+    </div>
+  `).join("");
+}
+
+// ── Render messages ──────────────────────────────────────────────────────────
+function renderMessages(threadId) {
+  const messagesEl = document.getElementById("messages");
+  const items = ENVELOPES[threadId] || [];
+
+  if (!items.length) {
+    messagesEl.innerHTML = `<div id="empty-state"><div class="es-icon">○</div><div class="es-text">No messages in this thread</div></div>`;
+    return;
+  }
+
+  // Group consecutive envelopes from same sender
+  const groups = [];
+  let current = null;
+
+  items.forEach(item => {
+    if (item.type === "delegation") {
+      if (current) { groups.push(current); current = null; }
+      groups.push({ type: "delegation", item });
+      return;
+    }
+    if (!current || current.fromAgentId !== item.fromAgentId) {
+      if (current) groups.push(current);
+      current = { type: "group", fromAgentId: item.fromAgentId, messages: [] };
+    }
+    current.messages.push(item);
+  });
+  if (current) groups.push(current);
+
+  messagesEl.innerHTML = groups.map(g => {
+    if (g.type === "delegation") {
+      const d = g.item;
+      const task = TASKS.find(t => t.id === d.taskId);
+      const statusClass = task ? task.status : "idle";
+      return `
+        <div class="delegation-divider" onclick="showEnvelopeDetail(${JSON.stringify(d).replace(/"/g, '&quot;')})">
+          <div class="dl-line"></div>
+          <div class="dl-pill">
+            <div class="status-dot ${statusClass}"></div>
+            <span class="dl-icon">⤷</span>
+            ${d.label}
+            <span style="color:var(--text-xdim);margin-left:4px">${d.timestamp}</span>
+          </div>
+          <div class="dl-line"></div>
+        </div>
+      `;
+    }
+
+    // envelope group
+    const isUser = g.fromAgentId === "user";
+    const bubbleClass = agentBubbleClass(g.fromAgentId);
+    const firstMsg = g.messages[0];
+
+    const bubbles = g.messages.map(m => {
+      const contentHtml = m.isCode
+        ? `<pre>${escapeHtml(m.content)}</pre>`
+        : escapeHtml(m.content).replace(/\n/g, "<br>");
+      return `<div class="msg-bubble ${bubbleClass}" onclick="showEnvelopeDetail(${JSON.stringify(m).replace(/"/g, '&quot;')})">${contentHtml}</div>`;
+    }).join("");
+
+    const senderRow = isUser ? "" : `
+      <div class="msg-sender-row">
+        <div class="agent-avatar ${g.fromAgentId}">${agentInitials(g.fromAgentId)}</div>
+        <span class="msg-sender-name" style="color:${agentColor(g.fromAgentId)}">${agentLabel(g.fromAgentId)}</span>
+        <span class="msg-sender-time">${firstMsg.timestamp}</span>
+      </div>
+    `;
+
+    const timeRow = isUser ? `<div style="text-align:right;font-size:11px;color:var(--text-xdim);margin-bottom:3px">${firstMsg.timestamp}</div>` : "";
+
+    return `
+      <div class="msg-group" style="${isUser ? "align-items:flex-end" : ""}">
+        ${senderRow}
+        ${timeRow}
+        ${bubbles}
+      </div>
+    `;
+  }).join("");
+
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+// ── Select thread ────────────────────────────────────────────────────────────
+function selectThread(threadId) {
+  activeThreadId = threadId;
+  const thread = THREADS.find(t => t.id === threadId);
+  document.getElementById("chat-title").textContent = thread.name;
+  document.getElementById("chat-sub").textContent = threadId;
+  renderThreads();
+  renderMessages(threadId);
+  clearDetail();
+}
+
+// ── Detail panel ─────────────────────────────────────────────────────────────
+function showEnvelopeDetail(data) {
+  if (typeof data === "string") data = JSON.parse(data);
+  const body = document.getElementById("detail-body");
+
+  const taskHtml = data.taskId
+    ? `<div class="detail-field-val">${data.taskId}</div>`
+    : `<div class="detail-field-val na">—</div>`;
+
+  const agentTagHtml = (id) => `
+    <div class="detail-agent-tag ${id}">
+      <div class="agent-avatar ${id}" style="width:18px;height:18px;font-size:8px">${agentInitials(id)}</div>
+      ${agentLabel(id)}
+    </div>
+  `;
+
+  const isDelegation = data.type === "delegation";
+
+  body.innerHTML = `
+    <div class="detail-section">
+      <div class="detail-section-label">Type</div>
+      <div class="detail-field-val" style="text-transform:capitalize">${isDelegation ? "delegation event" : "thread envelope"}</div>
+    </div>
+
+    <div class="detail-section">
+      <div class="detail-section-label">Correlation IDs</div>
+      <div class="detail-row">
+        <div class="detail-field">
+          <div class="detail-field-key">runId</div>
+          <div class="detail-field-val">${data.runId || "—"}</div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-field-key">turnId</div>
+          <div class="detail-field-val">${data.turnId || "—"}</div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-field-key">taskId</div>
+          ${taskHtml}
+        </div>
+        <div class="detail-field">
+          <div class="detail-field-key">threadId</div>
+          <div class="detail-field-val">${data.threadId}</div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-field-key">envelopeId</div>
+          <div class="detail-field-val">${data.id}</div>
+        </div>
+      </div>
+    </div>
+
+    ${!isDelegation ? `
+    <div class="detail-section">
+      <div class="detail-section-label">Routing</div>
+      <div class="detail-row">
+        <div class="detail-field">
+          <div class="detail-field-key">from</div>
+          ${agentTagHtml(data.fromAgentId)}
+        </div>
+        <div class="detail-field">
+          <div class="detail-field-key">to</div>
+          ${agentTagHtml(data.toAgentId)}
+        </div>
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <div class="detail-section-label">Content</div>
+      <div class="detail-content-preview">${escapeHtml(data.content)}</div>
+    </div>
+    ` : `
+    <div class="detail-section">
+      <div class="detail-section-label">Delegation</div>
+      <div class="detail-row">
+        <div class="detail-field">
+          <div class="detail-field-key">target agent</div>
+          ${agentTagHtml(data.agentId)}
+        </div>
+        <div class="detail-field">
+          <div class="detail-field-key">label</div>
+          <div class="detail-field-val">${data.label}</div>
+        </div>
+      </div>
+    </div>
+    `}
+
+    <div class="detail-section">
+      <div class="detail-section-label">Timestamp</div>
+      <div class="detail-field-val">${data.timestamp}</div>
+    </div>
+  `;
+
+  if (!detailOpen) toggleDetail();
+}
+
+function showTaskDetail(taskId) {
+  const task = TASKS.find(t => t.id === taskId);
+  if (!task) return;
+  const body = document.getElementById("detail-body");
+
+  body.innerHTML = `
+    <div class="detail-section">
+      <div class="detail-section-label">Task Record</div>
+      <div class="detail-row">
+        <div class="detail-field">
+          <div class="detail-field-key">taskId</div>
+          <div class="detail-field-val">${task.id}</div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-field-key">status</div>
+          <div style="margin-top:3px"><span class="status-pill ${task.status}">${task.status}</span></div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-field-key">agent</div>
+          <div class="detail-agent-tag ${task.agentId}" style="display:inline-flex;margin-top:3px">
+            <div class="agent-avatar ${task.agentId}" style="width:18px;height:18px;font-size:8px">${agentInitials(task.agentId)}</div>
+            ${agentLabel(task.agentId)}
+          </div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-field-key">attempts</div>
+          <div class="detail-field-val">${task.attempts}</div>
+        </div>
+        ${task.duration ? `
+        <div class="detail-field">
+          <div class="detail-field-key">duration</div>
+          <div class="detail-field-val">${task.duration}</div>
+        </div>` : ""}
+        ${task.error ? `
+        <div class="detail-field">
+          <div class="detail-field-key">error</div>
+          <div class="detail-field-val" style="color:var(--status-fail)">${task.error}</div>
+        </div>` : ""}
+      </div>
+    </div>
+    <div class="detail-section">
+      <div class="detail-section-label">Description</div>
+      <div class="detail-content-preview">${escapeHtml(task.description)}</div>
+    </div>
+  `;
+
+  if (!detailOpen) toggleDetail();
+}
+
+function clearDetail() {
+  document.getElementById("detail-body").innerHTML =
+    `<div class="detail-empty">Click any message<br>to inspect correlation IDs</div>`;
+}
+
+// ── Toggle detail panel ──────────────────────────────────────────────────────
+function toggleDetail() {
+  detailOpen = !detailOpen;
+  document.getElementById("detail").classList.toggle("hidden", !detailOpen);
+  document.getElementById("toggle-detail").textContent = detailOpen ? "Details ›" : "Details ‹";
+}
+
+// ── Send (mock) ──────────────────────────────────────────────────────────────
+document.getElementById("send-btn").addEventListener("click", sendMessage);
+document.getElementById("msg-input").addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+});
+
+function sendMessage() {
+  const input = document.getElementById("msg-input");
+  const text = input.value.trim();
+  if (!text || !activeThreadId) return;
+  input.value = "";
+
+  const now = new Date();
+  const ts = `${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}:${String(now.getSeconds()).padStart(2,"0")}`;
+  const id = "env-new-" + Date.now();
+
+  ENVELOPES[activeThreadId].push({
+    type: "envelope",
+    id, threadId: activeThreadId,
+    fromAgentId: "user", toAgentId: "orch-1",
+    runId: "run-abc123", turnId: "turn-live",
+    taskId: null, content: text, timestamp: ts,
+  });
+
+  const thread = THREADS.find(t => t.id === activeThreadId);
+  if (thread) thread.count++;
+  renderMessages(activeThreadId);
+  renderThreads();
+}
+
+// ── Wire up detail panel close ───────────────────────────────────────────────
+document.getElementById("detail-close").addEventListener("click", () => {
+  detailOpen = true; toggleDetail();
+});
+document.getElementById("toggle-detail").addEventListener("click", toggleDetail);
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+renderAgents();
+renderThreads();
+renderTasks();
+</script>
+</body>
+</html>

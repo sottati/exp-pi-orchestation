@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>pi-agent — Agent Inspector (Concept G)</title>
+<style>
+  :root {
+    --bg: #0F172A;
+    --bg-card: #1E293B;
+    --bg-hover: #334155;
+    --border: #334155;
+    --text: #E2E8F0;
+    --text-muted: #94A3B8;
+    --text-dim: #64748B;
+    --agent-orchestrator: #8B5CF6;
+    --agent-code: #10B981;
+    --agent-math: #F59E0B;
+    --status-completed: #10B981;
+    --status-failed: #EF4444;
+    --status-running: #3B82F6;
+    --status-queued: #64748B;
+    --radius: 8px;
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --agent-color: var(--agent-code);
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font); background: var(--bg); color: var(--text); min-height: 100vh; }
+
+  /* Header */
+  .header { display: flex; align-items: center; justify-content: space-between; padding: 16px 24px; border-bottom: 1px solid var(--border); }
+  .header-left { display: flex; align-items: center; gap: 16px; }
+  .logo { font-size: 14px; font-weight: 700; color: var(--text-muted); letter-spacing: 1px; text-transform: uppercase; }
+  .agent-tabs { display: flex; gap: 4px; background: var(--bg-card); border-radius: 6px; padding: 3px; }
+  .agent-tab {
+    padding: 6px 14px; border-radius: 4px; border: none; background: transparent;
+    color: var(--text-muted); font: 13px/1 var(--font); cursor: pointer; transition: all .15s;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .agent-tab:hover { color: var(--text); background: var(--bg-hover); }
+  .agent-tab.active { color: #fff; }
+  .agent-tab.active[data-agent="orchestrator"] { background: var(--agent-orchestrator); }
+  .agent-tab.active[data-agent="code"] { background: var(--agent-code); }
+  .agent-tab.active[data-agent="math"] { background: var(--agent-math); }
+  .agent-dot { width: 8px; height: 8px; border-radius: 50%; }
+  .session-info { font-size: 12px; color: var(--text-dim); }
+
+  /* Metrics */
+  .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; padding: 20px 24px; }
+  .metric-card {
+    background: linear-gradient(135deg, var(--bg-card) 0%, color-mix(in srgb, var(--agent-color) 8%, var(--bg-card)) 100%);
+    border: 1px solid color-mix(in srgb, var(--agent-color) 20%, var(--border));
+    border-radius: var(--radius); padding: 18px 20px;
+  }
+  .metric-label { font-size: 11px; text-transform: uppercase; letter-spacing: .8px; color: var(--text-dim); margin-bottom: 8px; }
+  .metric-value { font-size: 28px; font-weight: 700; color: var(--text); }
+  .metric-sub { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+
+  /* Content Tabs */
+  .tab-bar { display: flex; gap: 0; padding: 0 24px; border-bottom: 1px solid var(--border); }
+  .tab-btn {
+    padding: 12px 20px; border: none; background: none; color: var(--text-muted);
+    font: 13px/1 var(--font); cursor: pointer; border-bottom: 2px solid transparent; transition: all .15s;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active { color: var(--agent-color); border-bottom-color: var(--agent-color); }
+  .tab-content { display: none; padding: 20px 24px; }
+  .tab-content.active { display: block; }
+
+  /* History Timeline */
+  .timeline { position: relative; padding-left: 28px; }
+  .timeline::before { content: ''; position: absolute; left: 8px; top: 0; bottom: 0; width: 2px; background: var(--border); }
+  .tl-event { position: relative; margin-bottom: 12px; padding: 10px 14px; background: var(--bg-card); border-radius: var(--radius); border: 1px solid var(--border); }
+  .tl-event::before {
+    content: ''; position: absolute; left: -24px; top: 14px; width: 10px; height: 10px;
+    border-radius: 50%; border: 2px solid var(--border); background: var(--bg);
+  }
+  .tl-event[data-type="tool_start"]::before { border-color: var(--status-running); background: var(--status-running); }
+  .tl-event[data-type="tool_end"]::before { border-color: var(--status-completed); background: var(--status-completed); }
+  .tl-event[data-type="task_queued"]::before { border-color: var(--status-queued); background: var(--status-queued); }
+  .tl-event[data-type="task_completed"]::before { border-color: var(--status-completed); background: var(--status-completed); }
+  .tl-event[data-type="task_failed"]::before { border-color: var(--status-failed); background: var(--status-failed); }
+  .tl-event[data-type="task_running"]::before { border-color: var(--status-running); background: var(--status-running); }
+  .tl-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+  .tl-type { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+  .tl-time { font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+  .tl-detail { font-size: 12px; color: var(--text-muted); }
+  .tl-ids { font-size: 11px; color: var(--text-dim); margin-top: 4px; font-family: 'SF Mono', Monaco, Consolas, monospace; }
+
+  /* Kanban */
+  .kanban { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .kanban-col-header { font-size: 11px; text-transform: uppercase; letter-spacing: .8px; color: var(--text-dim); margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+  .kanban-count { background: var(--bg-hover); color: var(--text-muted); border-radius: 10px; padding: 1px 7px; font-size: 11px; }
+  .task-card {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 12px 14px; margin-bottom: 8px; cursor: default; transition: border-color .15s;
+  }
+  .task-card:hover { border-color: var(--text-dim); }
+  .task-card .task-title { font-size: 13px; font-weight: 500; margin-bottom: 6px; line-height: 1.4; }
+  .task-card .task-meta { font-size: 11px; color: var(--text-dim); display: flex; justify-content: space-between; }
+  .task-card .task-jobid { font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 11px; color: var(--text-dim); }
+  .status-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; }
+  .task-card .task-error { font-size: 11px; color: var(--status-failed); margin-top: 6px; padding: 4px 8px; background: rgba(239,68,68,.1); border-radius: 4px; }
+  .task-card .task-result { font-size: 11px; color: var(--status-completed); margin-top: 6px; padding: 4px 8px; background: rgba(16,185,129,.08); border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .task-attempts { font-size: 10px; color: var(--text-dim); }
+  .border-left-status { border-left: 3px solid transparent; }
+  .border-left-status[data-status="completed"] { border-left-color: var(--status-completed); }
+  .border-left-status[data-status="failed"] { border-left-color: var(--status-failed); }
+  .border-left-status[data-status="running"] { border-left-color: var(--status-running); }
+  .border-left-status[data-status="queued"] { border-left-color: var(--status-queued); }
+
+  /* Threads */
+  .thread-list { display: flex; flex-direction: column; gap: 10px; }
+  .thread-card {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; cursor: pointer;
+    transition: border-color .15s;
+  }
+  .thread-card:hover { border-color: var(--agent-color); }
+  .thread-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .thread-id { font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: 12px; color: var(--agent-color); }
+  .thread-agents { font-size: 11px; color: var(--text-dim); }
+  .thread-preview { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+  .thread-envelope { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; margin-top: 8px; }
+  .thread-envelope .env-from { font-size: 11px; font-weight: 600; margin-bottom: 4px; }
+  .thread-envelope .env-content { font-size: 12px; color: var(--text-muted); }
+  .thread-envelope .env-meta { font-size: 10px; color: var(--text-dim); margin-top: 6px; font-family: 'SF Mono', Monaco, Consolas, monospace; }
+  .thread-card.expanded .thread-envelopes { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+  .thread-card:not(.expanded) .thread-envelopes { display: none; }
+  .thread-expand-hint { font-size: 11px; color: var(--text-dim); margin-top: 8px; }
+
+  /* Performance */
+  .perf-chart { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
+  .chart-title { font-size: 13px; font-weight: 600; margin-bottom: 16px; }
+  .bar-chart { display: flex; align-items: flex-end; gap: 12px; height: 200px; padding-top: 10px; }
+  .bar-group { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; }
+  .bar {
+    width: 100%; max-width: 48px; border-radius: 4px 4px 0 0; transition: opacity .15s;
+    background: linear-gradient(180deg, var(--agent-color) 0%, color-mix(in srgb, var(--agent-color) 60%, transparent) 100%);
+    position: relative;
+  }
+  .bar:hover { opacity: .85; }
+  .bar-val { position: absolute; top: -20px; left: 50%; transform: translateX(-50%); font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+  .bar-label { font-size: 10px; color: var(--text-dim); margin-top: 8px; text-align: center; max-width: 64px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .perf-stats { display: grid; grid-template-columns: repeat(3,1fr); gap: 14px; margin-top: 18px; }
+  .perf-stat { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 12px; text-align: center; }
+  .perf-stat-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .5px; }
+  .perf-stat-val { font-size: 20px; font-weight: 700; margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <span class="logo">pi-agent</span>
+    <div class="agent-tabs" id="agentTabs">
+      <button class="agent-tab" data-agent="orchestrator" onclick="selectAgent('orchestrator')">
+        <span class="agent-dot" style="background:var(--agent-orchestrator)"></span>orchestrator
+      </button>
+      <button class="agent-tab active" data-agent="code" onclick="selectAgent('code')">
+        <span class="agent-dot" style="background:var(--agent-code)"></span>code
+      </button>
+      <button class="agent-tab" data-agent="math" onclick="selectAgent('math')">
+        <span class="agent-dot" style="background:var(--agent-math)"></span>math
+      </button>
+    </div>
+  </div>
+  <span class="session-info">session: <strong>ses_7xK2a</strong> &middot; 2026-03-13 14:22 UTC</span>
+</div>
+
+<div class="metrics" id="metrics"></div>
+
+<div class="tab-bar" id="tabBar">
+  <button class="tab-btn active" data-tab="history" onclick="switchTab('history')">History</button>
+  <button class="tab-btn" data-tab="tasks" onclick="switchTab('tasks')">Tasks</button>
+  <button class="tab-btn" data-tab="threads" onclick="switchTab('threads')">Threads</button>
+  <button class="tab-btn" data-tab="performance" onclick="switchTab('performance')">Performance</button>
+</div>
+
+<div class="tab-content active" id="tab-history"></div>
+<div class="tab-content" id="tab-tasks"></div>
+<div class="tab-content" id="tab-threads"></div>
+<div class="tab-content" id="tab-performance"></div>
+
+<script>
+// ── Mock Data ──────────────────────────────────────────────────
+const tasks = [
+  { jobId:"job_a1b2",agentId:"code",task:"Refactor parseConfig to use Zod schemas",status:"completed",attempts:1,createdAt:"2026-03-13T14:01:12Z",startedAt:"2026-03-13T14:01:13Z",finishedAt:"2026-03-13T14:01:15Z",result:"Refactored parseConfig; 3 files updated, all tests pass." },
+  { jobId:"job_c3d4",agentId:"code",task:"Fix race condition in WebSocket reconnect logic",status:"completed",attempts:2,createdAt:"2026-03-13T14:02:30Z",startedAt:"2026-03-13T14:02:31Z",finishedAt:"2026-03-13T14:02:34Z",result:"Added mutex guard around reconnect; verified under load." },
+  { jobId:"job_e5f6",agentId:"code",task:"Add input validation to /api/users endpoint",status:"completed",attempts:1,createdAt:"2026-03-13T14:04:00Z",startedAt:"2026-03-13T14:04:01Z",finishedAt:"2026-03-13T14:04:02Z",result:"Validation middleware added; rejects invalid payloads with 400." },
+  { jobId:"job_g7h8",agentId:"code",task:"Implement retry logic for external API calls",status:"failed",attempts:3,createdAt:"2026-03-13T14:06:10Z",startedAt:"2026-03-13T14:06:11Z",finishedAt:"2026-03-13T14:06:18Z",error:"Max retries exceeded — upstream 503 persisted after 3 attempts." },
+  { jobId:"job_i9j0",agentId:"code",task:"Write unit tests for ThreadStore.append",status:"completed",attempts:1,createdAt:"2026-03-13T14:08:45Z",startedAt:"2026-03-13T14:08:46Z",finishedAt:"2026-03-13T14:08:48Z",result:"12 test cases added covering append, corruption recovery, and concurrency." },
+  { jobId:"job_k1l2",agentId:"code",task:"Optimize JSONL parsing for large trace files",status:"running",attempts:1,createdAt:"2026-03-13T14:10:20Z",startedAt:"2026-03-13T14:10:21Z" },
+  { jobId:"job_m3n4",agentId:"code",task:"Migrate SQLite schema to add indexes on runId",status:"failed",attempts:1,createdAt:"2026-03-13T14:12:00Z",startedAt:"2026-03-13T14:12:01Z",finishedAt:"2026-03-13T14:12:03Z",error:"UNIQUE constraint failed: traces.eventId — duplicate seed data." },
+  { jobId:"job_o5p6",agentId:"code",task:"Generate TypeScript types from OpenAPI spec",status:"queued",attempts:0,createdAt:"2026-03-13T14:14:30Z" },
+];
+
+const traces = [
+  { eventId:"ev_001",timestamp:"2026-03-13T14:01:12.100Z",sessionId:"ses_7xK2a",runId:"run_01",turnId:"t_01",type:"task_queued",status:"queued",agentId:"code",taskId:"job_a1b2" },
+  { eventId:"ev_002",timestamp:"2026-03-13T14:01:13.050Z",sessionId:"ses_7xK2a",runId:"run_01",turnId:"t_01",type:"task_running",status:"running",agentId:"code",taskId:"job_a1b2" },
+  { eventId:"ev_003",timestamp:"2026-03-13T14:01:13.200Z",sessionId:"ses_7xK2a",runId:"run_01",turnId:"t_02",type:"tool_start",status:"running",agentId:"code",toolName:"write_file",taskId:"job_a1b2" },
+  { eventId:"ev_004",timestamp:"2026-03-13T14:01:14.800Z",sessionId:"ses_7xK2a",runId:"run_01",turnId:"t_02",type:"tool_end",status:"completed",agentId:"code",toolName:"write_file",taskId:"job_a1b2" },
+  { eventId:"ev_005",timestamp:"2026-03-13T14:01:15.000Z",sessionId:"ses_7xK2a",runId:"run_01",turnId:"t_03",type:"task_completed",status:"completed",agentId:"code",taskId:"job_a1b2" },
+  { eventId:"ev_006",timestamp:"2026-03-13T14:02:31.000Z",sessionId:"ses_7xK2a",runId:"run_02",turnId:"t_04",type:"task_running",status:"running",agentId:"code",taskId:"job_c3d4" },
+  { eventId:"ev_007",timestamp:"2026-03-13T14:02:32.500Z",sessionId:"ses_7xK2a",runId:"run_02",turnId:"t_05",type:"tool_start",status:"running",agentId:"code",toolName:"run_command",taskId:"job_c3d4" },
+  { eventId:"ev_008",timestamp:"2026-03-13T14:02:34.000Z",sessionId:"ses_7xK2a",runId:"run_02",turnId:"t_05",type:"tool_end",status:"completed",agentId:"code",toolName:"run_command",taskId:"job_c3d4" },
+  { eventId:"ev_009",timestamp:"2026-03-13T14:04:01.100Z",sessionId:"ses_7xK2a",runId:"run_03",turnId:"t_06",type:"task_running",status:"running",agentId:"code",taskId:"job_e5f6" },
+  { eventId:"ev_010",timestamp:"2026-03-13T14:06:11.000Z",sessionId:"ses_7xK2a",runId:"run_04",turnId:"t_07",type:"task_running",status:"running",agentId:"code",taskId:"job_g7h8" },
+  { eventId:"ev_011",timestamp:"2026-03-13T14:06:18.000Z",sessionId:"ses_7xK2a",runId:"run_04",turnId:"t_07",type:"task_failed",status:"failed",agentId:"code",taskId:"job_g7h8" },
+  { eventId:"ev_012",timestamp:"2026-03-13T14:10:21.000Z",sessionId:"ses_7xK2a",runId:"run_06",turnId:"t_09",type:"task_running",status:"running",agentId:"code",taskId:"job_k1l2" },
+];
+
+const threads = [
+  {
+    threadId: "thr_xR9v2",
+    envelopes: [
+      { envelopeId:"env_001",threadId:"thr_xR9v2",fromAgentId:"orchestrator",toAgentId:"code",runId:"run_01",turnId:"t_01",content:"Refactor parseConfig to use Zod schemas. Ensure backward compat with existing callers.",timestamp:"2026-03-13T14:01:12Z" },
+      { envelopeId:"env_002",threadId:"thr_xR9v2",fromAgentId:"code",toAgentId:"orchestrator",runId:"run_01",turnId:"t_03",content:"Done. Replaced manual validation in parseConfig with z.object(). Updated 3 call-sites. All 14 tests pass.",timestamp:"2026-03-13T14:01:15Z" },
+      { envelopeId:"env_003",threadId:"thr_xR9v2",fromAgentId:"orchestrator",toAgentId:"code",runId:"run_02",turnId:"t_04",content:"Fix the race condition in WebSocket reconnect — users report duplicate messages after network drop.",timestamp:"2026-03-13T14:02:30Z" },
+      { envelopeId:"env_004",threadId:"thr_xR9v2",fromAgentId:"code",toAgentId:"orchestrator",runId:"run_02",turnId:"t_05",content:"Added lock guard in reconnect handler. Tested with simulated network drops — no duplicates observed.",timestamp:"2026-03-13T14:02:34Z" },
+    ]
+  },
+  {
+    threadId: "thr_pL4m8",
+    envelopes: [
+      { envelopeId:"env_005",threadId:"thr_pL4m8",fromAgentId:"orchestrator",toAgentId:"code",runId:"run_04",turnId:"t_07",content:"Implement retry logic for external API calls with exponential backoff. Max 3 attempts.",timestamp:"2026-03-13T14:06:10Z" },
+      { envelopeId:"env_006",threadId:"thr_pL4m8",fromAgentId:"code",toAgentId:"orchestrator",runId:"run_04",turnId:"t_07",content:"Failed after 3 retries. Upstream service returned 503 consistently. Suggest checking service health or adding circuit breaker.",timestamp:"2026-03-13T14:06:18Z" },
+    ]
+  }
+];
+
+// ── Rendering ──────────────────────────────────────────────────
+function renderMetrics() {
+  const completed = tasks.filter(t => t.status === 'completed').length;
+  const total = tasks.length;
+  const rate = Math.round((completed / total) * 100);
+  const latencies = tasks.filter(t => t.startedAt && t.finishedAt).map(t => (new Date(t.finishedAt) - new Date(t.startedAt)) / 1000);
+  const avg = latencies.length ? (latencies.reduce((a, b) => a + b, 0) / latencies.length).toFixed(1) : '—';
+  const active = threads.length;
+  document.getElementById('metrics').innerHTML = `
+    <div class="metric-card"><div class="metric-label">Success Rate</div><div class="metric-value">${rate}%</div><div class="metric-sub">${completed} of ${total} tasks</div></div>
+    <div class="metric-card"><div class="metric-label">Avg Latency</div><div class="metric-value">${avg}s</div><div class="metric-sub">across ${latencies.length} completed</div></div>
+    <div class="metric-card"><div class="metric-label">Total Tasks</div><div class="metric-value">${total}</div><div class="metric-sub">1 running, 1 queued</div></div>
+    <div class="metric-card"><div class="metric-label">Active Threads</div><div class="metric-value">${active}</div><div class="metric-sub">${threads.reduce((n, t) => n + t.envelopes.length, 0)} envelopes total</div></div>`;
+}
+
+function fmtTime(ts) { return new Date(ts).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }); }
+function fmtDuration(start, end) { return ((new Date(end) - new Date(start)) / 1000).toFixed(1) + 's'; }
+
+const typeColors = { task_queued: 'var(--status-queued)', task_running: 'var(--status-running)', task_completed: 'var(--status-completed)', task_failed: 'var(--status-failed)', tool_start: 'var(--status-running)', tool_end: 'var(--status-completed)' };
+
+function renderHistory() {
+  const sorted = [...traces].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  document.getElementById('tab-history').innerHTML = `<div class="timeline">${sorted.map(e => `
+    <div class="tl-event" data-type="${e.type}">
+      <div class="tl-head">
+        <span class="tl-type" style="color:${typeColors[e.type] || 'var(--text)'}">${e.type.replace('_', ' ')}</span>
+        <span class="tl-time">${fmtTime(e.timestamp)}</span>
+      </div>
+      <div class="tl-detail">${e.toolName ? `Tool: <strong>${e.toolName}</strong>` : ''}${e.taskId ? ` &middot; Task: ${e.taskId}` : ''}</div>
+      <div class="tl-ids">run:${e.runId} &middot; turn:${e.turnId} &middot; ${e.eventId}</div>
+    </div>`).join('')}</div>`;
+}
+
+function renderTasks() {
+  const cols = ['queued', 'running', 'completed', 'failed'];
+  const grouped = {};
+  cols.forEach(c => grouped[c] = []);
+  tasks.forEach(t => grouped[t.status]?.push(t));
+  document.getElementById('tab-tasks').innerHTML = `<div class="kanban">${cols.map(col => `
+    <div>
+      <div class="kanban-col-header"><span class="status-dot" style="background:var(--status-${col})"></span>${col}<span class="kanban-count">${grouped[col].length}</span></div>
+      ${grouped[col].map(t => `
+        <div class="task-card border-left-status" data-status="${t.status}">
+          <div class="task-title">${t.task}</div>
+          <div class="task-meta"><span class="task-jobid">${t.jobId}</span><span class="task-attempts">att: ${t.attempts}</span></div>
+          ${t.startedAt && t.finishedAt ? `<div class="task-meta" style="margin-top:4px"><span>${fmtTime(t.startedAt)}</span><span>${fmtDuration(t.startedAt, t.finishedAt)}</span></div>` : ''}
+          ${t.result ? `<div class="task-result">${t.result}</div>` : ''}
+          ${t.error ? `<div class="task-error">${t.error}</div>` : ''}
+        </div>`).join('')}
+    </div>`).join('')}</div>`;
+}
+
+function renderThreads() {
+  document.getElementById('tab-threads').innerHTML = `<div class="thread-list">${threads.map(t => {
+    const last = t.envelopes[t.envelopes.length - 1];
+    return `
+    <div class="thread-card" onclick="this.classList.toggle('expanded')">
+      <div class="thread-header">
+        <span class="thread-id">${t.threadId}</span>
+        <span class="thread-agents">${[...new Set(t.envelopes.flatMap(e => [e.fromAgentId, e.toAgentId]))].join(' / ')}</span>
+      </div>
+      <div class="thread-preview">${last.content.slice(0, 120)}${last.content.length > 120 ? '...' : ''}</div>
+      <div class="thread-expand-hint">Click to ${t.envelopes.length > 1 ? `show ${t.envelopes.length} envelopes` : 'expand'}</div>
+      <div class="thread-envelopes">
+        ${t.envelopes.map(e => `
+          <div class="thread-envelope">
+            <div class="env-from" style="color:var(--agent-${e.fromAgentId})">${e.fromAgentId} &rarr; ${e.toAgentId}</div>
+            <div class="env-content">${e.content}</div>
+            <div class="env-meta">${e.envelopeId} &middot; run:${e.runId} &middot; turn:${e.turnId} &middot; ${fmtTime(e.timestamp)}</div>
+          </div>`).join('')}
+      </div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+function renderPerformance() {
+  const withLatency = tasks.filter(t => t.startedAt && t.finishedAt).map(t => ({
+    label: t.jobId.replace('job_', ''), latency: (new Date(t.finishedAt) - new Date(t.startedAt)) / 1000, status: t.status
+  }));
+  const maxLat = Math.max(...withLatency.map(t => t.latency), 1);
+  const lats = withLatency.map(t => t.latency);
+  const avg = (lats.reduce((a, b) => a + b, 0) / lats.length).toFixed(2);
+  const p50 = lats.sort((a, b) => a - b)[Math.floor(lats.length / 2)]?.toFixed(2) || '—';
+  const p95 = lats.sort((a, b) => a - b)[Math.floor(lats.length * 0.95)]?.toFixed(2) || '—';
+
+  document.getElementById('tab-performance').innerHTML = `
+    <div class="perf-chart">
+      <div class="chart-title">Task Latency (seconds)</div>
+      <div class="bar-chart">
+        ${withLatency.map(t => `
+          <div class="bar-group">
+            <div class="bar" style="height:${(t.latency / maxLat) * 100}%;${t.status === 'failed' ? 'background:linear-gradient(180deg,var(--status-failed),rgba(239,68,68,.4))' : ''}">
+              <span class="bar-val">${t.latency.toFixed(1)}s</span>
+            </div>
+            <span class="bar-label">${t.label}</span>
+          </div>`).join('')}
+      </div>
+      <div class="perf-stats">
+        <div class="perf-stat"><div class="perf-stat-label">Mean</div><div class="perf-stat-val">${avg}s</div></div>
+        <div class="perf-stat"><div class="perf-stat-label">P50</div><div class="perf-stat-val">${p50}s</div></div>
+        <div class="perf-stat"><div class="perf-stat-label">P95</div><div class="perf-stat-val">${p95}s</div></div>
+      </div>
+    </div>`;
+}
+
+// ── Interaction ────────────────────────────────────────────────
+function switchTab(id) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === id));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-' + id));
+}
+
+function selectAgent(agent) {
+  const colors = { orchestrator: 'var(--agent-orchestrator)', code: 'var(--agent-code)', math: 'var(--agent-math)' };
+  document.documentElement.style.setProperty('--agent-color', colors[agent]);
+  document.querySelectorAll('.agent-tab').forEach(b => b.classList.toggle('active', b.dataset.agent === agent));
+}
+
+// ── Init ───────────────────────────────────────────────────────
+renderMetrics();
+renderHistory();
+renderTasks();
+renderThreads();
+renderPerformance();
+</script>
+</body>
+</html>

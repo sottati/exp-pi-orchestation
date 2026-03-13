@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>pi-agent — Flame Graph (Concept H)</title>
+<style>
+  :root {
+    --bg: #1C1917;
+    --bg-surface: #292524;
+    --bg-hover: #3a3533;
+    --text: #FAFAF9;
+    --text-muted: #A8A29E;
+    --border: #44403C;
+    --root: #DC2626;
+    --mid: #F97316;
+    --leaf: #FDE047;
+    --cold: #475569;
+    --accent: #38BDF8;
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    overflow: hidden;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    user-select: none;
+  }
+
+  /* Toolbar */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    z-index: 10;
+  }
+  .toolbar h1 {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    white-space: nowrap;
+    color: var(--text-muted);
+  }
+  .toolbar h1 span { color: var(--text); }
+  .toolbar .sep {
+    width: 1px;
+    height: 20px;
+    background: var(--border);
+  }
+  .toolbar input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 12px;
+    padding: 5px 10px;
+    width: 200px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .toolbar input:focus { border-color: var(--accent); }
+  .toolbar input::placeholder { color: var(--text-muted); }
+  .btn {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-muted);
+    font-family: var(--font);
+    font-size: 12px;
+    padding: 5px 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn:hover { background: var(--bg-hover); color: var(--text); }
+  .toolbar .info {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  /* Minimap */
+  .minimap-container {
+    height: 32px;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
+    position: relative;
+    flex-shrink: 0;
+    cursor: pointer;
+  }
+  .minimap-viewport {
+    position: absolute;
+    top: 2px;
+    bottom: 2px;
+    background: rgba(56, 189, 248, 0.12);
+    border: 1px solid rgba(56, 189, 248, 0.4);
+    border-radius: 3px;
+    pointer-events: none;
+  }
+
+  /* Main flame area */
+  .flame-wrap {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+  }
+  .flame-wrap svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  .flame-wrap svg text {
+    font-family: var(--font);
+    font-size: 11px;
+    fill: var(--bg);
+    pointer-events: none;
+    font-weight: 500;
+  }
+  .flame-wrap svg .span-rect {
+    cursor: pointer;
+    transition: opacity 0.12s;
+    rx: 3;
+    ry: 3;
+  }
+  .flame-wrap svg .span-rect.dimmed { opacity: 0.25; }
+  .flame-wrap svg .span-rect:hover { filter: brightness(1.15); }
+
+  /* Tooltip */
+  .tooltip {
+    position: fixed;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 12px;
+    line-height: 1.5;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.1s;
+    z-index: 100;
+    max-width: 300px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+  .tooltip.visible { opacity: 1; }
+  .tooltip .tt-name { font-weight: 600; color: var(--text); }
+  .tooltip .tt-dur { color: var(--accent); }
+  .tooltip .tt-pct { color: var(--text-muted); }
+
+  /* Detail panel */
+  .detail-panel {
+    height: 100px;
+    background: var(--bg-surface);
+    border-top: 1px solid var(--border);
+    padding: 12px 16px;
+    flex-shrink: 0;
+    display: flex;
+    gap: 32px;
+    align-items: flex-start;
+    overflow-x: auto;
+  }
+  .detail-panel .dp-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+  .detail-panel .dp-value {
+    font-size: 14px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .detail-panel .dp-block { min-width: 100px; }
+  .detail-panel .dp-path {
+    font-size: 11px;
+    color: var(--text-muted);
+    word-break: break-all;
+  }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <h1><span>pi-agent</span> — Flame Graph (Concept H)</h1>
+  <div class="sep"></div>
+  <input id="search" type="text" placeholder="Search spans..." />
+  <button class="btn" id="zoomIn" title="Zoom in">+ Zoom</button>
+  <button class="btn" id="zoomOut" title="Zoom out">- Zoom</button>
+  <button class="btn" id="resetBtn">Reset</button>
+  <span class="info" id="zoomInfo">1.0x</span>
+</div>
+
+<div class="minimap-container" id="minimap">
+  <svg id="minimapSvg" width="100%" height="100%"></svg>
+  <div class="minimap-viewport" id="minimapViewport"></div>
+</div>
+
+<div class="flame-wrap" id="flameWrap">
+  <svg id="flameSvg" xmlns="http://www.w3.org/2000/svg"></svg>
+</div>
+
+<div class="tooltip" id="tooltip">
+  <div class="tt-name" id="ttName"></div>
+  <div class="tt-dur" id="ttDur"></div>
+  <div class="tt-pct" id="ttPct"></div>
+</div>
+
+<div class="detail-panel" id="detailPanel">
+  <div class="dp-block">
+    <div class="dp-label">Selected</div>
+    <div class="dp-value" id="dpName">--</div>
+  </div>
+  <div class="dp-block">
+    <div class="dp-label">Duration</div>
+    <div class="dp-value" id="dpDur">--</div>
+  </div>
+  <div class="dp-block">
+    <div class="dp-label">Start / End</div>
+    <div class="dp-value" id="dpRange">--</div>
+  </div>
+  <div class="dp-block">
+    <div class="dp-label">% of Parent</div>
+    <div class="dp-value" id="dpPct">--</div>
+  </div>
+  <div class="dp-block">
+    <div class="dp-label">Path</div>
+    <div class="dp-path" id="dpPath">--</div>
+  </div>
+</div>
+
+<script>
+(function() {
+  // -- Mock data --
+  const spans = [
+    { id: 0,  name: "session_start",           start: 0,    end: 5000, parent: -1 },
+    { id: 1,  name: "run_started",             start: 100,  end: 4900, parent: 0 },
+    { id: 2,  name: "tool_start: delegate_task",start: 200, end: 4800, parent: 1 },
+    { id: 3,  name: "task_started: task-1",    start: 300,  end: 2400, parent: 2 },
+    { id: 4,  name: "tool_start: code_exec",   start: 400,  end: 2200, parent: 3 },
+    { id: 5,  name: "tool_end: code_exec",     start: 400,  end: 2200, parent: 4 },
+    { id: 6,  name: "task_completed: task-1",  start: 2300, end: 2400, parent: 3 },
+    { id: 7,  name: "task_started: task-2",    start: 500,  end: 4700, parent: 2 },
+    { id: 8,  name: "tool_start: code_exec",   start: 600,  end: 3800, parent: 7 },
+    { id: 9,  name: "tool_end: code_exec",     start: 600,  end: 3800, parent: 8 },
+    { id: 10, name: "tool_start: code_exec",   start: 3900, end: 4500, parent: 7 },
+    { id: 11, name: "tool_end: code_exec",     start: 3900, end: 4500, parent: 10 },
+    { id: 12, name: "task_completed: task-2",  start: 4600, end: 4700, parent: 7 },
+    // Extra spans to reach ~20
+    { id: 13, name: "trace_emit",              start: 50,   end: 90,   parent: 0 },
+    { id: 14, name: "env_load",                start: 10,   end: 50,   parent: 0 },
+    { id: 15, name: "model_init",              start: 150,  end: 195,  parent: 1 },
+    { id: 16, name: "prompt_build",            start: 250,  end: 295,  parent: 2 },
+    { id: 17, name: "result_merge",            start: 4750, end: 4795, parent: 2 },
+    { id: 18, name: "thread_persist",          start: 4850, end: 4895, parent: 1 },
+    { id: 19, name: "session_end",             start: 4950, end: 4995, parent: 0 },
+  ];
+
+  // Build depth map (flame graph rows)
+  const depthMap = new Map();
+  function computeDepth(s) {
+    if (depthMap.has(s.id)) return depthMap.get(s.id);
+    if (s.parent < 0) { depthMap.set(s.id, 0); return 0; }
+    const pd = computeDepth(spans[s.parent]);
+    depthMap.set(s.id, pd + 1);
+    return pd + 1;
+  }
+  spans.forEach(computeDepth);
+  const maxDepth = Math.max(...depthMap.values());
+
+  // Color by depth
+  function spanColor(s) {
+    const d = depthMap.get(s.id);
+    const dur = s.end - s.start;
+    if (dur < 50) return "#475569"; // cold/idle
+    const t = Math.min(d / Math.max(maxDepth, 1), 1);
+    if (t < 0.35) return lerpColor("#DC2626", "#F97316", t / 0.35);
+    if (t < 0.7) return lerpColor("#F97316", "#FBBF24", (t - 0.35) / 0.35);
+    return lerpColor("#FBBF24", "#FDE047", (t - 0.7) / 0.3);
+  }
+  function lerpColor(a, b, t) {
+    const pa = hexToRgb(a), pb = hexToRgb(b);
+    const r = Math.round(pa.r + (pb.r - pa.r) * t);
+    const g = Math.round(pa.g + (pb.g - pa.g) * t);
+    const bl = Math.round(pa.b + (pb.b - pa.b) * t);
+    return `rgb(${r},${g},${bl})`;
+  }
+  function hexToRgb(h) {
+    const v = parseInt(h.slice(1), 16);
+    return { r: (v >> 16) & 255, g: (v >> 8) & 255, b: v & 255 };
+  }
+
+  // DOM refs
+  const flameSvg = document.getElementById("flameSvg");
+  const flameWrap = document.getElementById("flameWrap");
+  const tooltip = document.getElementById("tooltip");
+  const ttName = document.getElementById("ttName");
+  const ttDur = document.getElementById("ttDur");
+  const ttPct = document.getElementById("ttPct");
+  const search = document.getElementById("search");
+  const zoomInfo = document.getElementById("zoomInfo");
+  const minimapSvg = document.getElementById("minimapSvg");
+  const minimapViewport = document.getElementById("minimapViewport");
+  const dpName = document.getElementById("dpName");
+  const dpDur = document.getElementById("dpDur");
+  const dpRange = document.getElementById("dpRange");
+  const dpPct = document.getElementById("dpPct");
+  const dpPath = document.getElementById("dpPath");
+
+  const ROW_H = 28;
+  const ROW_GAP = 2;
+  const PAD_TOP = 12;
+  const PAD_LEFT = 16;
+  const TOTAL_DUR = 5000;
+
+  // Viewport state
+  let viewStart = 0;
+  let viewEnd = TOTAL_DUR;
+  let panStartX = null;
+  let panViewStart = null;
+  let panViewEnd = null;
+  let rectEls = [];
+
+  function msToStr(ms) {
+    return ms >= 1000 ? (ms / 1000).toFixed(2) + "s" : ms + "ms";
+  }
+
+  function getPath(s) {
+    const parts = [s.name];
+    let cur = s;
+    while (cur.parent >= 0) {
+      cur = spans[cur.parent];
+      parts.unshift(cur.name);
+    }
+    return parts.join(" > ");
+  }
+
+  function parentDuration(s) {
+    if (s.parent < 0) return TOTAL_DUR;
+    const p = spans[s.parent];
+    return p.end - p.start;
+  }
+
+  // Render flame graph
+  function render() {
+    const w = flameWrap.clientWidth;
+    const h = flameWrap.clientHeight;
+    flameSvg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+    flameSvg.innerHTML = "";
+    rectEls = [];
+
+    const usableW = w - PAD_LEFT * 2;
+    const viewDur = viewEnd - viewStart;
+
+    spans.forEach(s => {
+      const depth = depthMap.get(s.id);
+      const x = PAD_LEFT + ((s.start - viewStart) / viewDur) * usableW;
+      const rw = ((s.end - s.start) / viewDur) * usableW;
+      const y = PAD_TOP + depth * (ROW_H + ROW_GAP);
+
+      if (x + rw < 0 || x > w) return; // off-screen
+      if (rw < 0.5) return; // too small
+
+      const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      rect.setAttribute("x", Math.max(0, x));
+      rect.setAttribute("y", y);
+      rect.setAttribute("width", Math.max(1, Math.min(rw, w - x)));
+      rect.setAttribute("height", ROW_H);
+      rect.setAttribute("fill", spanColor(s));
+      rect.setAttribute("rx", 3);
+      rect.setAttribute("ry", 3);
+      rect.classList.add("span-rect");
+      rect.dataset.id = s.id;
+      g.appendChild(rect);
+
+      // Label if wide enough
+      if (rw > 40) {
+        const txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        txt.setAttribute("x", Math.max(4, x + 6));
+        txt.setAttribute("y", y + ROW_H / 2 + 4);
+        const label = s.name;
+        // Truncate to fit
+        const maxChars = Math.floor(rw / 7);
+        txt.textContent = label.length > maxChars ? label.slice(0, maxChars - 1) + "\u2026" : label;
+        g.appendChild(txt);
+      }
+
+      flameSvg.appendChild(g);
+      rectEls.push({ el: rect, span: s });
+
+      // Events
+      rect.addEventListener("mouseenter", e => showTooltip(e, s));
+      rect.addEventListener("mousemove", e => moveTooltip(e));
+      rect.addEventListener("mouseleave", hideTooltip);
+      rect.addEventListener("click", () => zoomToSpan(s));
+    });
+
+    applySearch();
+    updateMinimap();
+    updateZoomInfo();
+  }
+
+  // Tooltip
+  function showTooltip(e, s) {
+    const dur = s.end - s.start;
+    const pct = ((dur / parentDuration(s)) * 100).toFixed(1);
+    ttName.textContent = s.name;
+    ttDur.textContent = "Duration: " + msToStr(dur);
+    ttPct.textContent = pct + "% of parent";
+    tooltip.classList.add("visible");
+    moveTooltip(e);
+  }
+  function moveTooltip(e) {
+    const pad = 14;
+    let left = e.clientX + pad;
+    let top = e.clientY + pad;
+    if (left + 280 > window.innerWidth) left = e.clientX - 280;
+    if (top + 80 > window.innerHeight) top = e.clientY - 80;
+    tooltip.style.left = left + "px";
+    tooltip.style.top = top + "px";
+  }
+  function hideTooltip() {
+    tooltip.classList.remove("visible");
+  }
+
+  // Detail panel
+  function selectSpan(s) {
+    const dur = s.end - s.start;
+    const pct = ((dur / parentDuration(s)) * 100).toFixed(1);
+    dpName.textContent = s.name;
+    dpDur.textContent = msToStr(dur);
+    dpRange.textContent = msToStr(s.start) + " \u2014 " + msToStr(s.end);
+    dpPct.textContent = pct + "%";
+    dpPath.textContent = getPath(s);
+  }
+
+  // Zoom to span
+  function zoomToSpan(s) {
+    selectSpan(s);
+    const dur = s.end - s.start;
+    const margin = dur * 0.08;
+    viewStart = Math.max(0, s.start - margin);
+    viewEnd = Math.min(TOTAL_DUR, s.end + margin);
+    render();
+  }
+
+  // Zoom buttons
+  function zoomBy(factor) {
+    const mid = (viewStart + viewEnd) / 2;
+    const half = (viewEnd - viewStart) / 2 / factor;
+    viewStart = Math.max(0, mid - half);
+    viewEnd = Math.min(TOTAL_DUR, mid + half);
+    if (viewEnd - viewStart < 10) { viewEnd = viewStart + 10; }
+    render();
+  }
+
+  document.getElementById("zoomIn").addEventListener("click", () => zoomBy(1.5));
+  document.getElementById("zoomOut").addEventListener("click", () => zoomBy(1 / 1.5));
+  document.getElementById("resetBtn").addEventListener("click", () => {
+    viewStart = 0;
+    viewEnd = TOTAL_DUR;
+    dpName.textContent = "--";
+    dpDur.textContent = "--";
+    dpRange.textContent = "--";
+    dpPct.textContent = "--";
+    dpPath.textContent = "--";
+    render();
+  });
+
+  // Mouse wheel zoom
+  flameWrap.addEventListener("wheel", e => {
+    e.preventDefault();
+    const rect = flameWrap.getBoundingClientRect();
+    const xFrac = (e.clientX - rect.left - PAD_LEFT) / (rect.width - PAD_LEFT * 2);
+    const anchor = viewStart + (viewEnd - viewStart) * Math.max(0, Math.min(1, xFrac));
+    const factor = e.deltaY < 0 ? 1.25 : 1 / 1.25;
+    const newHalfL = (anchor - viewStart) / factor;
+    const newHalfR = (viewEnd - anchor) / factor;
+    viewStart = Math.max(0, anchor - newHalfL);
+    viewEnd = Math.min(TOTAL_DUR, anchor + newHalfR);
+    if (viewEnd - viewStart < 10) viewEnd = viewStart + 10;
+    render();
+  }, { passive: false });
+
+  // Pan via drag
+  flameWrap.addEventListener("mousedown", e => {
+    if (e.button !== 0) return;
+    panStartX = e.clientX;
+    panViewStart = viewStart;
+    panViewEnd = viewEnd;
+    flameWrap.style.cursor = "grabbing";
+  });
+  window.addEventListener("mousemove", e => {
+    if (panStartX === null) return;
+    const dx = e.clientX - panStartX;
+    const rect = flameWrap.getBoundingClientRect();
+    const usableW = rect.width - PAD_LEFT * 2;
+    const msPx = (panViewEnd - panViewStart) / usableW;
+    const shift = -dx * msPx;
+    let ns = panViewStart + shift;
+    let ne = panViewEnd + shift;
+    if (ns < 0) { ne -= ns; ns = 0; }
+    if (ne > TOTAL_DUR) { ns -= (ne - TOTAL_DUR); ne = TOTAL_DUR; }
+    viewStart = Math.max(0, ns);
+    viewEnd = Math.min(TOTAL_DUR, ne);
+    render();
+  });
+  window.addEventListener("mouseup", () => {
+    if (panStartX !== null) {
+      panStartX = null;
+      flameWrap.style.cursor = "";
+    }
+  });
+
+  // Search
+  function applySearch() {
+    const q = search.value.trim().toLowerCase();
+    if (!q) {
+      rectEls.forEach(r => r.el.classList.remove("dimmed"));
+      return;
+    }
+    rectEls.forEach(r => {
+      if (r.span.name.toLowerCase().includes(q)) {
+        r.el.classList.remove("dimmed");
+      } else {
+        r.el.classList.add("dimmed");
+      }
+    });
+  }
+  search.addEventListener("input", applySearch);
+
+  // Zoom info
+  function updateZoomInfo() {
+    const ratio = TOTAL_DUR / (viewEnd - viewStart);
+    zoomInfo.textContent = ratio.toFixed(1) + "x | " + msToStr(viewEnd - viewStart);
+  }
+
+  // Minimap
+  function renderMinimap() {
+    const w = document.getElementById("minimap").clientWidth;
+    const h = 28;
+    minimapSvg.innerHTML = "";
+    const usableW = w - 8;
+
+    spans.forEach(s => {
+      const depth = depthMap.get(s.id);
+      const x = 4 + (s.start / TOTAL_DUR) * usableW;
+      const rw = Math.max(1, ((s.end - s.start) / TOTAL_DUR) * usableW);
+      const rowH = 3;
+      const y = 2 + depth * (rowH + 1);
+      if (y + rowH > h) return;
+
+      const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      rect.setAttribute("x", x);
+      rect.setAttribute("y", y);
+      rect.setAttribute("width", rw);
+      rect.setAttribute("height", rowH);
+      rect.setAttribute("fill", spanColor(s));
+      rect.setAttribute("rx", 1);
+      minimapSvg.appendChild(rect);
+    });
+  }
+
+  function updateMinimap() {
+    const container = document.getElementById("minimap");
+    const w = container.clientWidth;
+    const left = (viewStart / TOTAL_DUR) * (w - 8) + 4;
+    const right = (viewEnd / TOTAL_DUR) * (w - 8) + 4;
+    minimapViewport.style.left = left + "px";
+    minimapViewport.style.width = Math.max(4, right - left) + "px";
+  }
+
+  // Minimap click to navigate
+  document.getElementById("minimap").addEventListener("click", e => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const frac = (e.clientX - rect.left - 4) / (rect.width - 8);
+    const ms = frac * TOTAL_DUR;
+    const half = (viewEnd - viewStart) / 2;
+    viewStart = Math.max(0, ms - half);
+    viewEnd = Math.min(TOTAL_DUR, ms + half);
+    if (viewStart < 0) { viewEnd -= viewStart; viewStart = 0; }
+    render();
+  });
+
+  // Resize
+  window.addEventListener("resize", () => {
+    renderMinimap();
+    render();
+  });
+
+  // Init
+  renderMinimap();
+  render();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,1001 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pi Agent — Network Graph</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0D1117;
+    --surface: #161B22;
+    --surface2: #1C2128;
+    --border: #30363D;
+    --text: #E6EDF3;
+    --text-muted: #7D8590;
+    --text-dim: #484F58;
+    --user: #58A6FF;
+    --orchestrator: #BC8CFF;
+    --code: #3FB950;
+    --math: #D29922;
+    --danger: #F85149;
+    --success: #3FB950;
+    --warn: #D29922;
+  }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 12px;
+    overflow: hidden;
+  }
+
+  /* ── Layout ── */
+  #app {
+    display: grid;
+    grid-template-columns: 1fr 360px;
+    grid-template-rows: 1fr 56px;
+    height: 100vh;
+  }
+
+  #canvas-wrap {
+    grid-column: 1;
+    grid-row: 1;
+    position: relative;
+    overflow: hidden;
+    background: radial-gradient(ellipse at 40% 50%, #0f1a2e 0%, var(--bg) 70%);
+  }
+
+  #graph-svg {
+    width: 100%;
+    height: 100%;
+    cursor: default;
+  }
+
+  #inspector {
+    grid-column: 2;
+    grid-row: 1;
+    border-left: 1px solid var(--border);
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  #bottombar {
+    grid-column: 1 / 3;
+    grid-row: 2;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    gap: 24px;
+  }
+
+  /* ── Inspector ── */
+  .inspector-header {
+    padding: 14px 16px 12px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 48px;
+  }
+
+  .inspector-title {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .inspector-badge {
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .inspector-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 14px 16px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+
+  .inspector-body::-webkit-scrollbar { width: 4px; }
+  .inspector-body::-webkit-scrollbar-track { background: transparent; }
+  .inspector-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .inspector-section {
+    margin-bottom: 20px;
+  }
+
+  .section-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+  }
+
+  .kv-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 5px 0;
+    border-bottom: 1px solid #1e2530;
+    gap: 8px;
+  }
+
+  .kv-key { color: var(--text-muted); font-size: 11px; flex-shrink: 0; }
+  .kv-val { color: var(--text); font-size: 11px; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .msg-item {
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: var(--surface2);
+    margin-bottom: 6px;
+    border-left: 3px solid var(--border);
+  }
+
+  .msg-item.active { border-left-color: var(--orchestrator); }
+
+  .msg-role {
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 4px;
+  }
+
+  .msg-text {
+    font-size: 11px;
+    color: var(--text);
+    line-height: 1.5;
+  }
+
+  .task-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 10px;
+    font-weight: 600;
+    margin: 3px 3px 3px 0;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .task-chip.completed { background: #1a2e1a; color: var(--success); border: 1px solid #2a4a2a; }
+  .task-chip.running   { background: #1a1e2e; color: var(--user); border: 1px solid #2a3050; }
+  .task-chip.failed    { background: #2e1a1a; color: var(--danger); border: 1px solid #4a2a2a; }
+
+  .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+  }
+
+  .pulse-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--user);
+    display: inline-block;
+    animation: pulseDot 1.4s ease-in-out infinite;
+  }
+
+  @keyframes pulseDot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.6); }
+  }
+
+  .placeholder-state {
+    color: var(--text-dim);
+    font-size: 11px;
+    line-height: 1.7;
+    padding: 24px 0;
+    text-align: center;
+  }
+
+  .placeholder-icon {
+    font-size: 28px;
+    margin-bottom: 10px;
+    opacity: 0.3;
+  }
+
+  /* ── Bottom Bar ── */
+  .metric {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    white-space: nowrap;
+  }
+
+  .metric-label { color: var(--text-dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .metric-val   { color: var(--text); font-size: 12px; font-weight: 600; }
+
+  .metric-sep { width: 1px; height: 20px; background: var(--border); }
+
+  /* ── Time Scrubber ── */
+  .scrubber-wrap {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: auto;
+  }
+
+  .scrubber-label { color: var(--text-dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; }
+
+  #scrubber {
+    flex: 1;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+    max-width: 200px;
+  }
+
+  #scrubber::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--orchestrator);
+    cursor: pointer;
+    box-shadow: 0 0 6px var(--orchestrator);
+  }
+
+  .replay-badge {
+    display: none;
+    font-size: 9px;
+    padding: 2px 7px;
+    border-radius: 10px;
+    background: #2a1e40;
+    color: var(--orchestrator);
+    border: 1px solid #5a3a9a;
+    text-transform: uppercase;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    animation: replayPulse 1.8s ease-in-out infinite;
+  }
+
+  .replay-badge.visible { display: inline-block; }
+
+  @keyframes replayPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  /* ── SVG Graph Styles ── */
+  .edge-line {
+    stroke-width: 1.5;
+    fill: none;
+    opacity: 0.35;
+    cursor: pointer;
+    transition: opacity 0.2s, stroke-width 0.2s;
+  }
+
+  .edge-line.active {
+    opacity: 0.65;
+    stroke-width: 2;
+  }
+
+  .edge-line:hover, .edge-line.selected {
+    opacity: 0.9;
+    stroke-width: 2.5;
+  }
+
+  .edge-glow {
+    stroke-width: 6;
+    fill: none;
+    opacity: 0;
+    filter: blur(3px);
+    pointer-events: none;
+    transition: opacity 0.3s;
+  }
+
+  .edge-glow.active { opacity: 0.18; animation: edgeGlowPulse 2s ease-in-out infinite; }
+
+  @keyframes edgeGlowPulse {
+    0%, 100% { opacity: 0.12; }
+    50% { opacity: 0.28; }
+  }
+
+  .node-group { cursor: pointer; }
+
+  .node-ring {
+    fill: none;
+    stroke-width: 1.5;
+    opacity: 0.5;
+  }
+
+  .node-ring.running {
+    animation: ringPulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes ringPulse {
+    0%, 100% { r: 26; opacity: 0.5; }
+    50% { r: 32; opacity: 0.15; }
+  }
+
+  .node-circle {
+    stroke-width: 2;
+    transition: filter 0.2s;
+  }
+
+  .node-group:hover .node-circle,
+  .node-group.selected .node-circle {
+    filter: brightness(1.3) drop-shadow(0 0 8px currentColor);
+  }
+
+  .node-label {
+    fill: var(--text);
+    font-family: 'SF Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    text-anchor: middle;
+    dominant-baseline: middle;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  .node-sublabel {
+    fill: var(--text-muted);
+    font-family: 'SF Mono', monospace;
+    font-size: 9px;
+    text-anchor: middle;
+    dominant-baseline: middle;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  /* Particle CSS animations */
+  .particle {
+    pointer-events: none;
+  }
+
+  /* Grid/stars background */
+  #stars { pointer-events: none; }
+
+  /* Edge label */
+  .edge-count {
+    fill: var(--text-dim);
+    font-family: 'SF Mono', monospace;
+    font-size: 9px;
+    text-anchor: middle;
+    dominant-baseline: middle;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  /* Canvas overlay hint */
+  #canvas-hint {
+    position: absolute;
+    top: 12px;
+    left: 14px;
+    color: var(--text-dim);
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .hint-line { display: flex; align-items: center; gap: 5px; }
+  .hint-icon { opacity: 0.5; font-size: 10px; }
+
+  /* Session badge */
+  #session-badge {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 10px;
+    color: var(--text-muted);
+    pointer-events: none;
+  }
+
+  .session-id { color: var(--text); font-weight: 600; letter-spacing: 0.04em; }
+
+  /* Live badge */
+  .live-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--success);
+    padding: 2px 7px;
+    border-radius: 10px;
+    background: #1a2e1a;
+    border: 1px solid #2a4a2a;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Canvas -->
+  <div id="canvas-wrap">
+    <svg id="graph-svg" viewBox="0 0 960 620" preserveAspectRatio="xMidYMid meet">
+      <defs>
+        <radialGradient id="starGrad" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="#1a2a4a" stop-opacity="0.4"/>
+          <stop offset="100%" stop-color="#0D1117" stop-opacity="0"/>
+        </radialGradient>
+        <filter id="glow-blue">
+          <feGaussianBlur stdDeviation="4" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <filter id="glow-purple">
+          <feGaussianBlur stdDeviation="5" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <filter id="glow-sm">
+          <feGaussianBlur stdDeviation="2.5" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <marker id="arrow-user" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L6,3 z" fill="#58A6FF" opacity="0.5"/>
+        </marker>
+        <marker id="arrow-orc" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L6,3 z" fill="#BC8CFF" opacity="0.5"/>
+        </marker>
+      </defs>
+
+      <!-- Background glow -->
+      <ellipse cx="480" cy="310" rx="350" ry="220" fill="url(#starGrad)"/>
+
+      <!-- Stars group (populated by JS) -->
+      <g id="stars"></g>
+
+      <!-- Edge glow layer -->
+      <g id="edge-glows"></g>
+
+      <!-- Edge lines layer -->
+      <g id="edge-lines"></g>
+
+      <!-- Edge particles layer -->
+      <g id="edge-particles"></g>
+
+      <!-- Edge labels layer -->
+      <g id="edge-labels"></g>
+
+      <!-- Node layer -->
+      <g id="nodes"></g>
+    </svg>
+
+    <div id="canvas-hint">
+      <div class="hint-line"><span class="hint-icon">◎</span> Click node to inspect agent</div>
+      <div class="hint-line"><span class="hint-icon">─</span> Click edge to inspect thread</div>
+    </div>
+
+    <div id="session-badge">
+      Session <span class="session-id">sess_7f3a1b</span>
+    </div>
+  </div>
+
+  <!-- Inspector Panel -->
+  <div id="inspector">
+    <div class="inspector-header">
+      <span class="inspector-title" id="inspector-title">Network Inspector</span>
+      <span id="inspector-badge"></span>
+    </div>
+    <div class="inspector-body" id="inspector-body">
+      <div class="placeholder-state">
+        <div class="placeholder-icon">⬡</div>
+        <div>Select a node or edge<br>to inspect details</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom Bar -->
+  <div id="bottombar">
+    <div class="metric">
+      <span class="metric-label">Active Tasks</span>
+      <span class="metric-val" id="m-active">1</span>
+      <span class="pulse-dot" style="background:var(--user)"></span>
+    </div>
+    <div class="metric-sep"></div>
+    <div class="metric">
+      <span class="metric-label">Messages</span>
+      <span class="metric-val" id="m-msgs">13</span>
+    </div>
+    <div class="metric-sep"></div>
+    <div class="metric">
+      <span class="metric-label">Agents</span>
+      <span class="metric-val">4</span>
+    </div>
+    <div class="metric-sep"></div>
+    <div class="metric">
+      <span class="metric-label">Traces</span>
+      <span class="metric-val" id="m-traces">15</span>
+    </div>
+    <div class="metric-sep"></div>
+    <div class="metric">
+      <span class="metric-label">Duration</span>
+      <span class="metric-val" id="m-duration">00:00</span>
+    </div>
+    <div class="metric-sep"></div>
+    <div class="metric">
+      <span class="live-badge"><span class="pulse-dot" style="width:5px;height:5px;background:var(--success)"></span> LIVE</span>
+    </div>
+
+    <div class="scrubber-wrap">
+      <span class="scrubber-label">Timeline</span>
+      <input type="range" id="scrubber" min="0" max="100" value="100">
+      <span class="replay-badge" id="replay-badge">Replaying</span>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── Data ──────────────────────────────────────────────────────────────────────
+
+const AGENTS = [
+  { id: "user",         label: "User",         sublabel: "Terminal",    color: "#58A6FF", x: 180, y: 310, status: "idle"    },
+  { id: "orchestrator", label: "Orchestrator",  sublabel: "pi/orc-v1",  color: "#BC8CFF", x: 480, y: 310, status: "running" },
+  { id: "code",         label: "Code Agent",   sublabel: "pi/code-v1",  color: "#3FB950", x: 760, y: 155, status: "running" },
+  { id: "math",         label: "Math Agent",   sublabel: "pi/math-v1",  color: "#D29922", x: 760, y: 465, status: "idle"    },
+];
+
+const THREADS = [
+  {
+    id: "thread-1", from: "user", to: "orchestrator", messageCount: 5, active: false,
+    messages: [
+      { role: "user",         text: "Solve the integral ∫x² dx and write a Python function for it." },
+      { role: "orchestrator", text: "I'll delegate the math to Math Agent and the code to Code Agent." },
+      { role: "user",         text: "Also make the Python function accept arbitrary exponents." },
+      { role: "orchestrator", text: "Understood, expanding scope. Delegating updated requirements." },
+      { role: "user",         text: "Add unit tests too." },
+    ]
+  },
+  {
+    id: "thread-2", from: "orchestrator", to: "code", messageCount: 4, active: true,
+    messages: [
+      { role: "orchestrator", text: "Write a Python function `integrate_power(x, n)` returning x^(n+1)/(n+1)." },
+      { role: "code",         text: "Working on it. I'll add type hints and docstring." },
+      { role: "orchestrator", text: "Include unit tests for n=1, n=2, n=3." },
+      { role: "code",         text: "Tests drafted. Running verification now..." },
+    ]
+  },
+  {
+    id: "thread-3", from: "orchestrator", to: "math", messageCount: 4, active: false,
+    messages: [
+      { role: "orchestrator", text: "Compute the closed-form integral of x^n dx for general n." },
+      { role: "math",         text: "∫x^n dx = x^(n+1)/(n+1) + C, where n ≠ -1." },
+      { role: "orchestrator", text: "Confirm boundary: what happens when n = -1?" },
+      { role: "math",         text: "When n = -1: ∫x⁻¹ dx = ln|x| + C. Completed." },
+    ]
+  },
+];
+
+const TASKS = [
+  { id: "task-1", label: "Compute integral ∫x² dx",           status: "completed", agentId: "math",         duration: "0.8s"  },
+  { id: "task-2", label: "Handle n=-1 edge case",             status: "completed", agentId: "math",         duration: "0.3s"  },
+  { id: "task-3", label: "Write integrate_power() + tests",   status: "running",   agentId: "code",         duration: "..."   },
+  { id: "task-4", label: "Validate against symbolic solver",  status: "failed",    agentId: "orchestrator", duration: "1.2s"  },
+];
+
+const TRACES = [
+  { t: 0.00, type: "session_start",   msg: "Session sess_7f3a1b initialized",           agentId: "orchestrator" },
+  { t: 0.12, type: "agent_init",      msg: "Agent 'user' initialized",                   agentId: "user"         },
+  { t: 0.18, type: "agent_init",      msg: "Agent 'orchestrator' initialized",            agentId: "orchestrator" },
+  { t: 0.24, type: "agent_init",      msg: "Agent 'code' initialized",                   agentId: "code"         },
+  { t: 0.31, type: "agent_init",      msg: "Agent 'math' initialized",                   agentId: "math"         },
+  { t: 0.85, type: "task_queued",     msg: "task-1 queued: Compute integral ∫x² dx",     agentId: "orchestrator" },
+  { t: 0.90, type: "task_queued",     msg: "task-3 queued: Write integrate_power()",     agentId: "orchestrator" },
+  { t: 1.10, type: "task_started",    msg: "task-1 started → math",                      agentId: "math"         },
+  { t: 1.15, type: "task_started",    msg: "task-3 started → code",                      agentId: "code"         },
+  { t: 1.40, type: "tool_start",      msg: "tool:compute_integral(x^2)",                 agentId: "math"         },
+  { t: 1.80, type: "tool_start",      msg: "tool:write_code(integrate_power)",           agentId: "code"         },
+  { t: 2.20, type: "tool_end",        msg: "tool:compute_integral → ∫x²dx=x³/3+C",      agentId: "math"         },
+  { t: 2.50, type: "task_completed",  msg: "task-1 completed in 0.8s",                   agentId: "math"         },
+  { t: 2.80, type: "tool_start",      msg: "tool:run_tests(integrate_power)",            agentId: "code"         },
+  { t: 3.10, type: "tool_end",        msg: "tool:write_code → function drafted",         agentId: "code"         },
+  { t: 3.90, type: "task_completed",  msg: "task-2 completed in 0.3s",                   agentId: "math"         },
+  { t: 4.50, type: "task_failed",     msg: "task-4 failed: symbolic solver timeout",     agentId: "orchestrator" },
+];
+
+// ── State ─────────────────────────────────────────────────────────────────────
+
+let selectedNode = null;
+let selectedEdge = null;
+let sessionStartTime = Date.now();
+
+// ── Stars Background ──────────────────────────────────────────────────────────
+
+function initStars() {
+  const g = document.getElementById("stars");
+  const count = 80;
+  for (let i = 0; i < count; i++) {
+    const x = Math.random() * 960;
+    const y = Math.random() * 620;
+    const r = Math.random() * 1.2 + 0.2;
+    const opacity = Math.random() * 0.4 + 0.05;
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("cx", x);
+    circle.setAttribute("cy", y);
+    circle.setAttribute("r", r);
+    circle.setAttribute("fill", "#a0b8e0");
+    circle.setAttribute("opacity", opacity);
+    if (Math.random() > 0.7) {
+      circle.style.animation = `pulseDot ${(Math.random() * 3 + 2).toFixed(1)}s ease-in-out ${(Math.random() * 2).toFixed(1)}s infinite`;
+    }
+    g.appendChild(circle);
+  }
+}
+
+// ── Graph Rendering ───────────────────────────────────────────────────────────
+
+function agentById(id) { return AGENTS.find(a => a.id === id); }
+function threadById(id) { return THREADS.find(t => t.id === id); }
+
+function edgePath(thread) {
+  const from = agentById(thread.from);
+  const to   = agentById(thread.to);
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  const ux = dx / len, uy = dy / len;
+  const r = 24;
+  const x1 = from.x + ux * (r + 2);
+  const y1 = from.y + uy * (r + 2);
+  const x2 = to.x   - ux * (r + 8);
+  const y2 = to.y   - uy * (r + 8);
+  // slight curve
+  const mx = (x1 + x2) / 2 - uy * 30;
+  const my = (y1 + y2) / 2 + ux * 30;
+  return { d: `M${x1},${y1} Q${mx},${my} ${x2},${y2}`, x1, y1, x2, y2, mx, my };
+}
+
+function renderEdges() {
+  const glowG    = document.getElementById("edge-glows");
+  const linesG   = document.getElementById("edge-lines");
+  const labelsG  = document.getElementById("edge-labels");
+
+  THREADS.forEach(thread => {
+    const from = agentById(thread.from);
+    const path = edgePath(thread);
+
+    // glow
+    const glow = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    glow.setAttribute("d", path.d);
+    glow.setAttribute("stroke", from.color);
+    glow.setAttribute("class", "edge-glow" + (thread.active ? " active" : ""));
+    glow.setAttribute("data-thread", thread.id);
+    glowG.appendChild(glow);
+
+    // line
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    line.setAttribute("d", path.d);
+    line.setAttribute("stroke", from.color);
+    line.setAttribute("class", "edge-line" + (thread.active ? " active" : ""));
+    line.setAttribute("data-thread", thread.id);
+    line.setAttribute("marker-end", from.id === "user" ? "url(#arrow-user)" : "url(#arrow-orc)");
+    line.style.cursor = "pointer";
+    line.addEventListener("click", () => selectEdge(thread.id));
+    linesG.appendChild(line);
+
+    // label — midpoint of bezier ~t=0.5
+    const lx = 0.25 * path.x1 + 0.5 * path.mx + 0.25 * path.x2;
+    const ly = 0.25 * path.y1 + 0.5 * path.my + 0.25 * path.y2;
+    const lbl = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    lbl.setAttribute("x", lx);
+    lbl.setAttribute("y", ly);
+    lbl.setAttribute("class", "edge-count");
+    lbl.textContent = `${thread.messageCount} msgs`;
+    labelsG.appendChild(lbl);
+  });
+}
+
+function renderNodes() {
+  const g = document.getElementById("nodes");
+
+  AGENTS.forEach(agent => {
+    const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    group.setAttribute("class", "node-group");
+    group.setAttribute("data-agent", agent.id);
+    group.setAttribute("transform", `translate(${agent.x},${agent.y})`);
+
+    // outer pulse ring
+    const ring = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    ring.setAttribute("r", 28);
+    ring.setAttribute("stroke", agent.color);
+    ring.setAttribute("class", "node-ring" + (agent.status === "running" ? " running" : ""));
+    group.appendChild(ring);
+
+    // shadow circle
+    const shadow = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    shadow.setAttribute("r", 22);
+    shadow.setAttribute("fill", agent.color);
+    shadow.setAttribute("opacity", "0.12");
+    shadow.setAttribute("filter", "url(#glow-sm)");
+    group.appendChild(shadow);
+
+    // main circle
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("r", 22);
+    circle.setAttribute("fill", "#0D1117");
+    circle.setAttribute("stroke", agent.color);
+    circle.setAttribute("class", "node-circle");
+    circle.style.color = agent.color;
+    group.appendChild(circle);
+
+    // inner fill dot
+    const inner = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    inner.setAttribute("r", 8);
+    inner.setAttribute("fill", agent.color);
+    inner.setAttribute("opacity", "0.7");
+    group.appendChild(inner);
+
+    // label below
+    const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    label.setAttribute("x", 0);
+    label.setAttribute("y", 38);
+    label.setAttribute("class", "node-label");
+    label.textContent = agent.label;
+    group.appendChild(label);
+
+    // sublabel
+    const sub = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    sub.setAttribute("x", 0);
+    sub.setAttribute("y", 50);
+    sub.setAttribute("class", "node-sublabel");
+    sub.textContent = agent.sublabel;
+    group.appendChild(sub);
+
+    group.addEventListener("click", () => selectNode(agent.id));
+    g.appendChild(group);
+  });
+}
+
+// ── Particles ─────────────────────────────────────────────────────────────────
+
+const particles = [];
+
+function createParticles() {
+  const g = document.getElementById("edge-particles");
+
+  THREADS.forEach(thread => {
+    if (!thread.active) return;
+    const from = agentById(thread.from);
+    const path = edgePath(thread);
+
+    for (let i = 0; i < 3; i++) {
+      const p = {
+        thread,
+        progress: i / 3,
+        speed: 0.0018 + Math.random() * 0.001,
+        path,
+        color: from.color,
+        el: null,
+      };
+
+      const el = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      el.setAttribute("r", 3);
+      el.setAttribute("fill", from.color);
+      el.setAttribute("opacity", "0.9");
+      el.setAttribute("class", "particle");
+      g.appendChild(el);
+      p.el = el;
+      particles.push(p);
+    }
+  });
+}
+
+function bezierPoint(x1, y1, cx, cy, x2, y2, t) {
+  const mt = 1 - t;
+  return {
+    x: mt * mt * x1 + 2 * mt * t * cx + t * t * x2,
+    y: mt * mt * y1 + 2 * mt * t * cy + t * t * y2,
+  };
+}
+
+function animateParticles() {
+  particles.forEach(p => {
+    p.progress += p.speed;
+    if (p.progress > 1) p.progress = 0;
+    const { x1, y1, mx, my, x2, y2 } = p.path;
+    const pt = bezierPoint(x1, y1, mx, my, x2, y2, p.progress);
+    p.el.setAttribute("cx", pt.x);
+    p.el.setAttribute("cy", pt.y);
+
+    // fade in/out at ends
+    const fade = p.progress < 0.1 ? p.progress / 0.1
+               : p.progress > 0.9 ? (1 - p.progress) / 0.1
+               : 1;
+    p.el.setAttribute("opacity", (fade * 0.9).toFixed(2));
+  });
+  requestAnimationFrame(animateParticles);
+}
+
+// ── Inspector ─────────────────────────────────────────────────────────────────
+
+function selectNode(agentId) {
+  selectedEdge = null;
+  selectedNode = agentId;
+
+  // clear selections
+  document.querySelectorAll(".node-group").forEach(g => g.classList.remove("selected"));
+  document.querySelectorAll(".edge-line").forEach(e => e.classList.remove("selected"));
+  // set
+  const el = document.querySelector(`[data-agent="${agentId}"]`);
+  if (el) el.classList.add("selected");
+
+  const agent = agentById(agentId);
+  const agentThreads = THREADS.filter(t => t.from === agentId || t.to === agentId);
+  const agentTasks   = TASKS.filter(t => t.agentId === agentId);
+  const agentTraces  = TRACES.filter(t => t.agentId === agentId).slice(-4).reverse();
+
+  const statusColor = { running: "#58A6FF", idle: "#7D8590" }[agent.status] || "#7D8590";
+
+  document.getElementById("inspector-title").textContent = agent.label;
+  const badge = document.getElementById("inspector-badge");
+  badge.textContent = agent.status.toUpperCase();
+  badge.className = "inspector-badge";
+  badge.style.background = agent.status === "running" ? "#1a1e2e" : "#1c2128";
+  badge.style.color = statusColor;
+  badge.style.border = `1px solid ${statusColor}40`;
+
+  document.getElementById("inspector-body").innerHTML = `
+    <div class="inspector-section">
+      <div class="section-label">Identity</div>
+      <div class="kv-row"><span class="kv-key">ID</span><span class="kv-val">${agent.id}</span></div>
+      <div class="kv-row"><span class="kv-key">Model</span><span class="kv-val">${agent.sublabel}</span></div>
+      <div class="kv-row"><span class="kv-key">Status</span><span class="kv-val" style="color:${statusColor}">${agent.status}</span></div>
+      <div class="kv-row"><span class="kv-key">Threads</span><span class="kv-val">${agentThreads.length}</span></div>
+      <div class="kv-row"><span class="kv-key">Color</span><span class="kv-val"><span class="dot" style="background:${agent.color};display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;"></span>${agent.color}</span></div>
+    </div>
+
+    <div class="inspector-section">
+      <div class="section-label">Tasks (${agentTasks.length})</div>
+      ${agentTasks.length === 0
+        ? `<div style="color:var(--text-dim);font-size:11px">No tasks assigned</div>`
+        : agentTasks.map(t => `
+        <div class="task-chip ${t.status}">
+          <span>${t.status === 'running' ? '⟳' : t.status === 'completed' ? '✓' : '✕'}</span>
+          <span>${t.label}</span>
+          <span style="opacity:0.6">${t.duration}</span>
+        </div>`).join("")}
+    </div>
+
+    <div class="inspector-section">
+      <div class="section-label">Connected Threads</div>
+      ${agentThreads.map(t => {
+        const peer = t.from === agentId ? agentById(t.to) : agentById(t.from);
+        const dir  = t.from === agentId ? "→" : "←";
+        return `<div class="kv-row">
+          <span class="kv-key" style="display:flex;align-items:center;gap:5px">
+            <span class="dot" style="background:${peer.color};width:6px;height:6px;border-radius:50%;display:inline-block"></span>
+            ${dir} ${peer.label}
+          </span>
+          <span class="kv-val">${t.messageCount} msgs${t.active ? ' <span style="color:var(--success)">●</span>' : ''}</span>
+        </div>`;
+      }).join("")}
+    </div>
+
+    <div class="inspector-section">
+      <div class="section-label">Recent Traces</div>
+      ${agentTraces.map(tr => `
+        <div class="msg-item">
+          <div class="msg-role">${tr.type} · +${tr.t.toFixed(2)}s</div>
+          <div class="msg-text">${tr.msg}</div>
+        </div>`).join("")}
+    </div>
+  `;
+}
+
+function selectEdge(threadId) {
+  selectedNode = null;
+  selectedEdge = threadId;
+
+  document.querySelectorAll(".node-group").forEach(g => g.classList.remove("selected"));
+  document.querySelectorAll(".edge-line").forEach(e => {
+    if (e.getAttribute("data-thread") === threadId) e.classList.add("selected");
+    else e.classList.remove("selected");
+  });
+
+  const thread = threadById(threadId);
+  const from   = agentById(thread.from);
+  const to     = agentById(thread.to);
+
+  document.getElementById("inspector-title").textContent = `Thread`;
+  const badge = document.getElementById("inspector-badge");
+  badge.textContent = thread.active ? "ACTIVE" : "IDLE";
+  badge.className = "inspector-badge";
+  badge.style.background = thread.active ? "#1a1e2e" : "#1c2128";
+  badge.style.color = thread.active ? "#58A6FF" : "#7D8590";
+  badge.style.border = `1px solid ${thread.active ? "#58A6FF" : "#7D8590"}40`;
+
+  document.getElementById("inspector-body").innerHTML = `
+    <div class="inspector-section">
+      <div class="section-label">Thread Info</div>
+      <div class="kv-row"><span class="kv-key">ID</span><span class="kv-val">${thread.id}</span></div>
+      <div class="kv-row">
+        <span class="kv-key">From</span>
+        <span class="kv-val" style="display:flex;align-items:center;gap:5px">
+          <span class="dot" style="background:${from.color};width:6px;height:6px;border-radius:50%;display:inline-block"></span>
+          ${from.label}
+        </span>
+      </div>
+      <div class="kv-row">
+        <span class="kv-key">To</span>
+        <span class="kv-val" style="display:flex;align-items:center;gap:5px">
+          <span class="dot" style="background:${to.color};width:6px;height:6px;border-radius:50%;display:inline-block"></span>
+          ${to.label}
+        </span>
+      </div>
+      <div class="kv-row"><span class="kv-key">Messages</span><span class="kv-val">${thread.messageCount}</span></div>
+      <div class="kv-row"><span class="kv-key">Status</span><span class="kv-val" style="color:${thread.active ? '#58A6FF' : '#7D8590'}">${thread.active ? "Active" : "Idle"}</span></div>
+    </div>
+
+    <div class="inspector-section">
+      <div class="section-label">Messages (${thread.messages.length})</div>
+      ${thread.messages.map((m, i) => {
+        const agent = AGENTS.find(a => a.id === m.role) || null;
+        const color = agent ? agent.color : "#7D8590";
+        return `<div class="msg-item${thread.active && i === thread.messages.length - 1 ? ' active' : ''}">
+          <div class="msg-role" style="color:${color}">${m.role}</div>
+          <div class="msg-text">${m.text}</div>
+        </div>`;
+      }).join("")}
+    </div>
+  `;
+}
+
+// ── Duration Counter ──────────────────────────────────────────────────────────
+
+function updateDuration() {
+  const elapsed = Math.floor((Date.now() - sessionStartTime) / 1000);
+  const m = String(Math.floor(elapsed / 60)).padStart(2, "0");
+  const s = String(elapsed % 60).padStart(2, "0");
+  document.getElementById("m-duration").textContent = `${m}:${s}`;
+}
+
+// ── Scrubber ──────────────────────────────────────────────────────────────────
+
+document.getElementById("scrubber").addEventListener("input", function() {
+  const badge = document.getElementById("replay-badge");
+  if (parseInt(this.value) < 100) {
+    badge.classList.add("visible");
+  } else {
+    badge.classList.remove("visible");
+  }
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+initStars();
+renderEdges();
+renderNodes();
+createParticles();
+animateParticles();
+setInterval(updateDuration, 1000);
+updateDuration();
+</script>
+</body>
+</html>

@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PI-AGENT // TERMINAL DASHBOARD</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0A0E14;
+    --green: #00FF41;
+    --dim: #0B6623;
+    --yellow: #FFD700;
+    --red: #FF4444;
+    --cyan: #00FFFF;
+    --border: #1a3a1a;
+    --glow: 0 0 8px #00FF41;
+    --glow-dim: 0 0 4px #00FF41;
+  }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--green);
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 12px;
+    overflow: hidden;
+  }
+
+  /* CRT scanlines */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.15) 2px,
+      rgba(0,0,0,0.15) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* CRT vignette */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.6) 100%);
+    pointer-events: none;
+    z-index: 9998;
+  }
+
+  @keyframes blink {
+    0%, 49% { opacity: 1; }
+    50%, 100% { opacity: 0.2; }
+  }
+
+  @keyframes cursor-blink {
+    0%, 49% { opacity: 1; }
+    50%, 100% { opacity: 0; }
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% { text-shadow: 0 0 8px var(--yellow), 0 0 16px var(--yellow); }
+    50% { text-shadow: 0 0 4px var(--yellow); }
+  }
+
+  .blink { animation: blink 1s step-start infinite; }
+
+  /* Layout */
+  #app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+
+  #topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 12px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(0,255,65,0.03);
+    flex-shrink: 0;
+  }
+
+  #topbar .title {
+    text-shadow: var(--glow);
+    letter-spacing: 0.15em;
+    font-size: 13px;
+    font-weight: bold;
+  }
+
+  #topbar .meta {
+    color: var(--dim);
+    font-size: 11px;
+  }
+
+  #topbar .status-indicator {
+    font-size: 11px;
+    letter-spacing: 0.1em;
+  }
+
+  #main {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+
+  /* Left panel — trace log */
+  #panel-trace {
+    width: 55%;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+  }
+
+  .panel-header {
+    padding: 4px 10px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(0,255,65,0.03);
+    font-size: 11px;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    flex-shrink: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .panel-header span { color: var(--green); text-shadow: var(--glow-dim); }
+
+  #trace-log {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 10px;
+    line-height: 1.5;
+  }
+
+  #trace-log::-webkit-scrollbar { width: 4px; }
+  #trace-log::-webkit-scrollbar-track { background: var(--bg); }
+  #trace-log::-webkit-scrollbar-thumb { background: var(--dim); }
+
+  .trace-row {
+    display: flex;
+    gap: 8px;
+    padding: 1px 0;
+    cursor: pointer;
+    transition: background 0.1s;
+    white-space: nowrap;
+  }
+
+  .trace-row:hover { background: rgba(0,255,65,0.05); }
+  .trace-row.filtered-out { opacity: 0.15; }
+  .trace-row.highlight { background: rgba(0,255,65,0.08); }
+
+  .trace-ts { color: var(--dim); min-width: 100px; }
+  .trace-type { min-width: 130px; }
+  .trace-detail { color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
+
+  .t-session_start { color: var(--cyan); }
+  .t-agent_init { color: #7ec8e3; }
+  .t-task_queued { color: var(--cyan); }
+  .t-task_started { color: var(--yellow); }
+  .t-tool_start { color: #c8a87e; }
+  .t-tool_end { color: #a8c87e; }
+  .t-task_completed { color: var(--green); text-shadow: var(--glow-dim); }
+  .t-task_failed { color: var(--red); }
+
+  /* Right panel */
+  #panel-right {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  /* Agent status */
+  #panel-agents {
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  #agents-table {
+    width: 100%;
+    border-collapse: collapse;
+    padding: 0 6px;
+  }
+
+  #agents-table th {
+    text-align: left;
+    padding: 3px 6px;
+    color: var(--dim);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    border-bottom: 1px solid var(--border);
+  }
+
+  #agents-table td {
+    padding: 3px 6px;
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  #agents-table tr:hover td { background: rgba(0,255,65,0.04); }
+
+  /* Task queue */
+  #panel-tasks {
+    border-bottom: 1px solid var(--border);
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  #tasks-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+  }
+
+  #tasks-list::-webkit-scrollbar { width: 4px; }
+  #tasks-list::-webkit-scrollbar-track { background: var(--bg); }
+  #tasks-list::-webkit-scrollbar-thumb { background: var(--dim); }
+
+  .task-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 3px 10px;
+    cursor: pointer;
+    border-bottom: 1px solid rgba(26,58,26,0.4);
+  }
+
+  .task-row:hover { background: rgba(0,255,65,0.04); }
+  .task-row.filtered-out { opacity: 0.2; }
+
+  .task-id { min-width: 64px; color: var(--dim); font-size: 10px; }
+  .task-status { min-width: 80px; font-size: 10px; font-weight: bold; }
+  .task-desc { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+  .task-agent { min-width: 58px; color: var(--dim); font-size: 10px; text-align: right; }
+
+  /* Thread inspector */
+  #panel-thread {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    max-height: 200px;
+  }
+
+  #thread-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 10px;
+    font-size: 11px;
+    line-height: 1.6;
+  }
+
+  #thread-content::-webkit-scrollbar { width: 4px; }
+  #thread-content::-webkit-scrollbar-track { background: var(--bg); }
+  #thread-content::-webkit-scrollbar-thumb { background: var(--dim); }
+
+  .thread-field { display: flex; gap: 8px; }
+  .thread-key { color: var(--dim); min-width: 120px; }
+  .thread-val { color: var(--green); }
+
+  /* Command line */
+  #cmdbar {
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 5px 10px;
+    background: rgba(0,255,65,0.02);
+    flex-shrink: 0;
+    gap: 6px;
+  }
+
+  #cmdbar .prompt {
+    color: var(--green);
+    text-shadow: var(--glow);
+    font-size: 13px;
+    flex-shrink: 0;
+  }
+
+  #cmd-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--green);
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 12px;
+    text-shadow: var(--glow-dim);
+    caret-color: var(--green);
+  }
+
+  #cmd-feedback {
+    font-size: 11px;
+    color: var(--dim);
+    min-width: 200px;
+    text-align: right;
+  }
+
+  /* Status colors */
+  .s-COMPLETED { color: var(--green); text-shadow: var(--glow-dim); }
+  .s-RUNNING {
+    color: var(--yellow);
+    animation: pulse-glow 1.2s ease-in-out infinite;
+  }
+  .s-FAILED { color: var(--red); }
+  .s-QUEUED { color: var(--cyan); }
+  .s-IDLE { color: var(--dim); }
+
+  .clickable-id {
+    cursor: pointer;
+    text-decoration: underline dotted;
+  }
+  .clickable-id:hover { color: var(--cyan); }
+
+  .filter-badge {
+    background: rgba(0,255,65,0.1);
+    border: 1px solid var(--dim);
+    padding: 1px 6px;
+    font-size: 10px;
+    color: var(--green);
+    display: none;
+  }
+  .filter-badge.active { display: inline; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Top bar -->
+  <div id="topbar">
+    <div class="title">PI-AGENT RUNTIME // TERMINAL DASHBOARD v0.1</div>
+    <div class="meta">session: sess-abc123 &nbsp;|&nbsp; run: run-001 &nbsp;|&nbsp; <span id="clock"></span></div>
+    <div class="status-indicator">
+      <span id="live-badge" class="s-RUNNING">&#9679; LIVE</span>
+      <span id="paused-badge" style="display:none;color:var(--dim)">&#9632; PAUSED</span>
+      &nbsp;
+      <span class="filter-badge" id="filter-badge"></span>
+    </div>
+  </div>
+
+  <!-- Main area -->
+  <div id="main">
+
+    <!-- Left: Trace log -->
+    <div id="panel-trace">
+      <div class="panel-header">
+        Trace Log
+        <span id="trace-count">0 events</span>
+      </div>
+      <div id="trace-log"></div>
+    </div>
+
+    <!-- Right: agents + tasks + thread -->
+    <div id="panel-right">
+
+      <!-- Agents -->
+      <div id="panel-agents">
+        <div class="panel-header">Agent Status</div>
+        <table id="agents-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>NAME</th>
+              <th>STATUS</th>
+              <th>MODEL</th>
+              <th>THR</th>
+              <th>TASKS</th>
+            </tr>
+          </thead>
+          <tbody id="agents-body"></tbody>
+        </table>
+      </div>
+
+      <!-- Tasks -->
+      <div id="panel-tasks">
+        <div class="panel-header">
+          Task Queue
+          <span id="task-count">0 tasks</span>
+        </div>
+        <div id="tasks-list"></div>
+      </div>
+
+      <!-- Thread inspector -->
+      <div id="panel-thread">
+        <div class="panel-header">
+          Thread Inspector
+          <span id="thread-hint" style="font-size:10px;color:var(--dim)">click a task/trace ID to inspect</span>
+        </div>
+        <div id="thread-content">
+          <div style="color:var(--dim);padding:4px 0;">No selection. Click a taskId or traceId to inspect.</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Command bar -->
+  <div id="cmdbar">
+    <span class="prompt">&gt;&gt;</span>
+    <input id="cmd-input" type="text" autocomplete="off" spellcheck="false" placeholder="filter &lt;agentId|taskId&gt; | clear | help | tasks | agents" />
+    <div id="cmd-feedback"></div>
+  </div>
+
+</div>
+
+<script>
+// ─── Mock Data ────────────────────────────────────────────────────────────────
+
+const AGENTS = [
+  {id:"orch-1", name:"orchestrator", status:"IDLE",    model:"openrouter/free", threads:2, tasks:0},
+  {id:"code-1", name:"code",         status:"RUNNING", model:"openrouter/free", threads:1, tasks:1},
+  {id:"math-1", name:"math",         status:"IDLE",    model:"openrouter/free", threads:1, tasks:0}
+];
+
+const TASKS = [
+  {id:"task-1", status:"COMPLETED", desc:"Write fibonacci Python",          agent:"code-1", attempts:1, duration:"1.2s",  queued:"14:23:01", started:"14:23:02", ended:"14:23:03"},
+  {id:"task-2", status:"COMPLETED", desc:"Simplify (x\u00b2-4)/(x-2)",     agent:"math-1", attempts:1, duration:"0.8s",  queued:"14:23:01", started:"14:23:02", ended:"14:23:03"},
+  {id:"task-3", status:"RUNNING",   desc:"Generate unit tests for fibonacci",agent:"code-1", attempts:1,                  queued:"14:23:10", started:"14:23:11"},
+  {id:"task-4", status:"FAILED",    desc:"Deploy to staging",               agent:"orch-1", attempts:3, error:"ECONNREFUSED 127.0.0.1:3000", queued:"14:22:50", started:"14:22:51", ended:"14:22:58"}
+];
+
+const TRACES = [
+  {ts:"14:23:00.001", type:"session_start",  sessionId:"sess-abc123",  data:{runId:"run-001"}},
+  {ts:"14:23:00.100", type:"agent_init",     agentId:"orch-1",         data:{model:"openrouter/free"}},
+  {ts:"14:23:00.200", type:"agent_init",     agentId:"code-1",         data:{model:"openrouter/free"}},
+  {ts:"14:23:00.300", type:"agent_init",     agentId:"math-1",         data:{model:"openrouter/free"}},
+  {ts:"14:23:01.000", type:"task_queued",    taskId:"task-1",          agentId:"code-1", data:{desc:"Write fibonacci"}},
+  {ts:"14:23:01.050", type:"task_queued",    taskId:"task-2",          agentId:"math-1", data:{desc:"Simplify expr"}},
+  {ts:"14:23:01.100", type:"task_started",   taskId:"task-1",          agentId:"code-1"},
+  {ts:"14:23:01.150", type:"task_started",   taskId:"task-2",          agentId:"math-1"},
+  {ts:"14:23:02.000", type:"tool_start",     toolName:"delegate_task", taskId:"task-1",  agentId:"orch-1"},
+  {ts:"14:23:02.500", type:"tool_end",       toolName:"delegate_task", taskId:"task-1",  agentId:"orch-1", data:{status:"ok"}},
+  {ts:"14:23:02.800", type:"tool_start",     toolName:"delegate_task", taskId:"task-2",  agentId:"orch-1"},
+  {ts:"14:23:03.000", type:"task_completed", taskId:"task-1",          agentId:"code-1", data:{duration:"1.2s"}},
+  {ts:"14:23:03.200", type:"task_completed", taskId:"task-2",          agentId:"math-1", data:{duration:"0.8s"}},
+  {ts:"14:23:10.000", type:"task_queued",    taskId:"task-3",          agentId:"code-1", data:{desc:"Generate tests"}},
+  {ts:"14:23:11.000", type:"task_started",   taskId:"task-3",          agentId:"code-1"}}
+];
+
+// ─── State ────────────────────────────────────────────────────────────────────
+
+let filterToken = null;   // agentId or taskId string
+let autoScroll  = true;
+let selectedId  = null;   // for thread inspector
+
+// ─── Utilities ────────────────────────────────────────────────────────────────
+
+function traceDetail(t) {
+  const parts = [];
+  if (t.agentId)   parts.push(`agent=${t.agentId}`);
+  if (t.taskId)    parts.push(`task=${t.taskId}`);
+  if (t.toolName)  parts.push(`tool=${t.toolName}`);
+  if (t.sessionId) parts.push(`session=${t.sessionId}`);
+  if (t.data) {
+    for (const [k,v] of Object.entries(t.data)) parts.push(`${k}=${v}`);
+  }
+  return parts.join('  ');
+}
+
+function traceMatchesFilter(t, token) {
+  if (!token) return true;
+  const s = JSON.stringify(t).toLowerCase();
+  return s.includes(token.toLowerCase());
+}
+
+function statusClass(s) { return `s-${s}`; }
+
+function feedback(msg, duration = 2500) {
+  const el = document.getElementById('cmd-feedback');
+  el.textContent = msg;
+  if (duration > 0) setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, duration);
+}
+
+// ─── Clock ────────────────────────────────────────────────────────────────────
+
+function updateClock() {
+  const now = new Date();
+  document.getElementById('clock').textContent =
+    now.toTimeString().slice(0,8) + '.' + String(now.getMilliseconds()).padStart(3,'0');
+}
+setInterval(updateClock, 100);
+updateClock();
+
+// ─── Agents panel ─────────────────────────────────────────────────────────────
+
+function renderAgents() {
+  const tbody = document.getElementById('agents-body');
+  tbody.innerHTML = '';
+  for (const a of AGENTS) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><span class="clickable-id" data-filter="${a.id}">${a.id}</span></td>
+      <td>${a.name}</td>
+      <td><span class="${statusClass(a.status)}${a.status==='RUNNING'?' blink':''}">${a.status}</span></td>
+      <td style="color:var(--dim);font-size:10px">${a.model}</td>
+      <td style="color:var(--dim)">${a.threads}</td>
+      <td style="color:var(--dim)">${a.tasks}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+  bindFilterClicks(tbody);
+}
+
+// ─── Tasks panel ──────────────────────────────────────────────────────────────
+
+function renderTasks() {
+  const list = document.getElementById('tasks-list');
+  list.innerHTML = '';
+  document.getElementById('task-count').textContent = `${TASKS.length} tasks`;
+
+  for (const t of TASKS) {
+    const div = document.createElement('div');
+    div.className = 'task-row' + (filterToken && !traceMatchesFilter(t, filterToken) ? ' filtered-out' : '');
+    div.dataset.taskId = t.id;
+
+    const err = t.error ? ` <span style="color:var(--red);font-size:9px">${t.error}</span>` : '';
+    const dur = t.duration ? ` <span style="color:var(--dim);font-size:10px">${t.duration}</span>` : '';
+
+    div.innerHTML = `
+      <span class="task-id clickable-id" data-filter="${t.id}">${t.id}</span>
+      <span class="task-status ${statusClass(t.status)}${t.status==='RUNNING'?' blink':''}">${t.status}</span>
+      <span class="task-desc">${t.desc}${err}${dur}</span>
+      <span class="task-agent clickable-id" data-filter="${t.agent}">${t.agent}</span>
+    `;
+    list.appendChild(div);
+  }
+  bindFilterClicks(list);
+  bindTaskInspect(list);
+}
+
+// ─── Trace log ────────────────────────────────────────────────────────────────
+
+function renderTraces() {
+  const log = document.getElementById('trace-log');
+  log.innerHTML = '';
+  document.getElementById('trace-count').textContent = `${TRACES.length} events`;
+
+  for (const t of TRACES) {
+    const div = document.createElement('div');
+    div.className = 'trace-row';
+    if (filterToken && !traceMatchesFilter(t, filterToken)) {
+      div.classList.add('filtered-out');
+    }
+    if (t.taskId && t.taskId === selectedId) div.classList.add('highlight');
+
+    const detail = traceDetail(t);
+    div.innerHTML = `
+      <span class="trace-ts">${t.ts}</span>
+      <span class="trace-type t-${t.type}">${t.type}</span>
+      <span class="trace-detail">${detail}</span>
+    `;
+
+    // click to inspect
+    div.addEventListener('click', () => {
+      const id = t.taskId || t.agentId || t.sessionId;
+      if (id) inspectId(id);
+    });
+
+    log.appendChild(div);
+  }
+
+  if (autoScroll) log.scrollTop = log.scrollHeight;
+}
+
+// ─── Thread inspector ─────────────────────────────────────────────────────────
+
+function inspectId(id) {
+  selectedId = id;
+  const content = document.getElementById('thread-content');
+
+  // Try task
+  const task = TASKS.find(t => t.id === id);
+  if (task) {
+    content.innerHTML = renderInspectFields({
+      type:       'task',
+      id:         task.id,
+      status:     `<span class="${statusClass(task.status)}">${task.status}</span>`,
+      description: task.desc,
+      agent:      task.agent,
+      attempts:   task.attempts,
+      duration:   task.duration || '—',
+      error:      task.error || '—',
+      queued:     task.queued,
+      started:    task.started || '—',
+      ended:      task.ended || '—',
+    });
+    setFilter(id, `task ${id}`);
+    return;
+  }
+
+  // Try agent
+  const agent = AGENTS.find(a => a.id === id);
+  if (agent) {
+    content.innerHTML = renderInspectFields({
+      type:     'agent',
+      id:       agent.id,
+      name:     agent.name,
+      status:   `<span class="${statusClass(agent.status)}">${agent.status}</span>`,
+      model:    agent.model,
+      threads:  agent.threads,
+      tasks:    agent.tasks,
+    });
+    setFilter(id, `agent ${id}`);
+    return;
+  }
+
+  // Generic trace
+  const traces = TRACES.filter(t => JSON.stringify(t).includes(id));
+  if (traces.length) {
+    content.innerHTML = renderInspectFields({
+      id,
+      trace_count: traces.length,
+      first_ts:    traces[0].ts,
+      last_ts:     traces[traces.length-1].ts,
+      event_types: [...new Set(traces.map(t=>t.type))].join(', '),
+    });
+    setFilter(id, id);
+  }
+}
+
+function renderInspectFields(obj) {
+  return Object.entries(obj).map(([k,v]) =>
+    `<div class="thread-field"><span class="thread-key">${k}</span><span class="thread-val">${v}</span></div>`
+  ).join('');
+}
+
+// ─── Filter logic ─────────────────────────────────────────────────────────────
+
+function setFilter(token, label) {
+  filterToken = token || null;
+  const badge = document.getElementById('filter-badge');
+  if (filterToken) {
+    badge.textContent = `FILTER: ${label || token}`;
+    badge.classList.add('active');
+  } else {
+    badge.classList.remove('active');
+  }
+  renderTraces();
+  renderTasks();
+}
+
+function clearFilter() {
+  filterToken = null;
+  selectedId = null;
+  document.getElementById('filter-badge').classList.remove('active');
+  renderTraces();
+  renderTasks();
+  document.getElementById('thread-content').innerHTML =
+    '<div style="color:var(--dim);padding:4px 0;">No selection. Click a taskId or traceId to inspect.</div>';
+}
+
+// ─── Click binding helpers ────────────────────────────────────────────────────
+
+function bindFilterClicks(root) {
+  root.querySelectorAll('.clickable-id[data-filter]').forEach(el => {
+    el.addEventListener('click', e => {
+      e.stopPropagation();
+      const token = el.dataset.filter;
+      if (filterToken === token) { clearFilter(); feedback('filter cleared'); }
+      else { setFilter(token, token); feedback(`filtering: ${token}`); }
+    });
+  });
+}
+
+function bindTaskInspect(root) {
+  root.querySelectorAll('.task-row').forEach(row => {
+    row.addEventListener('click', () => {
+      const id = row.dataset.taskId;
+      if (id) inspectId(id);
+    });
+  });
+}
+
+// ─── Auto-scroll & pause ──────────────────────────────────────────────────────
+
+function togglePause() {
+  autoScroll = !autoScroll;
+  document.getElementById('live-badge').style.display   = autoScroll ? '' : 'none';
+  document.getElementById('paused-badge').style.display = autoScroll ? 'none' : '';
+  feedback(autoScroll ? 'auto-scroll RESUMED' : 'auto-scroll PAUSED');
+  if (autoScroll) {
+    const log = document.getElementById('trace-log');
+    log.scrollTop = log.scrollHeight;
+  }
+}
+
+// Detect manual scroll on trace log
+document.getElementById('trace-log').addEventListener('scroll', function() {
+  const atBottom = this.scrollHeight - this.scrollTop - this.clientHeight < 20;
+  if (!atBottom && autoScroll) togglePause();
+});
+
+// ─── Command input ────────────────────────────────────────────────────────────
+
+const HELP_TEXT = [
+  'filter <id>  — filter traces/tasks by agentId or taskId',
+  'clear        — clear active filter',
+  'agents       — list agent IDs in feedback',
+  'tasks        — list task IDs in feedback',
+  'help         — show this help',
+  '',
+  'KEYBOARD: Space=pause/resume  Esc=clear filter',
+];
+
+document.getElementById('cmd-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    const raw = e.target.value.trim();
+    e.target.value = '';
+    handleCommand(raw);
+  }
+});
+
+function handleCommand(raw) {
+  if (!raw) return;
+  const [cmd, ...args] = raw.trim().split(/\s+/);
+  switch (cmd.toLowerCase()) {
+    case 'filter': {
+      const token = args.join(' ');
+      if (!token) { feedback('usage: filter <agentId|taskId>'); return; }
+      setFilter(token, token);
+      feedback(`filter active: ${token}`);
+      break;
+    }
+    case 'clear':
+      clearFilter();
+      feedback('filter cleared');
+      break;
+    case 'agents':
+      feedback('agents: ' + AGENTS.map(a => `${a.id}(${a.status})`).join('  '));
+      break;
+    case 'tasks':
+      feedback('tasks: ' + TASKS.map(t => `${t.id}(${t.status})`).join('  '));
+      break;
+    case 'help':
+      feedback(HELP_TEXT.join(' | '), 6000);
+      break;
+    default:
+      // try as a direct filter token
+      setFilter(raw, raw);
+      feedback(`filter: ${raw}`);
+  }
+}
+
+// ─── Keyboard shortcuts ───────────────────────────────────────────────────────
+
+document.addEventListener('keydown', e => {
+  if (document.activeElement === document.getElementById('cmd-input')) return;
+
+  if (e.code === 'Space') {
+    e.preventDefault();
+    togglePause();
+  } else if (e.code === 'Escape') {
+    clearFilter();
+    feedback('filter cleared');
+  }
+});
+
+// Escape inside input clears filter
+document.getElementById('cmd-input').addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    clearFilter();
+    feedback('filter cleared');
+    e.target.blur();
+  }
+});
+
+// ─── Simulated live updates ───────────────────────────────────────────────────
+// Periodically append a synthetic trace entry to simulate streaming data
+
+const LIVE_EVENT_TEMPLATES = [
+  () => ({ts: nowTs(), type:"tool_start",  toolName:"read_file",      agentId:"code-1", taskId:"task-3"}),
+  () => ({ts: nowTs(), type:"tool_end",    toolName:"read_file",      agentId:"code-1", taskId:"task-3", data:{status:"ok"}}),
+  () => ({ts: nowTs(), type:"tool_start",  toolName:"bash",           agentId:"code-1", taskId:"task-3"}),
+];
+
+let liveIdx = 0;
+
+function nowTs() {
+  const now = new Date();
+  return now.toTimeString().slice(0,8) + '.' + String(now.getMilliseconds()).padStart(3,'0');
+}
+
+function emitLiveTrace() {
+  const fn = LIVE_EVENT_TEMPLATES[liveIdx % LIVE_EVENT_TEMPLATES.length];
+  liveIdx++;
+  const event = fn();
+  TRACES.push(event);
+  document.getElementById('trace-count').textContent = `${TRACES.length} events`;
+
+  const log = document.getElementById('trace-log');
+  const div = document.createElement('div');
+  div.className = 'trace-row';
+  if (filterToken && !traceMatchesFilter(event, filterToken)) div.classList.add('filtered-out');
+  div.innerHTML = `
+    <span class="trace-ts">${event.ts}</span>
+    <span class="trace-type t-${event.type}">${event.type}</span>
+    <span class="trace-detail">${traceDetail(event)}</span>
+  `;
+  div.addEventListener('click', () => {
+    const id = event.taskId || event.agentId;
+    if (id) inspectId(id);
+  });
+  log.appendChild(div);
+  if (autoScroll) log.scrollTop = log.scrollHeight;
+}
+
+setInterval(emitLiveTrace, 2800);
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+
+renderAgents();
+renderTasks();
+renderTraces();
+
+// Focus command input
+document.getElementById('cmd-input').focus();
+</script>
+</body>
+</html>

@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>pi-agent — Thread Diff (Concept F)</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #18181B;
+    --bg-panel: #1F1F23;
+    --bg-card: #27272A;
+    --bg-card-hover: #2E2E33;
+    --border: #3F3F46;
+    --border-subtle: #2E2E33;
+    --text: #E4E4E7;
+    --text-muted: #A1A1AA;
+    --text-faint: #71717A;
+    --accent: #818CF8;
+    --accent-dim: #4338CA;
+    --added-bg: #166534;
+    --added-border: #22C55E;
+    --removed-bg: #991B1B;
+    --removed-border: #EF4444;
+    --changed-bg: #92400E;
+    --changed-border: #F59E0B;
+    --equal-bg: #27272A;
+    --header-h: 52px;
+    --sidebar-w: 200px;
+    --gutter-w: 40px;
+  }
+
+  body {
+    background: var(--bg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 13px;
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── Header ── */
+  .header {
+    height: var(--header-h);
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    gap: 16px;
+    flex-shrink: 0;
+    z-index: 10;
+  }
+  .header-title {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text);
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+  }
+  .header-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    flex-shrink: 0;
+  }
+  .header-sub {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .header-spacer { flex: 1; }
+
+  .run-selector {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .run-selector label {
+    font-size: 11px;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .run-selector select {
+    background: var(--bg-card);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+    outline: none;
+  }
+  .run-selector select:focus {
+    border-color: var(--accent);
+  }
+
+  /* ── Main layout ── */
+  .main {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    width: var(--sidebar-w);
+    background: var(--bg-panel);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+    gap: 16px;
+    flex-shrink: 0;
+  }
+  .sidebar-section-title {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-faint);
+    margin-bottom: 8px;
+  }
+  .stat-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .stat-dot {
+    width: 8px; height: 8px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+  .stat-dot.equal { background: var(--text-faint); }
+  .stat-dot.changed { background: var(--changed-border); }
+  .stat-dot.added { background: var(--added-border); }
+  .stat-dot.removed { background: var(--removed-border); }
+  .stat-count {
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+    font-weight: 500;
+    margin-left: auto;
+  }
+  .legend-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .legend-swatch {
+    width: 14px; height: 14px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+
+  /* ── Diff area ── */
+  .diff-area {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+
+  .diff-panel {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .diff-panel::-webkit-scrollbar { width: 6px; }
+  .diff-panel::-webkit-scrollbar-track { background: transparent; }
+  .diff-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .panel-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-faint);
+    padding: 4px 0 8px;
+    border-bottom: 1px solid var(--border-subtle);
+    margin-bottom: 4px;
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 2;
+  }
+
+  .diff-gutter {
+    width: var(--gutter-w);
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-top: 50px;
+    gap: 8px;
+    background: var(--bg);
+  }
+  .gutter-marker {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 600;
+    border-radius: 4px;
+    color: var(--text);
+    flex-shrink: 0;
+  }
+  .gutter-marker.equal { color: var(--text-faint); }
+  .gutter-marker.changed { color: var(--changed-border); }
+  .gutter-marker.added { color: var(--added-border); }
+  .gutter-marker.removed { color: var(--removed-border); }
+
+  /* ── Envelope card ── */
+  .envelope {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    padding: 10px 12px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    position: relative;
+  }
+  .envelope:hover {
+    background: var(--bg-card-hover);
+  }
+  .envelope.equal {
+    border-left: 3px solid var(--text-faint);
+    opacity: 0.6;
+  }
+  .envelope.equal:hover { opacity: 0.85; }
+  .envelope.changed {
+    background: color-mix(in srgb, var(--changed-bg) 35%, var(--bg-card));
+    border-left: 3px solid var(--changed-border);
+  }
+  .envelope.added {
+    background: color-mix(in srgb, var(--added-bg) 35%, var(--bg-card));
+    border-left: 3px solid var(--added-border);
+  }
+  .envelope.removed {
+    background: color-mix(in srgb, var(--removed-bg) 35%, var(--bg-card));
+    border-left: 3px solid var(--removed-border);
+  }
+  .envelope.placeholder {
+    border: 1px dashed var(--border);
+    background: transparent;
+    opacity: 0.3;
+    min-height: 60px;
+  }
+
+  .env-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+  }
+  .env-agent {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent);
+  }
+  .env-arrow {
+    font-size: 10px;
+    color: var(--text-faint);
+  }
+  .env-turn {
+    font-size: 10px;
+    color: var(--text-faint);
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+  }
+  .env-content {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-muted);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .env-meta {
+    display: flex;
+    gap: 8px;
+    margin-top: 6px;
+    font-size: 10px;
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── Inline diff overlay ── */
+  .inline-diff {
+    display: none;
+    margin-top: 8px;
+    padding: 8px 10px;
+    background: #0D0D0F;
+    border-radius: 6px;
+    font-size: 11px;
+    font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+    line-height: 1.6;
+    border: 1px solid var(--border);
+  }
+  .inline-diff.visible { display: block; }
+  .diff-line-add {
+    color: #4ADE80;
+    background: rgba(22, 101, 52, 0.25);
+    padding: 0 4px;
+    border-radius: 2px;
+  }
+  .diff-line-remove {
+    color: #FCA5A5;
+    background: rgba(153, 27, 27, 0.25);
+    padding: 0 4px;
+    border-radius: 2px;
+    text-decoration: line-through;
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 800px) {
+    .sidebar { display: none; }
+    .diff-gutter { width: 24px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <span class="header-dot"></span>
+  <span class="header-title">Thread Diff</span>
+  <span class="header-sub">Concept F</span>
+  <span class="header-spacer"></span>
+  <div class="run-selector">
+    <label>Run A</label>
+    <select id="selectA">
+      <option value="run-a" selected>run-7a2f — simple recursion</option>
+    </select>
+  </div>
+  <span style="color:var(--text-faint)">vs</span>
+  <div class="run-selector">
+    <label>Run B</label>
+    <select id="selectB">
+      <option value="run-b" selected>run-9c1d — memoized</option>
+    </select>
+  </div>
+</div>
+
+<div class="main">
+  <div class="sidebar">
+    <div>
+      <div class="sidebar-section-title">Diff Summary</div>
+      <div class="stat-row"><span class="stat-dot equal"></span> Equal <span class="stat-count" id="statEqual">—</span></div>
+      <div class="stat-row"><span class="stat-dot changed"></span> Changed <span class="stat-count" id="statChanged">—</span></div>
+      <div class="stat-row"><span class="stat-dot added"></span> Added in B <span class="stat-count" id="statAdded">—</span></div>
+      <div class="stat-row"><span class="stat-dot removed"></span> Removed <span class="stat-count" id="statRemoved">—</span></div>
+    </div>
+    <div>
+      <div class="sidebar-section-title">Legend</div>
+      <div class="legend-list">
+        <div class="legend-item"><span class="legend-swatch" style="background:var(--text-faint);opacity:0.5"></span> Identical</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:var(--changed-bg)"></span> Changed</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:var(--added-bg)"></span> Added</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:var(--removed-bg)"></span> Removed</div>
+      </div>
+    </div>
+    <div>
+      <div class="sidebar-section-title">Thread</div>
+      <div style="font-size:11px;color:var(--text-muted)">thread-fib-001</div>
+      <div style="font-size:10px;color:var(--text-faint);margin-top:4px">Prompt: "Write fibonacci"</div>
+    </div>
+  </div>
+
+  <div class="diff-area">
+    <div class="diff-panel" id="panelA">
+      <div class="panel-label">Run A — run-7a2f</div>
+    </div>
+    <div class="diff-gutter" id="gutter"></div>
+    <div class="diff-panel" id="panelB">
+      <div class="panel-label">Run B — run-9c1d</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  // ── Mock data ──
+  const threadId = "thread-fib-001";
+  const ts = (min) => `2026-03-13T10:${String(min).padStart(2,"0")}:00Z`;
+
+  const runA = [
+    { envelopeId:"env-a1", threadId, fromAgentId:"user", toAgentId:"orchestrator", runId:"run-7a2f", turnId:1, content:"Write a fibonacci function in TypeScript.", timestamp:ts(0) },
+    { envelopeId:"env-a2", threadId, fromAgentId:"orchestrator", toAgentId:"code", runId:"run-7a2f", turnId:1, taskId:"task-01", content:"Delegating to code agent: implement fibonacci in TypeScript.", timestamp:ts(0) },
+    { envelopeId:"env-a3", threadId, fromAgentId:"code", toAgentId:"orchestrator", runId:"run-7a2f", turnId:2, taskId:"task-01", content:"Planning approach: I'll use simple recursion for clarity.\n\nfunction fibonacci(n: number): number {\n  if (n <= 1) return n;\n  return fibonacci(n - 1) + fibonacci(n - 2);\n}", timestamp:ts(1) },
+    { envelopeId:"env-a4", threadId, fromAgentId:"orchestrator", toAgentId:"code", runId:"run-7a2f", turnId:3, content:"Add input validation and a brief JSDoc comment.", timestamp:ts(1) },
+    { envelopeId:"env-a5", threadId, fromAgentId:"code", toAgentId:"orchestrator", runId:"run-7a2f", turnId:4, taskId:"task-01", content:"/**\n * Returns the nth Fibonacci number using simple recursion.\n * @throws if n is negative\n */\nfunction fibonacci(n: number): number {\n  if (n < 0) throw new Error('n must be non-negative');\n  if (n <= 1) return n;\n  return fibonacci(n - 1) + fibonacci(n - 2);\n}", timestamp:ts(2) },
+    { envelopeId:"env-a6", threadId, fromAgentId:"orchestrator", toAgentId:"code", runId:"run-7a2f", turnId:5, content:"Write a test for fibonacci(10).", timestamp:ts(2) },
+    { envelopeId:"env-a7", threadId, fromAgentId:"code", toAgentId:"orchestrator", runId:"run-7a2f", turnId:6, taskId:"task-01", content:"import { test, expect } from 'bun:test';\n\ntest('fibonacci(10) equals 55', () => {\n  expect(fibonacci(10)).toBe(55);\n});\n\ntest('fibonacci(0) equals 0', () => {\n  expect(fibonacci(0)).toBe(0);\n});", timestamp:ts(3) },
+    { envelopeId:"env-a8", threadId, fromAgentId:"orchestrator", toAgentId:"user", runId:"run-7a2f", turnId:7, content:"Done. Fibonacci implemented with input validation, JSDoc, and tests.", timestamp:ts(3) }
+  ];
+
+  const runB = [
+    { envelopeId:"env-b1", threadId, fromAgentId:"user", toAgentId:"orchestrator", runId:"run-9c1d", turnId:1, content:"Write a fibonacci function in TypeScript.", timestamp:ts(0) },
+    { envelopeId:"env-b2", threadId, fromAgentId:"orchestrator", toAgentId:"code", runId:"run-9c1d", turnId:1, taskId:"task-02", content:"Delegating to code agent: implement fibonacci in TypeScript.", timestamp:ts(0) },
+    { envelopeId:"env-b3", threadId, fromAgentId:"code", toAgentId:"orchestrator", runId:"run-9c1d", turnId:2, taskId:"task-02", content:"Planning approach: I'll use memoization for O(n) performance.\n\nconst memo = new Map<number, number>();\nfunction fibonacci(n: number): number {\n  if (n <= 1) return n;\n  if (memo.has(n)) return memo.get(n)!;\n  const result = fibonacci(n - 1) + fibonacci(n - 2);\n  memo.set(n, result);\n  return result;\n}", timestamp:ts(1) },
+    { envelopeId:"env-b4", threadId, fromAgentId:"orchestrator", toAgentId:"code", runId:"run-9c1d", turnId:3, content:"Add input validation and a brief JSDoc comment.", timestamp:ts(1) },
+    { envelopeId:"env-b5", threadId, fromAgentId:"code", toAgentId:"orchestrator", runId:"run-9c1d", turnId:4, taskId:"task-02", content:"/**\n * Returns the nth Fibonacci number using memoization.\n * Time complexity: O(n), Space: O(n)\n * @throws if n is negative\n */\nconst memo = new Map<number, number>();\nfunction fibonacci(n: number): number {\n  if (n < 0) throw new Error('n must be non-negative');\n  if (n <= 1) return n;\n  if (memo.has(n)) return memo.get(n)!;\n  const result = fibonacci(n - 1) + fibonacci(n - 2);\n  memo.set(n, result);\n  return result;\n}", timestamp:ts(2) },
+    { envelopeId:"env-b6", threadId, fromAgentId:"orchestrator", toAgentId:"code", runId:"run-9c1d", turnId:5, content:"Write a test for fibonacci(10).", timestamp:ts(2) },
+    { envelopeId:"env-b7", threadId, fromAgentId:"code", toAgentId:"orchestrator", runId:"run-9c1d", turnId:6, taskId:"task-02", content:"import { test, expect } from 'bun:test';\n\ntest('fibonacci(10) equals 55', () => {\n  expect(fibonacci(10)).toBe(55);\n});\n\ntest('fibonacci(0) equals 0', () => {\n  expect(fibonacci(0)).toBe(0);\n});\n\ntest('fibonacci(50) is fast with memoization', () => {\n  expect(fibonacci(50)).toBe(12586269025);\n});", timestamp:ts(3) },
+    { envelopeId:"env-b8", threadId, fromAgentId:"orchestrator", toAgentId:"user", runId:"run-9c1d", turnId:7, content:"Done. Fibonacci implemented with input validation, JSDoc, and tests.", timestamp:ts(4) }
+  ];
+
+  // ── Diff computation ──
+  function diffRuns(a, b) {
+    const results = [];
+    const maxLen = Math.max(a.length, b.length);
+    for (let i = 0; i < maxLen; i++) {
+      const ea = a[i] || null;
+      const eb = b[i] || null;
+      if (!ea) {
+        results.push({ type: "added", a: null, b: eb, index: i });
+      } else if (!eb) {
+        results.push({ type: "removed", a: ea, b: null, index: i });
+      } else if (ea.content === eb.content) {
+        results.push({ type: "equal", a: ea, b: eb, index: i });
+      } else {
+        results.push({ type: "changed", a: ea, b: eb, index: i });
+      }
+    }
+    return results;
+  }
+
+  // ── Simple word-level diff ──
+  function wordDiff(textA, textB) {
+    const wordsA = textA.split(/(\s+)/);
+    const wordsB = textB.split(/(\s+)/);
+    // LCS-based diff for reasonable sizes
+    const m = wordsA.length, n = wordsB.length;
+    const dp = Array.from({length: m+1}, () => new Uint16Array(n+1));
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        dp[i][j] = wordsA[i-1] === wordsB[j-1]
+          ? dp[i-1][j-1] + 1
+          : Math.max(dp[i-1][j], dp[i][j-1]);
+      }
+    }
+    const ops = [];
+    let i = m, j = n;
+    while (i > 0 || j > 0) {
+      if (i > 0 && j > 0 && wordsA[i-1] === wordsB[j-1]) {
+        ops.unshift({ type: "keep", text: wordsA[i-1] });
+        i--; j--;
+      } else if (j > 0 && (i === 0 || dp[i][j-1] >= dp[i-1][j])) {
+        ops.unshift({ type: "add", text: wordsB[j-1] });
+        j--;
+      } else {
+        ops.unshift({ type: "remove", text: wordsA[i-1] });
+        i--;
+      }
+    }
+    return ops;
+  }
+
+  function renderWordDiff(ops) {
+    return ops.map(op => {
+      if (op.type === "keep") return escHtml(op.text);
+      if (op.type === "add") return `<span class="diff-line-add">${escHtml(op.text)}</span>`;
+      return `<span class="diff-line-remove">${escHtml(op.text)}</span>`;
+    }).join("");
+  }
+
+  function escHtml(s) {
+    return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+
+  // ── Render ──
+  const panelA = document.getElementById("panelA");
+  const panelB = document.getElementById("panelB");
+  const gutter = document.getElementById("gutter");
+
+  function renderEnvelope(env, type) {
+    if (!env) {
+      const el = document.createElement("div");
+      el.className = "envelope placeholder";
+      return el;
+    }
+    const el = document.createElement("div");
+    el.className = `envelope ${type}`;
+    el.innerHTML = `
+      <div class="env-header">
+        <span class="env-agent">${escHtml(env.fromAgentId)}</span>
+        <span class="env-arrow">\u2192</span>
+        <span class="env-agent">${escHtml(env.toAgentId)}</span>
+        <span class="env-turn">turn ${env.turnId}</span>
+      </div>
+      <div class="env-content">${escHtml(env.content)}</div>
+      <div class="env-meta">
+        <span>${env.envelopeId}</span>
+        ${env.taskId ? `<span>${env.taskId}</span>` : ""}
+        <span>${env.timestamp.slice(11,16)}</span>
+      </div>
+    `;
+    return el;
+  }
+
+  function render() {
+    const diff = diffRuns(runA, runB);
+
+    // Clear
+    panelA.querySelectorAll(".envelope,.envelope-wrap").forEach(e => e.remove());
+    panelB.querySelectorAll(".envelope,.envelope-wrap").forEach(e => e.remove());
+    gutter.innerHTML = "";
+
+    const counts = { equal: 0, changed: 0, added: 0, removed: 0 };
+    const cardPairsA = [];
+    const cardPairsB = [];
+
+    diff.forEach((d, idx) => {
+      counts[d.type]++;
+
+      const cardA = renderEnvelope(d.a, d.type === "removed" ? "removed" : d.type);
+      const cardB = renderEnvelope(d.b, d.type === "added" ? "added" : d.type);
+      panelA.appendChild(cardA);
+      panelB.appendChild(cardB);
+      cardPairsA.push(cardA);
+      cardPairsB.push(cardB);
+
+      // Gutter marker
+      const marker = document.createElement("div");
+      marker.className = `gutter-marker ${d.type}`;
+      const symbols = { equal: "=", changed: "\u0394", added: "+", removed: "\u2212" };
+      marker.textContent = symbols[d.type];
+      gutter.appendChild(marker);
+
+      // Click handler for changed envelopes — inline diff
+      if (d.type === "changed") {
+        const ops = wordDiff(d.a.content, d.b.content);
+        const diffHtml = renderWordDiff(ops);
+
+        [cardA, cardB].forEach(card => {
+          const diffEl = document.createElement("div");
+          diffEl.className = "inline-diff";
+          diffEl.innerHTML = diffHtml;
+          card.appendChild(diffEl);
+
+          card.addEventListener("click", () => {
+            diffEl.classList.toggle("visible");
+          });
+        });
+      }
+    });
+
+    // Update stats
+    document.getElementById("statEqual").textContent = counts.equal;
+    document.getElementById("statChanged").textContent = counts.changed;
+    document.getElementById("statAdded").textContent = counts.added;
+    document.getElementById("statRemoved").textContent = counts.removed;
+
+    // Sync gutter marker heights after layout
+    requestAnimationFrame(() => {
+      const markers = gutter.querySelectorAll(".gutter-marker");
+      diff.forEach((d, idx) => {
+        const hA = cardPairsA[idx].offsetHeight;
+        const hB = cardPairsB[idx].offsetHeight;
+        const h = Math.max(hA, hB);
+        markers[idx].style.height = h + "px";
+        // equalize card heights for alignment
+        cardPairsA[idx].style.minHeight = h + "px";
+        cardPairsB[idx].style.minHeight = h + "px";
+      });
+    });
+  }
+
+  // ── Synchronized scrolling ──
+  let syncing = false;
+  function syncScroll(source, target) {
+    if (syncing) return;
+    syncing = true;
+    const ratio = source.scrollTop / (source.scrollHeight - source.clientHeight || 1);
+    target.scrollTop = ratio * (target.scrollHeight - target.clientHeight);
+    // also sync gutter
+    gutter.style.paddingTop = (50 - source.scrollTop * (50 / (source.scrollHeight - source.clientHeight || 1))) + "px";
+    syncing = false;
+  }
+
+  panelA.addEventListener("scroll", () => syncScroll(panelA, panelB));
+  panelB.addEventListener("scroll", () => syncScroll(panelB, panelA));
+
+  render();
+})();
+</script>
+</body>
+</html>

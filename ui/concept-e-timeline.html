@@ -1,0 +1,1030 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pi Agent — Timeline</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #FAFBFC;
+    --grid: #E5E7EB;
+    --text: #111827;
+    --text-muted: #6B7280;
+    --text-faint: #9CA3AF;
+    --border: #D1D5DB;
+    --panel-bg: #FFFFFF;
+    --lane-height: 52px;
+    --label-w: 120px;
+    --marker-h: 28px;
+    --axis-h: 32px;
+    --panel-w: 280px;
+    --header-h: 48px;
+  }
+
+  body {
+    background: var(--bg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 13px;
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── Header ── */
+  .header {
+    height: var(--header-h);
+    background: var(--panel-bg);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    gap: 12px;
+    flex-shrink: 0;
+    z-index: 10;
+  }
+  .header-title {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text);
+    letter-spacing: -0.01em;
+  }
+  .header-sub {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .header-spacer { flex: 1; }
+  .zoom-group {
+    display: flex;
+    gap: 2px;
+    background: var(--grid);
+    border-radius: 6px;
+    padding: 2px;
+  }
+  .zoom-btn {
+    padding: 4px 10px;
+    border: none;
+    background: transparent;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+    white-space: nowrap;
+  }
+  .zoom-btn:hover { background: var(--panel-bg); color: var(--text); }
+  .zoom-btn.active { background: var(--panel-bg); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+
+  /* ── Main layout ── */
+  .main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ── Timeline area ── */
+  .timeline-wrap {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .timeline-scroll {
+    flex: 1;
+    overflow-x: auto;
+    overflow-y: hidden;
+    cursor: grab;
+    user-select: none;
+  }
+  .timeline-scroll:active { cursor: grabbing; }
+  .timeline-scroll::-webkit-scrollbar { height: 6px; }
+  .timeline-scroll::-webkit-scrollbar-track { background: transparent; }
+  .timeline-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .timeline-inner {
+    display: flex;
+    flex-direction: column;
+    min-width: 100%;
+    position: relative;
+  }
+
+  /* ── Time axis ── */
+  .axis-row {
+    display: flex;
+    height: var(--axis-h);
+    flex-shrink: 0;
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 5;
+    border-bottom: 1px solid var(--grid);
+  }
+  .axis-label-spacer {
+    width: var(--label-w);
+    flex-shrink: 0;
+    border-right: 1px solid var(--border);
+    background: var(--panel-bg);
+  }
+  .axis-canvas-wrap {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+  canvas.axis-canvas {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    display: block;
+  }
+
+  /* ── Lanes ── */
+  .lanes-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+  .lane {
+    display: flex;
+    height: var(--lane-height);
+    border-bottom: 1px solid var(--grid);
+    position: relative;
+  }
+  .lane-label {
+    width: var(--label-w);
+    flex-shrink: 0;
+    border-right: 1px solid var(--border);
+    background: var(--panel-bg);
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    gap: 8px;
+    z-index: 2;
+  }
+  .lane-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .lane-name {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .lane-canvas-wrap {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+  canvas.lane-canvas {
+    position: absolute;
+    top: 0; left: 0;
+    display: block;
+  }
+
+  /* ── Markers row ── */
+  .markers-row {
+    display: flex;
+    height: var(--marker-h);
+    border-top: 1px solid var(--grid);
+    flex-shrink: 0;
+  }
+  .markers-label {
+    width: var(--label-w);
+    flex-shrink: 0;
+    border-right: 1px solid var(--border);
+    background: var(--panel-bg);
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    font-size: 10px;
+    color: var(--text-faint);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+  .markers-canvas-wrap {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+  canvas.markers-canvas {
+    position: absolute;
+    top: 0; left: 0;
+    display: block;
+  }
+
+  /* ── SVG overlay for delegation arrows ── */
+  .svg-overlay {
+    position: absolute;
+    top: 0; left: 0;
+    pointer-events: none;
+    z-index: 3;
+  }
+
+  /* ── Detail panel ── */
+  .detail-panel {
+    width: 0;
+    overflow: hidden;
+    background: var(--panel-bg);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    transition: width 0.2s ease;
+    flex-shrink: 0;
+  }
+  .detail-panel.open { width: var(--panel-w); }
+  .detail-header {
+    padding: 12px 14px 10px;
+    border-bottom: 1px solid var(--grid);
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .detail-title {
+    flex: 1;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.3;
+    word-break: break-word;
+  }
+  .detail-close {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 16px;
+    line-height: 1;
+    padding: 0 2px;
+    flex-shrink: 0;
+  }
+  .detail-close:hover { color: var(--text); }
+  .detail-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .detail-body::-webkit-scrollbar { width: 4px; }
+  .detail-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  .detail-section-title {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--text-faint);
+    margin-bottom: 6px;
+  }
+  .detail-kv {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 3px 10px;
+    font-size: 12px;
+  }
+  .kv-key { color: var(--text-muted); white-space: nowrap; }
+  .kv-val { color: var(--text); font-variant-numeric: tabular-nums; word-break: break-all; }
+  .badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .02em;
+  }
+  .badge-run    { background: #EDE9FE; color: #6D28D9; }
+  .badge-task   { background: #D1FAE5; color: #065F46; }
+  .badge-failed { background: #FEE2E2; color: #991B1B; }
+  .badge-running{ background: #DBEAFE; color: #1E40AF; }
+  .marker-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .marker-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    line-height: 1.4;
+  }
+  .marker-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .marker-ts { color: var(--text-faint); font-variant-numeric: tabular-nums; }
+  .marker-lbl { color: var(--text-muted); }
+
+  /* ── Legend ── */
+  .legend {
+    padding: 6px 14px;
+    border-top: 1px solid var(--grid);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    background: var(--panel-bg);
+    flex-shrink: 0;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+  .legend-swatch {
+    width: 12px; height: 12px;
+    border-radius: 2px;
+  }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <span class="header-title">Pi Agent · Timeline</span>
+  <span class="header-sub" id="timeRange"></span>
+  <div class="header-spacer"></div>
+  <div class="zoom-group" id="zoomGroup">
+    <button class="zoom-btn" data-zoom="1000">1s</button>
+    <button class="zoom-btn" data-zoom="5000">5s</button>
+    <button class="zoom-btn active" data-zoom="15000">15s</button>
+    <button class="zoom-btn" data-zoom="0">All</button>
+  </div>
+</div>
+
+<!-- Main -->
+<div class="main">
+  <div class="timeline-wrap">
+    <div class="timeline-scroll" id="timelineScroll">
+      <div class="timeline-inner" id="timelineInner">
+        <!-- Axis -->
+        <div class="axis-row">
+          <div class="axis-label-spacer"></div>
+          <div class="axis-canvas-wrap" id="axisWrap">
+            <canvas class="axis-canvas" id="axisCanvas"></canvas>
+          </div>
+        </div>
+        <!-- Lanes injected by JS -->
+        <div class="lanes-area" id="lanesArea"></div>
+        <!-- Markers -->
+        <div class="markers-row">
+          <div class="markers-label">Traces</div>
+          <div class="markers-canvas-wrap" id="markersWrap">
+            <canvas class="markers-canvas" id="markersCanvas"></canvas>
+          </div>
+        </div>
+        <!-- SVG arrow overlay (inside scroll) -->
+        <svg class="svg-overlay" id="arrowSvg"></svg>
+      </div>
+    </div>
+    <!-- Legend -->
+    <div class="legend" id="legend"></div>
+  </div>
+  <!-- Detail panel -->
+  <div class="detail-panel" id="detailPanel">
+    <div class="detail-header">
+      <div class="detail-title" id="detailTitle">—</div>
+      <button class="detail-close" id="detailClose">✕</button>
+    </div>
+    <div class="detail-body" id="detailBody"></div>
+  </div>
+</div>
+
+<script>
+/* ── Data ── */
+const agents = [
+  {id:"user",         label:"User",         color:"#3B82F6"},
+  {id:"orchestrator", label:"Orchestrator", color:"#8B5CF6"},
+  {id:"code",         label:"Code Agent",   color:"#10B981"},
+  {id:"math",         label:"Math Agent",   color:"#F59E0B"}
+];
+
+const spans = [
+  {id:"run-user",  agentId:"user",         label:"User Request",    start:0,     end:500,   type:"run"},
+  {id:"run-orch",  agentId:"orchestrator", label:"Process Request", start:500,   end:11000, type:"run"},
+  {id:"task-1",    agentId:"code",         label:"fibonacci impl",  start:1000,  end:2200,  type:"task",  taskId:"task-1"},
+  {id:"task-2",    agentId:"math",         label:"simplify expr",   start:1050,  end:1850,  type:"task",  taskId:"task-2"},
+  {id:"task-3",    agentId:"code",         label:"unit tests",      start:10000, end:null,  type:"task",  taskId:"task-3"},
+  {id:"task-4",    agentId:"orchestrator", label:"deploy staging",  start:7000,  end:8000,  type:"task",  taskId:"task-4", failed:true}
+];
+
+const delegations = [
+  {fromSpan:"run-orch", toSpan:"task-1", label:"delegate"},
+  {fromSpan:"run-orch", toSpan:"task-2", label:"delegate"},
+  {fromSpan:"run-orch", toSpan:"task-3", label:"delegate"}
+];
+
+const markers = [
+  {ts:0,     type:"session_start",   label:"session",  agentId:"orchestrator"},
+  {ts:100,   type:"agent_init",      label:"init",     agentId:"orchestrator"},
+  {ts:200,   type:"agent_init",      label:"init",     agentId:"code"},
+  {ts:300,   type:"agent_init",      label:"init",     agentId:"math"},
+  {ts:1000,  type:"task_queued",     label:"queued",   agentId:"code"},
+  {ts:1050,  type:"task_queued",     label:"queued",   agentId:"math"},
+  {ts:1100,  type:"task_started",    label:"start",    agentId:"code"},
+  {ts:1150,  type:"task_started",    label:"start",    agentId:"math"},
+  {ts:2000,  type:"tool_start",      label:"tool",     agentId:"orchestrator"},
+  {ts:2200,  type:"task_completed",  label:"done",     agentId:"code"},
+  {ts:1850,  type:"task_completed",  label:"done",     agentId:"math"},
+  {ts:8000,  type:"task_failed",     label:"fail",     agentId:"orchestrator"},
+  {ts:10000, type:"task_queued",     label:"queued",   agentId:"code"},
+  {ts:10100, type:"task_started",    label:"start",    agentId:"code"},
+  {ts:11000, type:"tool_end",        label:"tool",     agentId:"orchestrator"}
+];
+
+/* ── Config ── */
+const TOTAL_MS = 15000;
+const LANE_H = 52;
+const AXIS_H = 32;
+const MARKER_H = 28;
+const BAR_H = 22;
+const BAR_RADIUS = 4;
+const LABEL_W = 120;
+
+const MARKER_COLORS = {
+  session_start:  "#8B5CF6",
+  agent_init:     "#3B82F6",
+  task_queued:    "#F59E0B",
+  task_started:   "#10B981",
+  task_completed: "#059669",
+  task_failed:    "#EF4444",
+  tool_start:     "#6366F1",
+  tool_end:       "#6366F1"
+};
+
+const agentById = Object.fromEntries(agents.map(a => [a.id, a]));
+const spanById  = Object.fromEntries(spans.map(s => [s.id, s]));
+
+/* ── State ── */
+let visibleMs   = 15000;   // how many ms visible
+let offsetMs    = 0;       // left edge in ms
+let canvasW     = 0;       // px width of canvas area
+let selectedSpan = null;
+
+/* ── Helpers ── */
+function msToX(ms) {
+  return ((ms - offsetMs) / visibleMs) * canvasW;
+}
+function xToMs(x) {
+  return offsetMs + (x / canvasW) * visibleMs;
+}
+function formatTs(ms) {
+  const base = 14 * 3600000 + 23 * 60000; // 14:23:00.000
+  const abs  = base + ms;
+  const h    = Math.floor(abs / 3600000) % 24;
+  const m    = Math.floor(abs / 60000) % 60;
+  const s    = Math.floor(abs / 1000) % 60;
+  const ms2  = abs % 1000;
+  return `${pad2(h)}:${pad2(m)}:${pad2(s)}.${pad3(ms2)}`;
+}
+function pad2(n) { return String(n).padStart(2,'0'); }
+function pad3(n) { return String(n).padStart(3,'0'); }
+function formatDur(ms) {
+  if (ms === null) return '…';
+  if (ms < 1000)  return ms + 'ms';
+  return (ms/1000).toFixed(2) + 's';
+}
+
+/* ── Build lane canvases ── */
+const laneCanvases = {}; // agentId -> {canvas, ctx, wrap}
+
+function buildLanes() {
+  const area = document.getElementById('lanesArea');
+  area.innerHTML = '';
+  agents.forEach(agent => {
+    const lane = document.createElement('div');
+    lane.className = 'lane';
+    lane.dataset.agentId = agent.id;
+
+    const lbl = document.createElement('div');
+    lbl.className = 'lane-label';
+    const dot = document.createElement('div');
+    dot.className = 'lane-dot';
+    dot.style.background = agent.color;
+    const name = document.createElement('div');
+    name.className = 'lane-name';
+    name.textContent = agent.label;
+    lbl.appendChild(dot); lbl.appendChild(name);
+
+    const wrap = document.createElement('div');
+    wrap.className = 'lane-canvas-wrap';
+    const canvas = document.createElement('canvas');
+    canvas.className = 'lane-canvas';
+    wrap.appendChild(canvas);
+
+    lane.appendChild(lbl);
+    lane.appendChild(wrap);
+    area.appendChild(lane);
+
+    laneCanvases[agent.id] = { canvas, wrap };
+  });
+}
+
+/* ── Resize & measure ── */
+function measureCanvasW() {
+  const axisWrap = document.getElementById('axisWrap');
+  return axisWrap.clientWidth || 800;
+}
+
+function resizeAllCanvases() {
+  canvasW = measureCanvasW();
+  const dpr = window.devicePixelRatio || 1;
+
+  // axis
+  const ac = document.getElementById('axisCanvas');
+  ac.width  = canvasW * dpr;
+  ac.height = AXIS_H * dpr;
+  ac.style.width  = canvasW + 'px';
+  ac.style.height = AXIS_H + 'px';
+  ac.getContext('2d').scale(dpr, dpr);
+
+  // markers
+  const mc = document.getElementById('markersCanvas');
+  mc.width  = canvasW * dpr;
+  mc.height = MARKER_H * dpr;
+  mc.style.width  = canvasW + 'px';
+  mc.style.height = MARKER_H + 'px';
+  mc.getContext('2d').scale(dpr, dpr);
+
+  // lanes
+  agents.forEach(agent => {
+    const {canvas, wrap} = laneCanvases[agent.id];
+    const w = wrap.clientWidth || canvasW;
+    canvas.width  = w * dpr;
+    canvas.height = LANE_H * dpr;
+    canvas.style.width  = w + 'px';
+    canvas.style.height = LANE_H + 'px';
+    canvas.getContext('2d').scale(dpr, dpr);
+  });
+}
+
+/* ── Draw axis ── */
+function drawAxis() {
+  const canvas = document.getElementById('axisCanvas');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvasW, AXIS_H);
+
+  // grid step auto
+  const step = tickStep(visibleMs, Math.floor(canvasW / 70));
+
+  ctx.fillStyle = '#9CA3AF';
+  ctx.font = '10px -apple-system, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const start = Math.ceil(offsetMs / step) * step;
+  for (let t = start; t <= offsetMs + visibleMs; t += step) {
+    const x = msToX(t);
+    if (x < 0 || x > canvasW) continue;
+    // tick
+    ctx.strokeStyle = '#D1D5DB';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, AXIS_H - 8);
+    ctx.lineTo(x, AXIS_H);
+    ctx.stroke();
+    // label
+    const label = shortTs(t);
+    ctx.fillStyle = '#6B7280';
+    ctx.fillText(label, x, AXIS_H / 2 - 2);
+  }
+  // bottom border line
+  ctx.strokeStyle = '#E5E7EB';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, AXIS_H - 0.5);
+  ctx.lineTo(canvasW, AXIS_H - 0.5);
+  ctx.stroke();
+}
+
+function tickStep(rangeMs, targetTicks) {
+  const raw = rangeMs / targetTicks;
+  const steps = [100, 250, 500, 1000, 2000, 5000, 10000];
+  for (const s of steps) if (s >= raw) return s;
+  return 5000;
+}
+
+function shortTs(ms) {
+  const s = ms / 1000;
+  if (s < 60) return s % 1 === 0 ? s + 's' : s.toFixed(1) + 's';
+  const m = Math.floor(s / 60);
+  const rem = (s % 60).toFixed(0);
+  return `${m}:${String(rem).padStart(2,'0')}`;
+}
+
+/* ── Draw grid lines on lanes ── */
+function drawGridLines(ctx, w, h) {
+  const step = tickStep(visibleMs, Math.floor(canvasW / 70));
+  ctx.strokeStyle = '#F3F4F6';
+  ctx.lineWidth = 1;
+  const start = Math.ceil(offsetMs / step) * step;
+  for (let t = start; t <= offsetMs + visibleMs; t += step) {
+    const x = msToX(t);
+    if (x < 0 || x > w) continue;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, h);
+    ctx.stroke();
+  }
+}
+
+/* ── Stripe patterns ── */
+function makeStripePattern(ctx, color, alpha, angle='diagonal') {
+  const sz = 8;
+  const offscreen = document.createElement('canvas');
+  offscreen.width = sz; offscreen.height = sz;
+  const oc = offscreen.getContext('2d');
+  oc.fillStyle = 'transparent';
+  oc.fillRect(0, 0, sz, sz);
+  oc.strokeStyle = `rgba(255,255,255,${alpha})`;
+  oc.lineWidth = 2;
+  oc.beginPath();
+  oc.moveTo(0, sz); oc.lineTo(sz, 0);
+  oc.moveTo(-sz, sz); oc.lineTo(0, 0);
+  oc.moveTo(sz, sz*2); oc.lineTo(sz*2, sz);
+  oc.stroke();
+  return ctx.createPattern(offscreen, 'repeat');
+}
+
+function makeRunningPattern(ctx, color) {
+  const sz = 10;
+  const offscreen = document.createElement('canvas');
+  offscreen.width = sz; offscreen.height = sz;
+  const oc = offscreen.getContext('2d');
+  oc.fillStyle = 'transparent';
+  oc.fillRect(0, 0, sz, sz);
+  oc.strokeStyle = 'rgba(255,255,255,0.25)';
+  oc.lineWidth = 3;
+  oc.beginPath();
+  oc.moveTo(0, sz); oc.lineTo(sz, 0);
+  oc.moveTo(-sz, sz); oc.lineTo(0, 0);
+  oc.moveTo(sz, sz*2); oc.lineTo(sz*2, sz);
+  oc.stroke();
+  return ctx.createPattern(offscreen, 'repeat');
+}
+
+/* ── Draw spans for one lane ── */
+function drawLane(agentId) {
+  const {canvas, wrap} = laneCanvases[agentId];
+  const w = wrap.clientWidth || canvasW;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, w, LANE_H);
+
+  drawGridLines(ctx, w, LANE_H);
+
+  const agent = agentById[agentId];
+  const laneSpans = spans.filter(s => s.agentId === agentId);
+
+  laneSpans.forEach(span => {
+    const x0 = msToX(span.start);
+    const x1 = span.end !== null ? msToX(span.end) : canvasW;
+    const bw = Math.max(x1 - x0, 3);
+
+    if (x1 < 0 || x0 > w) return;
+
+    const y = (LANE_H - BAR_H) / 2;
+
+    // Base fill
+    ctx.save();
+    roundRect(ctx, x0, y, bw, BAR_H, BAR_RADIUS);
+    ctx.fillStyle = agent.color;
+    ctx.globalAlpha = 0.85;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // Running: animated stripe
+    if (span.end === null) {
+      roundRect(ctx, x0, y, bw, BAR_H, BAR_RADIUS);
+      ctx.fillStyle = makeRunningPattern(ctx, agent.color);
+      ctx.fill();
+      // pulsing border
+      roundRect(ctx, x0, y, bw, BAR_H, BAR_RADIUS);
+      ctx.strokeStyle = agent.color;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+
+    // Failed: red stripe overlay
+    if (span.failed) {
+      roundRect(ctx, x0, y, bw, BAR_H, BAR_RADIUS);
+      ctx.fillStyle = 'rgba(239,68,68,0.18)';
+      ctx.fill();
+      roundRect(ctx, x0, y, bw, BAR_H, BAR_RADIUS);
+      ctx.strokeStyle = '#EF4444';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+
+    // Label
+    if (bw > 30) {
+      ctx.fillStyle = '#fff';
+      ctx.font = '11px -apple-system, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.save();
+      roundRect(ctx, x0, y, bw, BAR_H, BAR_RADIUS);
+      ctx.clip();
+      ctx.fillText(span.label, x0 + 6, y + BAR_H / 2);
+      ctx.restore();
+    }
+
+    ctx.restore();
+
+    // Hit data
+    canvas._spans = canvas._spans || [];
+    canvas._spans.push({ span, x: x0, y, w: bw, h: BAR_H });
+  });
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+/* ── Draw markers ── */
+function drawMarkers() {
+  const canvas = document.getElementById('markersCanvas');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvasW, MARKER_H);
+
+  drawGridLines(ctx, canvasW, MARKER_H);
+
+  markers.forEach(m => {
+    if (m.ts < offsetMs || m.ts > offsetMs + visibleMs) return;
+    const x = msToX(m.ts);
+    const col = MARKER_COLORS[m.type] || '#9CA3AF';
+    const sz = 6;
+    const cy = MARKER_H * 0.6;
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.moveTo(x, cy - sz / 2);
+    ctx.lineTo(x + sz / 2, cy + sz / 2);
+    ctx.lineTo(x - sz / 2, cy + sz / 2);
+    ctx.closePath();
+    ctx.fill();
+  });
+}
+
+/* ── Delegation arrows (SVG) ── */
+function getSpanMidpoint(spanId) {
+  const span   = spanById[spanId];
+  if (!span) return null;
+  const agentIdx = agents.findIndex(a => a.id === span.agentId);
+  if (agentIdx < 0) return null;
+
+  const xStart = msToX(span.start);
+  const xEnd   = span.end !== null ? msToX(span.end) : canvasW;
+  const xMid   = (xStart + xEnd) / 2;
+
+  // y: axis row + agentIdx * LANE_H + LANE_H/2
+  const y = AXIS_H + agentIdx * LANE_H + LANE_H / 2;
+  return { x: LABEL_W + xMid, y };
+}
+
+function drawArrows() {
+  const svg = document.getElementById('arrowSvg');
+  // size svg to cover full inner area
+  const inner = document.getElementById('timelineInner');
+  const totalH = AXIS_H + agents.length * LANE_H + MARKER_H;
+  svg.style.width  = (LABEL_W + canvasW) + 'px';
+  svg.style.height = totalH + 'px';
+  svg.innerHTML = `<defs>
+    <marker id="ah" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 z" fill="rgba(107,114,128,0.7)"/>
+    </marker>
+  </defs>`;
+
+  delegations.forEach(d => {
+    const from = getSpanMidpoint(d.fromSpan);
+    const to   = getSpanMidpoint(d.toSpan);
+    if (!from || !to) return;
+
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    const cx = (from.x + to.x) / 2;
+    const dPath = `M ${from.x} ${from.y} C ${cx} ${from.y}, ${cx} ${to.y}, ${to.x} ${to.y}`;
+    line.setAttribute('d', dPath);
+    line.setAttribute('stroke', 'rgba(107,114,128,0.45)');
+    line.setAttribute('stroke-width', '1.5');
+    line.setAttribute('fill', 'none');
+    line.setAttribute('stroke-dasharray', '4,3');
+    line.setAttribute('marker-end', 'url(#ah)');
+    svg.appendChild(line);
+  });
+}
+
+/* ── Legend ── */
+function buildLegend() {
+  const leg = document.getElementById('legend');
+  const markerTypes = [
+    {type:'session_start', label:'Session'},
+    {type:'agent_init',    label:'Init'},
+    {type:'task_queued',   label:'Queued'},
+    {type:'task_started',  label:'Started'},
+    {type:'task_completed',label:'Done'},
+    {type:'task_failed',   label:'Failed'},
+    {type:'tool_start',    label:'Tool'},
+  ];
+  markerTypes.forEach(mt => {
+    const item = document.createElement('div');
+    item.className = 'legend-item';
+    const swatch = document.createElement('div');
+    swatch.style.cssText = `width:8px;height:8px;background:${MARKER_COLORS[mt.type]};clip-path:polygon(50% 0%, 100% 100%, 0% 100%);`;
+    const lbl = document.createElement('span');
+    lbl.textContent = mt.label;
+    item.appendChild(swatch); item.appendChild(lbl);
+    leg.appendChild(item);
+  });
+}
+
+/* ── Click detection ── */
+function addClickHandlers() {
+  agents.forEach((agent, idx) => {
+    const {canvas} = laneCanvases[agent.id];
+    canvas.addEventListener('click', e => {
+      const rect = canvas.getBoundingClientRect();
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      const hits = (canvas._spans || []).filter(h =>
+        cx >= h.x && cx <= h.x + h.w && cy >= h.y && cy <= h.y + h.h
+      );
+      if (hits.length) openDetail(hits[0].span);
+    });
+    canvas.style.cursor = 'pointer';
+  });
+}
+
+/* ── Detail panel ── */
+function openDetail(span) {
+  selectedSpan = span;
+  const panel = document.getElementById('detailPanel');
+  const title = document.getElementById('detailTitle');
+  const body  = document.getElementById('detailBody');
+
+  panel.classList.add('open');
+  title.textContent = span.label;
+  body.innerHTML = '';
+
+  const agent = agentById[span.agentId];
+  const dur   = span.end !== null ? span.end - span.start : null;
+
+  // Info section
+  const infoSec = document.createElement('div');
+  infoSec.innerHTML = `<div class="detail-section-title">Span</div>
+  <div class="detail-kv">
+    <span class="kv-key">Type</span>
+    <span class="kv-val"><span class="badge ${span.failed ? 'badge-failed' : span.end===null ? 'badge-running' : 'badge-'+span.type}">${span.failed ? 'failed' : span.end===null ? 'running' : span.type}</span></span>
+    <span class="kv-key">Agent</span>
+    <span class="kv-val" style="display:flex;align-items:center;gap:5px"><span style="width:8px;height:8px;border-radius:50%;background:${agent.color};display:inline-block"></span>${agent.label}</span>
+    <span class="kv-key">Start</span>
+    <span class="kv-val">${formatTs(span.start)}</span>
+    <span class="kv-key">End</span>
+    <span class="kv-val">${span.end !== null ? formatTs(span.end) : '… running'}</span>
+    <span class="kv-key">Duration</span>
+    <span class="kv-val">${formatDur(dur)}</span>
+    ${span.taskId ? `<span class="kv-key">Task ID</span><span class="kv-val">${span.taskId}</span>` : ''}
+    ${span.id ? `<span class="kv-key">Span ID</span><span class="kv-val" style="font-size:10px;color:#9CA3AF">${span.id}</span>` : ''}
+  </div>`;
+  body.appendChild(infoSec);
+
+  // Delegations
+  const outgoing = delegations.filter(d => d.fromSpan === span.id);
+  const incoming = delegations.filter(d => d.toSpan   === span.id);
+  if (outgoing.length || incoming.length) {
+    const delSec = document.createElement('div');
+    let html = `<div class="detail-section-title">Delegation</div><div class="detail-kv">`;
+    outgoing.forEach(d => {
+      const ts = spanById[d.toSpan];
+      html += `<span class="kv-key">→</span><span class="kv-val">${ts ? ts.label : d.toSpan}</span>`;
+    });
+    incoming.forEach(d => {
+      const fs = spanById[d.fromSpan];
+      html += `<span class="kv-key">←</span><span class="kv-val">${fs ? fs.label : d.fromSpan}</span>`;
+    });
+    html += '</div>';
+    delSec.innerHTML = html;
+    body.appendChild(delSec);
+  }
+
+  // Trace markers in range
+  const lo = span.start - 50;
+  const hi = span.end !== null ? span.end + 50 : TOTAL_MS;
+  const related = markers.filter(m =>
+    m.ts >= lo && m.ts <= hi && m.agentId === span.agentId
+  );
+  if (related.length) {
+    const traceSec = document.createElement('div');
+    let html = `<div class="detail-section-title">Traces (${related.length})</div><div class="marker-list">`;
+    related.forEach(m => {
+      const col = MARKER_COLORS[m.type] || '#9CA3AF';
+      html += `<div class="marker-item">
+        <span class="marker-dot" style="background:${col}"></span>
+        <span class="marker-ts">${formatTs(m.ts)}</span>
+        <span class="marker-lbl">${m.label} · ${m.type}</span>
+      </div>`;
+    });
+    html += '</div>';
+    traceSec.innerHTML = html;
+    body.appendChild(traceSec);
+  }
+}
+
+document.getElementById('detailClose').addEventListener('click', () => {
+  document.getElementById('detailPanel').classList.remove('open');
+  selectedSpan = null;
+});
+
+/* ── Zoom controls ── */
+document.getElementById('zoomGroup').addEventListener('click', e => {
+  const btn = e.target.closest('.zoom-btn');
+  if (!btn) return;
+  document.querySelectorAll('.zoom-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  const z = parseInt(btn.dataset.zoom);
+  visibleMs = z === 0 ? TOTAL_MS : z;
+  offsetMs  = Math.max(0, Math.min(offsetMs, TOTAL_MS - visibleMs));
+  renderAll();
+});
+
+/* ── Pan (drag) ── */
+let dragState = null;
+const scroll = document.getElementById('timelineScroll');
+scroll.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  dragState = { startX: e.clientX, startOffset: offsetMs };
+  e.preventDefault();
+});
+window.addEventListener('mousemove', e => {
+  if (!dragState) return;
+  const dx = e.clientX - dragState.startX;
+  const dms = -(dx / canvasW) * visibleMs;
+  offsetMs = Math.max(0, Math.min(dragState.startOffset + dms, TOTAL_MS - visibleMs));
+  renderAll();
+});
+window.addEventListener('mouseup', () => { dragState = null; });
+
+// Wheel to pan
+scroll.addEventListener('wheel', e => {
+  e.preventDefault();
+  const dms = (e.deltaX || e.deltaY) / canvasW * visibleMs;
+  offsetMs = Math.max(0, Math.min(offsetMs + dms, TOTAL_MS - visibleMs));
+  renderAll();
+}, { passive: false });
+
+/* ── Time range label ── */
+function updateTimeRange() {
+  const el = document.getElementById('timeRange');
+  el.textContent = `${formatTs(0)} → ${formatTs(TOTAL_MS)}  ·  ${(TOTAL_MS/1000).toFixed(0)}s window`;
+}
+
+/* ── Master render ── */
+function renderAll() {
+  // Clear hit data
+  agents.forEach(a => { laneCanvases[a.id].canvas._spans = []; });
+
+  drawAxis();
+  agents.forEach(a => drawLane(a.id));
+  drawMarkers();
+  drawArrows();
+}
+
+/* ── Init ── */
+function init() {
+  buildLanes();
+  buildLegend();
+  resizeAllCanvases();
+  addClickHandlers();
+  updateTimeRange();
+  renderAll();
+}
+
+window.addEventListener('resize', () => {
+  resizeAllCanvases();
+  renderAll();
+});
+
+init();
+</script>
+</body>
+</html>
