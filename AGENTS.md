@@ -131,6 +131,7 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Stable conversation identity: `conversationId` is scoped to `sessionId` + agent pair and reused across delegations.
 - All delegation is async. No sync path.
 - Per-agent concurrency via `maxConcurrency` (default 1) with FIFO queue for overflow.
+- Chats can run multi-turn loops with optional `keepAlive` and ordered follow-up queue per `chatId`.
 - Persist thread envelopes, traces, and chat records for auditability.
 - Delay UI work until `ui:gate` indicates clear operational friction.
 - Math specialist defaults to short result-only replies unless user asks for steps.
@@ -202,6 +203,7 @@ When adding or changing runtime behavior, preserve correlation IDs:
 - Each state change (active/waiting/closed) appends the full record.
 - On restore, `ChatManager.restore()` reads records from disk, marks interrupted chats as closed.
 - The `ChatManager` constructor accepts optional `persistChat`, `restoreRecords`, and `getMaxConcurrency` callbacks.
+- Keep-alive chats remain open across turns; follow-ups are processed in FIFO order and close remains explicit.
 - Closing a `chatId` does not close the stable conversation; next delegation reuses `conversationId` with a new `chatId`.
 
 ## Model Configuration

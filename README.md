@@ -114,6 +114,7 @@ Cada delegación del orchestrator a un especialista crea un **chat** (`AgentChat
 - `active`: el especialista está procesando
 - `waiting`: encolado porque el agente está al máximo de concurrencia
 - `closed`: terminado (con `closeReason`: `completed`, `failed`, o `cancelled`)
+- `keepAlive` (opcional): mantiene el chat `active` tras una respuesta y procesa follow-ups en orden dentro del mismo `chatId`
 
 Cuando un chat activo se cierra, el siguiente en la cola del mismo agente pasa a `active`.
 Política de cierre/reapertura: cerrar un `chatId` no cierra la conversación lógica; una nueva delegación al mismo especialista reabre la conversación creando un nuevo `chatId` con el mismo `conversationId`.
@@ -204,7 +205,7 @@ Cada envelope de hilo incluye metadatos de relación:
 - `apps/web/app.css`: estilos de la UI.
 - `packages/core/runtime.ts`: runtime multiagente, enrutado de mensajes, correlación de IDs y trazas.
 - `packages/core/tools.ts`: tools del orquestador (`list_agents`, `delegate`, `delegate_task`, `get_chat_status`, `get_chat_result`, `close_chat`).
-- `packages/core/chat-manager.ts`: gestión de chats con per-agent concurrency, cola FIFO, timeout/retry y persistencia a disco.
+- `packages/core/chat-manager.ts`: gestión de chats con per-agent concurrency, cola FIFO, timeout/retry, loop multi-turn opcional (`keepAlive`) y persistencia a disco.
 - `packages/core/thread-store.ts`: persistencia JSONL de hilos, trazas y chat records.
 - `packages/core/errors.ts`: utilidades de error handling (`errorMessage`, `safeAsync`, `safeParseLine`).
 - `packages/core/contracts.ts`: contratos de `ThreadEnvelope`, `AgentChat`, `TraceEvent`.

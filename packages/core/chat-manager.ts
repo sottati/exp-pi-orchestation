@@ -9,10 +9,19 @@ interface RunnerContext {
 
 type ChatRunner = (ctx: RunnerContext, chat: AgentChat) => Promise<string>;
 
+interface QueueTurnInput {
+    task: string;
+    context?: string;
+    resolve: (chat: AgentChat) => void;
+    reject: (error: Error) => void;
+}
+
 interface ChatRuntimeData {
     record: AgentChat;
     controller?: AbortController;
     runner?: ChatRunner;
+    turnQueue: QueueTurnInput[];
+    running: boolean;
 }
 
 export interface CreateChatInput {
@@ -25,6 +34,7 @@ export interface CreateChatInput {
     context?: string;
     timeoutMs?: number;
     maxRetries?: number;
+    keepAlive?: boolean;
 }
 
 export interface ChatHooks {
@@ -99,7 +109,7 @@ export class ChatManager {
                 await this.safePersist(record);
                 recovered++;
             }
-            this.chats.set(record.chatId, { record });
+            this.chats.set(record.chatId, { record, turnQueue: [], running: false });
         }
         return recovered;
     }
@@ -120,9 +130,10 @@ export class ChatManager {
             attempts: 0,
             maxRetries: Math.max(0, input.maxRetries ?? DEFAULT_MAX_RETRIES),
             timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+            keepAlive: input.keepAlive,
         };
 
-        const runtimeData: ChatRuntimeData = { record: chat, runner };
+        const runtimeData: ChatRuntimeData = { record: chat, runner, turnQueue: [], running: false };
         this.chats.set(chat.chatId, runtimeData);
 
         const active = this.activeChats.get(input.agentId) ?? new Set();
@@ -153,6 +164,35 @@ export class ChatManager {
         return runtime ? { ...runtime.record } : undefined;
     }
 
+    sendMessage(chatId: string, input: { task: string; context?: string }): Promise<AgentChat> {
+        const runtime = this.chats.get(chatId);
+        if (!runtime) {
+            return Promise.reject(new Error(`chatId ${chatId} not found.`));
+        }
+        if (runtime.record.status === "closed") {
+            return Promise.reject(new Error(`chatId ${chatId} is closed.`));
+        }
+        if (!runtime.record.keepAlive) {
+            return Promise.reject(new Error(`chatId ${chatId} does not accept follow-up messages.`));
+        }
+
+        return new Promise<AgentChat>((resolve, reject) => {
+            runtime.turnQueue.push({
+                task: input.task,
+                context: input.context,
+                resolve,
+                reject: (error) => reject(error),
+            });
+            runtime.record.updatedAt = now();
+            void this.safePersist(runtime.record);
+            if (runtime.record.status === "active" && !runtime.running && runtime.runner) {
+                void this.execute(chatId, runtime.runner).catch(err =>
+                    console.error("[ChatManager] execute:", err)
+                );
+            }
+        });
+    }
+
     closeChat(chatId: string): AgentChat | undefined {
         const runtime = this.chats.get(chatId);
         if (!runtime) return undefined;
@@ -169,6 +209,10 @@ export class ChatManager {
 
         const changed = this.markCancelled(runtime.record);
         runtime.controller?.abort();
+        const pending = runtime.turnQueue.splice(0);
+        for (const queued of pending) {
+            queued.reject(new Error(`chatId ${chatId} was cancelled.`));
+        }
         if (changed) {
             void this.safePersist(runtime.record);
             void this.safeHook("onCancelled", runtime.record);
@@ -222,73 +266,111 @@ export class ChatManager {
 
     private async execute(chatId: string, runner: ChatRunner) {
         const runtime = this.chats.get(chatId);
-        if (!runtime) return;
+        if (!runtime || runtime.running) return;
 
-        while (runtime.record.attempts <= runtime.record.maxRetries) {
-            if (runtime.record.status === "closed") return;
+        runtime.running = true;
 
-            runtime.record.attempts += 1;
-            runtime.record.updatedAt = now();
-            runtime.record.startedAt ??= now();
-            runtime.controller = new AbortController();
-            await this.safePersist(runtime.record);
-            await this.safeHook("onStarted", runtime.record);
+        let currentQueuedTurn: QueueTurnInput | undefined;
 
-            let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-            try {
-                const timeoutPromise = new Promise<string>((_, reject) => {
-                    timeoutHandle = setTimeout(() => {
-                        runtime.controller?.abort();
-                        reject(new Error(`Chat timeout after ${runtime.record.timeoutMs}ms`));
-                    }, runtime.record.timeoutMs);
-                });
-
-                const result = await Promise.race([
-                    runner({ signal: runtime.controller.signal, attempt: runtime.record.attempts }, runtime.record),
-                    timeoutPromise,
-                ]);
-
-                if (timeoutHandle) clearTimeout(timeoutHandle);
-
-                runtime.record.result = result;
-                runtime.record.status = "closed";
-                runtime.record.closeReason = "completed";
-                runtime.record.updatedAt = now();
-                runtime.record.closedAt = now();
-                await this.safePersist(runtime.record);
-                await this.safeHook("onCompleted", runtime.record);
-                this.dequeueNext(runtime.record.agentId);
-                return;
-            } catch (error) {
-                if (timeoutHandle) clearTimeout(timeoutHandle);
-
-                if (runtime.controller.signal.aborted) {
-                    const changed = this.markCancelled(runtime.record);
-                    if (changed) {
-                        await this.safePersist(runtime.record);
-                        await this.safeHook("onCancelled", runtime.record);
-                        this.dequeueNext(runtime.record.agentId);
+        try {
+            while (true) {
+                if (runtime.record.keepAlive) {
+                    currentQueuedTurn = runtime.turnQueue.shift();
+                    if (currentQueuedTurn) {
+                        runtime.record.task = currentQueuedTurn.task;
+                        runtime.record.context = currentQueuedTurn.context;
+                        runtime.record.error = undefined;
+                        runtime.record.result = undefined;
+                    } else if (runtime.record.attempts > 0) {
+                        return;
                     }
-                    return;
                 }
 
-                runtime.record.error = errorMessage(error);
-                runtime.record.updatedAt = now();
+                let turnAttempts = 0;
+                while (turnAttempts <= runtime.record.maxRetries) {
+                    if (runtime.record.status === "closed") return;
 
-                if (runtime.record.attempts <= runtime.record.maxRetries) {
+                    turnAttempts += 1;
+                    runtime.record.attempts += 1;
+                    runtime.record.updatedAt = now();
+                    runtime.record.startedAt ??= now();
+                    runtime.controller = new AbortController();
                     await this.safePersist(runtime.record);
-                    await this.safeHook("onRetry", runtime.record);
-                    continue;
-                }
+                    await this.safeHook("onStarted", runtime.record);
 
-                runtime.record.status = "closed";
-                runtime.record.closeReason = "failed";
-                runtime.record.closedAt = now();
-                await this.safePersist(runtime.record);
-                await this.safeHook("onFailed", runtime.record);
-                this.dequeueNext(runtime.record.agentId);
-                return;
+                    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+                    try {
+                        const timeoutPromise = new Promise<string>((_, reject) => {
+                            timeoutHandle = setTimeout(() => {
+                                runtime.controller?.abort();
+                                reject(new Error(`Chat timeout after ${runtime.record.timeoutMs}ms`));
+                            }, runtime.record.timeoutMs);
+                        });
+
+                        const result = await Promise.race([
+                            runner({ signal: runtime.controller.signal, attempt: runtime.record.attempts }, runtime.record),
+                            timeoutPromise,
+                        ]);
+
+                        if (timeoutHandle) clearTimeout(timeoutHandle);
+
+                        runtime.record.result = result;
+                        runtime.record.updatedAt = now();
+                        if (runtime.record.keepAlive) {
+                            await this.safePersist(runtime.record);
+                            currentQueuedTurn?.resolve({ ...runtime.record });
+                            currentQueuedTurn = undefined;
+                            break;
+                        }
+
+                        runtime.record.status = "closed";
+                        runtime.record.closeReason = "completed";
+                        runtime.record.closedAt = now();
+                        await this.safePersist(runtime.record);
+                        await this.safeHook("onCompleted", runtime.record);
+                        this.dequeueNext(runtime.record.agentId);
+                        return;
+                    } catch (error) {
+                        if (timeoutHandle) clearTimeout(timeoutHandle);
+
+                        if (runtime.controller.signal.aborted) {
+                            const changed = this.markCancelled(runtime.record);
+                            currentQueuedTurn?.reject(new Error(`chatId ${chatId} was cancelled.`));
+                            currentQueuedTurn = undefined;
+                            if (changed) {
+                                await this.safePersist(runtime.record);
+                                await this.safeHook("onCancelled", runtime.record);
+                                this.dequeueNext(runtime.record.agentId);
+                            }
+                            return;
+                        }
+
+                        runtime.record.error = errorMessage(error);
+                        runtime.record.updatedAt = now();
+
+                        if (turnAttempts <= runtime.record.maxRetries) {
+                            await this.safePersist(runtime.record);
+                            await this.safeHook("onRetry", runtime.record);
+                            continue;
+                        }
+
+                        runtime.record.status = "closed";
+                        runtime.record.closeReason = "failed";
+                        runtime.record.closedAt = now();
+                        await this.safePersist(runtime.record);
+                        await this.safeHook("onFailed", runtime.record);
+                        currentQueuedTurn?.reject(new Error(runtime.record.error ?? "chat failed"));
+                        currentQueuedTurn = undefined;
+                        for (const queued of runtime.turnQueue.splice(0)) {
+                            queued.reject(new Error(runtime.record.error ?? "chat failed"));
+                        }
+                        this.dequeueNext(runtime.record.agentId);
+                        return;
+                    }
+                }
             }
+        } finally {
+            runtime.running = false;
         }
     }
 }

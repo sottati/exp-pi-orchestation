@@ -47,6 +47,7 @@ export interface AgentChat {
     attempts: number;
     maxRetries: number;
     timeoutMs: number;
+    keepAlive?: boolean;
     result?: string;
     error?: string;
 }

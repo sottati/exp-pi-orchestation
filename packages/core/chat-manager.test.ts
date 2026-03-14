@@ -18,6 +18,7 @@ function baseInput(overrides: Partial<{
     agentId: string;
     task: string;
     maxRetries: number;
+    keepAlive: boolean;
 }> = {}) {
     return {
         sessionId: overrides.sessionId ?? "s1",
@@ -26,6 +27,7 @@ function baseInput(overrides: Partial<{
         agentId: overrides.agentId ?? "code",
         task: overrides.task ?? "do thing",
         maxRetries: overrides.maxRetries,
+        keepAlive: overrides.keepAlive,
     };
 }
 
@@ -184,4 +186,59 @@ test("restore closes interrupted chats", async () => {
     expect(closed?.closeReason).toBe("completed");
 
     expect(persisted.length).toBe(2);
+});
+
+test("keepAlive chat handles 3+ turns without auto-close", async () => {
+    const seenTasks: string[] = [];
+    const manager = new ChatManager();
+
+    const chat = manager.createChat(baseInput({ task: "turn-1", keepAlive: true }), async (_ctx, current) => {
+        seenTasks.push(current.task);
+        return `ack:${current.task}`;
+    });
+
+    await waitUntil(() => manager.getChat(chat.chatId)?.result === "ack:turn-1");
+    expect(manager.getChat(chat.chatId)?.status).toBe("active");
+
+    await manager.sendMessage(chat.chatId, { task: "turn-2" });
+    await manager.sendMessage(chat.chatId, { task: "turn-3" });
+
+    await waitUntil(() => manager.getChat(chat.chatId)?.result === "ack:turn-3");
+
+    const latest = manager.getChat(chat.chatId);
+    expect(seenTasks).toEqual(["turn-1", "turn-2", "turn-3"]);
+    expect(latest?.status).toBe("active");
+    expect(latest?.closeReason).toBeUndefined();
+    expect(latest?.result).toBe("ack:turn-3");
+});
+
+test("keepAlive chat processes queued follow-ups in order", async () => {
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+        releaseFirst = () => resolve();
+    });
+
+    const seenTasks: string[] = [];
+    const manager = new ChatManager();
+
+    const chat = manager.createChat(baseInput({ task: "turn-1", keepAlive: true }), async (_ctx, current) => {
+        seenTasks.push(current.task);
+        if (current.task === "turn-1") {
+            await firstGate;
+        }
+        return `ack:${current.task}`;
+    });
+
+    await waitUntil(() => seenTasks.length === 1);
+
+    const p2 = manager.sendMessage(chat.chatId, { task: "turn-2" });
+    const p3 = manager.sendMessage(chat.chatId, { task: "turn-3" });
+    releaseFirst();
+
+    await p2;
+    await p3;
+    await waitUntil(() => manager.getChat(chat.chatId)?.result === "ack:turn-3");
+
+    expect(seenTasks).toEqual(["turn-1", "turn-2", "turn-3"]);
+    expect(manager.getChat(chat.chatId)?.status).toBe("active");
 });
