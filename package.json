@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "start": "bun run src/index.ts",
+    "ui": "bun --hot run src/server.ts",
     "typecheck": "bunx tsc --noEmit",
     "smoke:orchestrator": "bun run src/index.ts --smoke orchestrator",
     "smoke:math": "bun run src/index.ts --smoke math",
@@ -19,6 +20,10 @@
   },
   "dependencies": {
     "@mariozechner/pi-agent-core": "^0.57.1",
-    "@mariozechner/pi-ai": "^0.57.1"
+    "@mariozechner/pi-ai": "^0.57.1",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
   }
 }

@@ -54,6 +54,7 @@ bun install
 
 ```bash
 bun run start
+bun run ui
 bun run typecheck
 bun run smoke:math
 bun run smoke:code
@@ -65,8 +66,25 @@ Con sesión específica:
 
 ```bash
 bun run start -- --session test01
+bun run ui -- --session test01
 bun run ui:gate -- --session test01
 ```
+
+## UI web
+
+```bash
+bun run ui -- --session demo-1
+```
+
+Abre http://localhost:3000 para ver la interfaz web:
+
+- **Barra de agentes**: botones para cambiar entre `orchestrator`, `code`, `math`.
+- **Panel de mensajes**: conversación filtrada por agente activo, con streaming en tiempo real.
+- **Panel de trazas**: últimas 50 trazas en tiempo real vía WebSocket.
+- **WebSocket** en `/ws`: deltas de streaming, lifecycle de chats y push de trazas.
+- **REST API**: `/api/agents`, `/api/chats`, `/api/threads`, `/api/traces`.
+
+La CLI (`bun run start`) y el servidor UI son entradas independientes que comparten `MultiAgentRuntime`.
 
 ## Comandos de la CLI
 

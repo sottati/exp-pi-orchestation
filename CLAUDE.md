@@ -214,6 +214,46 @@ If behavior is unexpected:
 4. Inspect chat view (`/chat <chatId>`).
 5. Run `bun run typecheck`.
 
+## Web UI
+
+Entry point: `src/server.ts` — independent from the CLI, shares `MultiAgentRuntime`.
+
+Run with:
+```bash
+bun run ui -- --session <id>
+```
+Serves on http://localhost:3000.
+
+### Files
+- `src/server.ts`: `Bun.serve()` with REST routes + WebSocket at `/ws`. Monkey-patches `store.appendTrace` and `store.appendChatRecord` for real-time push to all connected clients.
+- `src/web/index.html`: HTML shell (Bun HTML import, auto-bundles TSX + CSS).
+- `src/web/app.tsx`: Single-file React SPA (useReducer). AgentBar, MessageList, TracePanel, InputBar.
+- `src/web/app.css`: Dark theme with concept-a CSS vars (orchestrator=purple, code=green, math=amber).
+
+### WebSocket protocol
+**Client → Server:**
+- `{ type: "chat", toAgentId, content }` — send message to agent
+- `{ type: "close_chat", chatId }` — cancel a chat
+
+**Server → Client:**
+- `{ type: "agents", agents }` — on connect
+- `{ type: "chat_sending", runId, toAgentId }` — before chat starts
+- `{ type: "stream_delta", runId, delta }` — streaming text token
+- `{ type: "stream_end", runId, answer, durationMs }` — chat complete
+- `{ type: "stream_error", runId, error }` — chat failed
+- `{ type: "trace", event }` — real-time trace push
+- `{ type: "chat_lifecycle", chat }` — chat state change
+
+### REST API
+| Route | Method | Description |
+|---|---|---|
+| `/api/agents` | GET | List agents |
+| `/api/chats` | GET | List all chats |
+| `/api/chats/:id` | GET/DELETE | Inspect or close chat |
+| `/api/threads` | GET | List thread IDs |
+| `/api/threads/:id` | GET | Get thread envelopes |
+| `/api/traces` | GET | Get all traces |
+
 ## UI / Monorepo Decision Rule
 
 Stay terminal-first by default. Consider UI (and Turbo monorepo split) only when at least one is true:
