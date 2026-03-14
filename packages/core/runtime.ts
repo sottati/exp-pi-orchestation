@@ -3,7 +3,7 @@ import { createOrchestratorAgent, createSpecialistRegistry, ORCHESTRATOR_ID } fr
 import type { AgentChat, BaseAgentId, Initiator, RunContext, ThreadEnvelope, TraceEvent } from "./contracts";
 import { errorMessage } from "./errors";
 import { createId, now } from "./ids";
-import { ChatManager } from "./chat-manager";
+import { ChatManager, createConversationId } from "./chat-manager";
 import { ThreadStore } from "./thread-store";
 import { createOrchestratorTools, type SpecialistRegistry } from "./tools";
 
@@ -399,6 +399,7 @@ export class MultiAgentRuntime {
                         parentRunId: input.runContext.runId,
                         parentTurnId: input.runContext.turnId,
                         agentId: input.agentId,
+                        conversationId: createConversationId(this.sessionId, ORCHESTRATOR_ID, input.agentId),
                         task: input.task,
                         context: input.context,
                     },

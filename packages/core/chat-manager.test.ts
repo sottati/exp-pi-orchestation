@@ -32,6 +32,7 @@ function baseInput(overrides: Partial<{
 function sampleRecord(overrides: Partial<AgentChat>): AgentChat {
     return {
         chatId: overrides.chatId ?? "chat_1",
+        conversationId: overrides.conversationId ?? "s1::code<->orchestrator",
         sessionId: overrides.sessionId ?? "s1",
         parentRunId: overrides.parentRunId ?? "run_1",
         parentTurnId: overrides.parentTurnId ?? "turn_1",
@@ -67,6 +68,25 @@ test("ChatManager retries then completes", async () => {
     expect(final).toBeDefined();
     expect(final?.closeReason).toBe("completed");
     expect(final?.attempts).toBe(2);
+});
+
+test("ChatManager reuses stable conversation identity within session/agent pair", async () => {
+    const manager = new ChatManager();
+
+    const first = manager.createChat(baseInput({ sessionId: "s1", agentId: "code", task: "one" }), async () => "ok-1");
+    const second = manager.createChat(baseInput({ sessionId: "s1", agentId: "code", task: "two" }), async () => "ok-2");
+
+    expect(first.chatId).not.toBe(second.chatId);
+    expect(first.conversationId).toBe(second.conversationId);
+});
+
+test("ChatManager does not collide conversation identity across sessions", async () => {
+    const manager = new ChatManager();
+
+    const first = manager.createChat(baseInput({ sessionId: "s1", agentId: "code" }), async () => "ok");
+    const second = manager.createChat(baseInput({ sessionId: "s2", agentId: "code" }), async () => "ok");
+
+    expect(first.conversationId).not.toBe(second.conversationId);
 });
 
 test("ChatManager enforces FIFO per-agent queue", async () => {

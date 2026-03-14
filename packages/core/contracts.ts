@@ -31,6 +31,7 @@ export type ChatCloseReason = "completed" | "failed" | "cancelled";
 
 export interface AgentChat {
     chatId: string;
+    conversationId: string;
     sessionId: string;
     parentRunId: string;
     parentTurnId: string;

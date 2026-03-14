@@ -24,6 +24,7 @@ Necesito un snippet en C para imprimir del 1 al 10
 - Toda delegación es async via chat (`delegate` tool). Sin sync path.
 - Per-agent concurrency: cada especialista tiene `maxConcurrency` slots de chat.
 - Chats con cola FIFO: si un agente está al máximo, los nuevos chats se encolan como `waiting`.
+- Identidad conversacional estable por `sessionId` + par de agentes (`conversationId`), reutilizada en delegaciones sucesivas.
 - Persistencia local de conversaciones por hilo (`threadId`), trazas de ejecución y chat records.
 - Error handling robusto: JSONL fault-tolerant, hooks con `safeAsync`, guards en CLI/trace/persistence.
 - Configuración de modelo por agente (`orchestrator`, `code`, `math`) en `packages/core/agents.ts`.
@@ -107,11 +108,15 @@ La CLI (`bun run start`) y el servidor UI son entradas independientes que compar
 
 Cada delegación del orchestrator a un especialista crea un **chat** (`AgentChat`). El chat es la unidad de trabajo:
 
+- `chatId`: unidad efímera de ejecución (una delegación concreta).
+- `conversationId`: identidad lógica estable por sesión + par de agentes (ej: `demo::code<->orchestrator`).
+
 - `active`: el especialista está procesando
 - `waiting`: encolado porque el agente está al máximo de concurrencia
 - `closed`: terminado (con `closeReason`: `completed`, `failed`, o `cancelled`)
 
 Cuando un chat activo se cierra, el siguiente en la cola del mismo agente pasa a `active`.
+Política de cierre/reapertura: cerrar un `chatId` no cierra la conversación lógica; una nueva delegación al mismo especialista reabre la conversación creando un nuevo `chatId` con el mismo `conversationId`.
 
 ### Tools del orchestrator
 
@@ -137,6 +142,7 @@ Incluye:
 - `threads/*.jsonl`: mensajes por hilo entre participantes.
 - `traces.jsonl`: eventos de ejecución y delegación.
 - `chats.jsonl`: snapshots de estado de chats (append-only, deduplicado por chatId al leer).
+- Cada chat persistido incluye `conversationId` para correlación estable entre delegaciones.
 
 Las líneas corruptas en archivos JSONL se ignoran silenciosamente (fault-tolerant parsing).
 Al reiniciar una sesión, los chats que estaban `active` o `waiting` se marcan como `closed` con error "Interrupted by runtime restart".

@@ -164,6 +164,7 @@ export function createOrchestratorTools(deps: OrchestratorToolDeps): AgentTool<a
                 details: {
                     agentId: params.agentId,
                     chatId: chat.chatId,
+                    conversationId: chat.conversationId,
                     status: chat.status,
                     args: {
                         agentId: params.agentId,
@@ -181,6 +182,7 @@ export function createOrchestratorTools(deps: OrchestratorToolDeps): AgentTool<a
                 content: [{ type: "text", text: statusText }],
                 details: {
                     chatId: chat.chatId,
+                    conversationId: chat.conversationId,
                     status: chat.status,
                     agentId: chat.agentId,
                     queuePosition,

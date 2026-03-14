@@ -20,6 +20,7 @@ export interface CreateChatInput {
     parentRunId: string;
     parentTurnId: string;
     agentId: string;
+    conversationId?: string;
     task: string;
     context?: string;
     timeoutMs?: number;
@@ -44,6 +45,10 @@ export interface ChatManagerOptions {
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 const DEFAULT_MAX_RETRIES = 1;
+
+export function createConversationId(sessionId: string, firstAgentId: string, secondAgentId: string): string {
+    return `${sessionId}::${[firstAgentId, secondAgentId].sort().join("<->")}`;
+}
 
 export class ChatManager {
     private readonly chats = new Map<string, ChatRuntimeData>();
@@ -84,6 +89,7 @@ export class ChatManager {
         let recovered = 0;
         for (const record of records) {
             if (this.chats.has(record.chatId)) continue;
+            record.conversationId ||= createConversationId(record.sessionId, "orchestrator", record.agentId);
             if (record.status === "active" || record.status === "waiting") {
                 record.status = "closed";
                 record.closeReason = "failed";
@@ -101,6 +107,7 @@ export class ChatManager {
     createChat(input: CreateChatInput, runner: ChatRunner): AgentChat {
         const chat: AgentChat = {
             chatId: createId("chat"),
+            conversationId: input.conversationId ?? createConversationId(input.sessionId, "orchestrator", input.agentId),
             sessionId: input.sessionId,
             parentRunId: input.parentRunId,
             parentTurnId: input.parentTurnId,

@@ -128,6 +128,7 @@ This repository is a terminal-first multi-agent runtime prototype.
 ### Runtime goals
 
 - Chat-based delegation: each delegation = a chat between orchestrator and specialist.
+- Stable conversation identity: `conversationId` is scoped to `sessionId` + agent pair and reused across delegations.
 - All delegation is async. No sync path.
 - Per-agent concurrency via `maxConcurrency` (default 1) with FIFO queue for overflow.
 - Persist thread envelopes, traces, and chat records for auditability.
@@ -197,9 +198,11 @@ When adding or changing runtime behavior, preserve correlation IDs:
 ## Chat Persistence
 
 - Chats persist to `chats.jsonl` via `ThreadStore.appendChatRecord()`.
+- Each chat record includes `conversationId` (stable identity) plus `chatId` (single execution).
 - Each state change (active/waiting/closed) appends the full record.
 - On restore, `ChatManager.restore()` reads records from disk, marks interrupted chats as closed.
 - The `ChatManager` constructor accepts optional `persistChat`, `restoreRecords`, and `getMaxConcurrency` callbacks.
+- Closing a `chatId` does not close the stable conversation; next delegation reuses `conversationId` with a new `chatId`.
 
 ## Model Configuration
 
