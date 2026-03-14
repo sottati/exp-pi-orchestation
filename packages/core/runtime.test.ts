@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { Agent, AgentMessage } from "@mariozechner/pi-agent-core";
+import type { Agent, AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
 import type { BaseAgentId, ThreadEnvelope } from "./contracts";
 import { MultiAgentRuntime } from "./runtime";
 
@@ -37,6 +37,38 @@ function createFakeAgent() {
         getReplacedMessages: () => replacedMessages,
         getPromptedMessages: () => promptedMessages,
     };
+}
+
+function createEventfulFakeAgent() {
+    const state = { messages: [] as AgentMessage[] };
+    const listeners = new Set<(event: AgentEvent) => void>();
+
+    const agent = {
+        state,
+        replaceMessages(messages: AgentMessage[]) {
+            state.messages = [...messages];
+        },
+        subscribe(listener: (event: AgentEvent) => void) {
+            listeners.add(listener);
+            return () => {
+                listeners.delete(listener);
+            };
+        },
+        async prompt(message: AgentMessage | AgentMessage[]) {
+            const prompted = Array.isArray(message) ? message : [message];
+            state.messages.push(...prompted);
+            for (const listener of listeners) {
+                listener({ type: "response_chunk", role: "assistant", content: "chunk" } as unknown as AgentEvent);
+            }
+            state.messages.push({
+                role: "assistant",
+                content: "stub-answer",
+                timestamp: Date.now(),
+            } as unknown as AgentMessage);
+        },
+    } as unknown as Agent;
+
+    return { agent };
 }
 
 function buildEnvelope(input: {
@@ -148,4 +180,82 @@ test("runtime keeps full persisted thread while trimming model context", async (
     const replaced = fake.getReplacedMessages();
     expect(replaced).toHaveLength(1);
     expect(replaced[0]).toMatchObject({ role: "assistant", content: "old-assistant" });
+});
+
+test("runtime uses same routing pipeline for human and intra-agent inputs", async () => {
+    const sessionId = `t04-pipeline-${Date.now()}`;
+    const runtime = new MultiAgentRuntime(sessionId);
+    const fake = createEventfulFakeAgent();
+
+    (runtime as unknown as {
+        createAgentForRoute: (toAgentId: Exclude<BaseAgentId, "user">) => Agent;
+    }).createAgentForRoute = () => fake.agent;
+
+    const humanEvents: AgentEvent[] = [];
+    const delegatedEvents: AgentEvent[] = [];
+
+    await runtime.chat({
+        fromAgentId: "user",
+        toAgentId: "code",
+        content: "human-turn",
+        onAgentEvent: (event) => {
+            humanEvents.push(event);
+        },
+    });
+
+    await runtime.chat({
+        fromAgentId: "orchestrator",
+        toAgentId: "code",
+        content: "delegated-turn",
+        onAgentEvent: (event) => {
+            delegatedEvents.push(event);
+        },
+    });
+
+    expect(humanEvents.length).toBeGreaterThan(0);
+    expect(delegatedEvents.length).toBeGreaterThan(0);
+
+    const traces = await runtime.getTraces();
+    const routed = traces.filter((trace) => trace.type === "message_routed");
+    expect(routed).toHaveLength(2);
+
+    const fromAgents = routed
+        .map((trace) => trace.details?.fromAgentId)
+        .filter((value): value is string => typeof value === "string")
+        .sort();
+    expect(fromAgents).toEqual(["orchestrator", "user"]);
+});
+
+test("runtime keeps run and turn correlation in persisted envelopes", async () => {
+    const sessionId = `t04-correlation-${Date.now()}`;
+    const runtime = new MultiAgentRuntime(sessionId);
+    const fake = createEventfulFakeAgent();
+
+    (runtime as unknown as {
+        createAgentForRoute: (toAgentId: Exclude<BaseAgentId, "user">) => Agent;
+    }).createAgentForRoute = () => fake.agent;
+
+    const human = await runtime.chat({
+        fromAgentId: "user",
+        toAgentId: "code",
+        content: "human-turn",
+    });
+    const delegated = await runtime.chat({
+        fromAgentId: "orchestrator",
+        toAgentId: "code",
+        content: "delegated-turn",
+    });
+
+    const humanThread = await runtime.getThread(createThreadId(sessionId, "user", "code"));
+    const delegatedThread = await runtime.getThread(createThreadId(sessionId, "orchestrator", "code"));
+
+    const humanTurn = humanThread.filter((env) => env.runId === human.runContext.runId && env.turnId === human.runContext.turnId);
+    const delegatedTurn = delegatedThread.filter((env) =>
+        env.runId === delegated.runContext.runId && env.turnId === delegated.runContext.turnId
+    );
+
+    expect(humanTurn).toHaveLength(2);
+    expect(delegatedTurn).toHaveLength(2);
+    expect(humanTurn.map((env) => env.initiator)).toEqual(["user", "user"]);
+    expect(delegatedTurn.map((env) => env.initiator)).toEqual(["orchestrator", "orchestrator"]);
 });
