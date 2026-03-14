@@ -21,32 +21,28 @@ export interface ThreadEnvelope {
     fromAgentId: BaseAgentId;
     toAgentId: BaseAgentId;
     initiator: Initiator;
-    taskId?: string;
+    chatId?: string;
     toolCallId?: string;
     message: AgentMessage;
 }
 
-export type TaskStatus =
-    | "queued"
-    | "running"
-    | "needs_human"
-    | "completed"
-    | "failed"
-    | "cancelled";
+export type ChatStatus = "active" | "waiting" | "closed";
+export type ChatCloseReason = "completed" | "failed" | "cancelled";
 
-export interface TaskRecord {
-    jobId: string;
+export interface AgentChat {
+    chatId: string;
     sessionId: string;
     parentRunId: string;
     parentTurnId: string;
-    agentId: Exclude<BaseAgentId, "user" | "orchestrator">;
+    agentId: string;
     task: string;
     context?: string;
-    status: TaskStatus;
+    status: ChatStatus;
+    closeReason?: ChatCloseReason;
     createdAt: number;
     updatedAt: number;
     startedAt?: number;
-    finishedAt?: number;
+    closedAt?: number;
     attempts: number;
     maxRetries: number;
     timeoutMs: number;
@@ -69,16 +65,16 @@ export interface TraceEvent {
         | "message_routed"
         | "tool_start"
         | "tool_end"
-        | "task_queued"
-        | "task_started"
-        | "task_retry"
-        | "task_completed"
-        | "task_failed"
-        | "task_cancelled";
+        | "chat_created"
+        | "chat_started"
+        | "chat_retry"
+        | "chat_completed"
+        | "chat_failed"
+        | "chat_cancelled";
     status: TraceStatus;
     agentId?: BaseAgentId;
     toolName?: string;
     toolCallId?: string;
-    taskId?: string;
+    chatId?: string;
     details?: Record<string, unknown>;
 }

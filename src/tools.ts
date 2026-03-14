@@ -1,7 +1,6 @@
 import { type Agent, type AgentTool } from "@mariozechner/pi-agent-core";
-import { errorMessage } from "./errors";
 import { Type, type Static } from "@sinclair/typebox";
-import type { BaseAgentId, RunContext, TaskRecord } from "./contracts";
+import type { AgentChat, BaseAgentId, RunContext } from "./contracts";
 
 export interface SpecialistDescriptor {
     id: string;
@@ -9,6 +8,7 @@ export interface SpecialistDescriptor {
     role: string;
     capabilities: string[];
     inputHint?: string;
+    maxConcurrency: number;
 }
 
 export interface SpecialistEntry extends SpecialistDescriptor {
@@ -17,110 +17,40 @@ export interface SpecialistEntry extends SpecialistDescriptor {
 
 export type SpecialistRegistry = Record<string, SpecialistEntry>;
 
-type SpecialistId = Exclude<BaseAgentId, "user" | "orchestrator">;
+// --- Tool parameters ---
 
 const listAgentsParameters = Type.Object({});
 type ListAgentsParameters = Static<typeof listAgentsParameters>;
 
-interface ListAgentsDetails {
-    agents: SpecialistDescriptor[];
-    count: number;
-}
-
-const delegateTaskParameters = Type.Object({
+const delegateParameters = Type.Object({
     agentId: Type.String({ description: "Specialist id from list_agents." }),
     task: Type.String({ description: "Task to delegate to the specialist." }),
     context: Type.Optional(Type.String({ description: "Optional extra context for the specialist." })),
 });
-type DelegateTaskParameters = Static<typeof delegateTaskParameters>;
+type DelegateParameters = Static<typeof delegateParameters>;
 
-interface DelegateTaskDetails {
-    mode: "sync";
+const getChatStatusParameters = Type.Object({
+    chatId: Type.String({ description: "Chat ID returned by delegate." }),
+});
+type GetChatStatusParameters = Static<typeof getChatStatusParameters>;
+
+const getChatResultParameters = Type.Object({
+    chatId: Type.String({ description: "Chat ID returned by delegate." }),
+});
+type GetChatResultParameters = Static<typeof getChatResultParameters>;
+
+const closeChatParameters = Type.Object({
+    chatId: Type.String({ description: "Chat ID to close." }),
+});
+type CloseChatParameters = Static<typeof closeChatParameters>;
+
+// --- Dependencies ---
+
+interface DelegationInput {
     agentId: string;
-    task: string;
-    answer: string;
-    durationMs: number;
-    runId: string;
-    turnId: string;
-    toolCallId: string;
-    threadId: string;
-    taskId: string;
-    ok: boolean;
-}
-
-const delegateTaskAsyncParameters = Type.Object({
-    agentId: Type.String({ description: "Specialist id from list_agents." }),
-    task: Type.String({ description: "Task to delegate asynchronously." }),
-    context: Type.Optional(Type.String({ description: "Optional extra context." })),
-    timeoutMs: Type.Optional(Type.Number({ description: "Timeout for each attempt in milliseconds." })),
-    maxRetries: Type.Optional(Type.Number({ description: "Maximum retries when task fails." })),
-});
-type DelegateTaskAsyncParameters = Static<typeof delegateTaskAsyncParameters>;
-
-interface DelegateTaskAsyncDetails {
-    mode: "async";
-    jobId: string;
-    status: TaskRecord["status"];
-    agentId: string;
-    runId: string;
-    turnId: string;
-    toolCallId: string;
-}
-
-const getTaskStatusParameters = Type.Object({
-    jobId: Type.String({ description: "Job ID returned by delegate_task_async." }),
-});
-type GetTaskStatusParameters = Static<typeof getTaskStatusParameters>;
-
-interface GetTaskStatusDetails {
-    found: boolean;
-    job?: TaskRecord;
-}
-
-const getTaskResultParameters = Type.Object({
-    jobId: Type.String({ description: "Job ID returned by delegate_task_async." }),
-});
-type GetTaskResultParameters = Static<typeof getTaskResultParameters>;
-
-interface GetTaskResultDetails {
-    found: boolean;
-    status?: TaskRecord["status"];
-    result?: string;
-    error?: string;
-}
-
-const cancelTaskParameters = Type.Object({
-    jobId: Type.String({ description: "Job ID to cancel." }),
-});
-type CancelTaskParameters = Static<typeof cancelTaskParameters>;
-
-interface CancelTaskDetails {
-    found: boolean;
-    status?: TaskRecord["status"];
-}
-
-interface SyncDelegationInput {
-    agentId: SpecialistId;
     task: string;
     context?: string;
     runContext: RunContext;
-    toolCallId: string;
-}
-
-interface SyncDelegationResult {
-    answer: string;
-    durationMs: number;
-    threadId: string;
-    taskId: string;
-}
-
-interface AsyncDelegationInput {
-    agentId: SpecialistId;
-    task: string;
-    context?: string;
-    runContext: RunContext;
-    timeoutMs?: number;
-    maxRetries?: number;
 }
 
 interface ToolTraceInput {
@@ -135,20 +65,18 @@ interface ToolTraceInput {
 export interface OrchestratorToolDeps {
     registry: SpecialistRegistry;
     getRunContext: () => RunContext;
-    runSyncDelegation: (input: SyncDelegationInput) => Promise<SyncDelegationResult>;
-    createAsyncDelegation: (input: AsyncDelegationInput) => TaskRecord;
-    getTask: (jobId: string) => TaskRecord | undefined;
-    cancelTask: (jobId: string) => TaskRecord | undefined;
+    createDelegation: (input: DelegationInput) => AgentChat;
+    getChat: (chatId: string) => AgentChat | undefined;
+    closeChat: (chatId: string) => AgentChat | undefined;
+    getQueuePosition: (chatId: string) => number | undefined;
     traceToolEvent: (input: ToolTraceInput) => Promise<void>;
 }
 
+// --- Helpers ---
+
 function getAgentCatalog(registry: SpecialistRegistry): SpecialistDescriptor[] {
-    return Object.values(registry).map(({ id, name, role, capabilities, inputHint }) => ({
-        id,
-        name,
-        role,
-        capabilities,
-        inputHint,
+    return Object.values(registry).map(({ id, name, role, capabilities, inputHint, maxConcurrency }) => ({
+        id, name, role, capabilities, inputHint, maxConcurrency,
     }));
 }
 
@@ -160,193 +88,86 @@ const MAX_TASK_LENGTH = 10_000;
 
 function validateTask(task: string): string {
     const normalized = normalizeTask(task);
-    if (!normalized) {
-        throw new Error("Task cannot be empty.");
-    }
-
-    if (normalized.length > MAX_TASK_LENGTH) {
-        throw new Error(`Task exceeds maximum length of ${MAX_TASK_LENGTH} characters.`);
-    }
+    if (!normalized) throw new Error("Task cannot be empty.");
+    if (normalized.length > MAX_TASK_LENGTH) throw new Error(`Task exceeds maximum length of ${MAX_TASK_LENGTH} characters.`);
 
     let balance = 0;
     for (const char of normalized) {
         if (char === "(") balance += 1;
         if (char === ")") balance -= 1;
-        if (balance < 0) {
-            throw new Error("Task has invalid parenthesis ordering.");
-        }
+        if (balance < 0) throw new Error("Task has invalid parenthesis ordering.");
     }
-
-    if (balance !== 0) {
-        throw new Error("Task has unbalanced parentheses.");
-    }
+    if (balance !== 0) throw new Error("Task has unbalanced parentheses.");
 
     return normalized;
 }
 
+// --- Tool factory ---
+
 export function createOrchestratorTools(deps: OrchestratorToolDeps): AgentTool<any>[] {
     const { registry } = deps;
 
-    const listAgentsTool: AgentTool<typeof listAgentsParameters, ListAgentsDetails> = {
+    const listAgentsTool: AgentTool<typeof listAgentsParameters> = {
         name: "list_agents",
         label: "List available specialists",
-        description: "List available specialist agents with role and capabilities.",
+        description: "List available specialist agents with role, capabilities, and concurrency.",
         parameters: listAgentsParameters,
         execute: async (_toolCallId: string, _params: ListAgentsParameters) => {
             const agents = getAgentCatalog(registry);
             const summary = agents
-                .map((agent) => `${agent.id}: ${agent.role} (${agent.capabilities.join(", ")})`)
+                .map((a) => `${a.id}: ${a.role} (${a.capabilities.join(", ")}) [slots=${a.maxConcurrency}]`)
                 .join("\n");
-
             return {
                 content: [{ type: "text", text: summary || "No specialists available." }],
-                details: {
-                    agents,
-                    count: agents.length,
-                },
+                details: { agents, count: agents.length },
             };
         },
     };
 
-    const delegateTaskTool: AgentTool<typeof delegateTaskParameters, DelegateTaskDetails> = {
-        name: "delegate_task_sync",
-        label: "Delegate a task (sync)",
-        description: "Delegate a task synchronously to a specialist agent by id.",
-        parameters: delegateTaskParameters,
-        execute: async (toolCallId: string, params: DelegateTaskParameters) => {
+    const delegateTool: AgentTool<typeof delegateParameters> = {
+        name: "delegate",
+        label: "Delegate task to specialist",
+        description: "Delegate a task to a specialist agent. Returns chatId to track progress. Use get_chat_status/get_chat_result to poll.",
+        parameters: delegateParameters,
+        execute: async (toolCallId: string, params: DelegateParameters) => {
             const specialist = registry[params.agentId];
-            if (!specialist) {
-                throw new Error(`Unknown agentId '${params.agentId}'. Use list_agents first.`);
-            }
+            if (!specialist) throw new Error(`Unknown agentId '${params.agentId}'. Use list_agents first.`);
 
             const runContext = deps.getRunContext();
             const task = validateTask(params.task);
+
             await deps.traceToolEvent({
-                type: "tool_start",
-                status: "running",
-                runContext,
-                toolName: "delegate_task_sync",
-                toolCallId,
+                type: "tool_start", status: "running", runContext,
+                toolName: "delegate", toolCallId,
                 details: { agentId: params.agentId },
             });
 
-            try {
-                const result = await deps.runSyncDelegation({
-                    agentId: params.agentId as SpecialistId,
-                    task,
-                    context: params.context,
-                    runContext,
-                    toolCallId,
-                });
-
-                await deps.traceToolEvent({
-                    type: "tool_end",
-                    status: "ok",
-                    runContext,
-                    toolName: "delegate_task_sync",
-                    toolCallId,
-                    details: { agentId: params.agentId, durationMs: result.durationMs, taskId: result.taskId },
-                });
-
-                return {
-                    content: [
-                        {
-                            type: "text",
-                            text:
-                                result.answer ||
-                                `${specialist.name} completed the task but returned no text output.`,
-                        },
-                    ],
-                    details: {
-                        mode: "sync",
-                        agentId: specialist.id,
-                        task,
-                        answer: result.answer,
-                        durationMs: result.durationMs,
-                        runId: runContext.runId,
-                        turnId: runContext.turnId,
-                        toolCallId,
-                        threadId: result.threadId,
-                        taskId: result.taskId,
-                        ok: true,
-                    },
-                };
-            } catch (error) {
-                await deps.traceToolEvent({
-                    type: "tool_end",
-                    status: "error",
-                    runContext,
-                    toolName: "delegate_task_sync",
-                    toolCallId,
-                    details: {
-                        agentId: params.agentId,
-                        error: errorMessage(error),
-                    },
-                });
-                throw error;
-            }
-        },
-    };
-
-    const legacyDelegateTaskTool: AgentTool<typeof delegateTaskParameters, DelegateTaskDetails> = {
-        ...delegateTaskTool,
-        name: "delegate_task",
-        label: "Delegate a task (legacy alias)",
-        description: "Alias of delegate_task_sync for backward compatibility.",
-    };
-
-    const delegateTaskAsyncTool: AgentTool<typeof delegateTaskAsyncParameters, DelegateTaskAsyncDetails> = {
-        name: "delegate_task_async",
-        label: "Delegate a task (async)",
-        description: "Queue a specialist task and return a jobId immediately.",
-        parameters: delegateTaskAsyncParameters,
-        execute: async (toolCallId: string, params: DelegateTaskAsyncParameters) => {
-            const specialist = registry[params.agentId];
-            if (!specialist) {
-                throw new Error(`Unknown agentId '${params.agentId}'. Use list_agents first.`);
-            }
-
-            const runContext = deps.getRunContext();
-            const task = validateTask(params.task);
-            await deps.traceToolEvent({
-                type: "tool_start",
-                status: "running",
-                runContext,
-                toolName: "delegate_task_async",
-                toolCallId,
-                details: { agentId: params.agentId },
-            });
-
-            const taskRecord = deps.createAsyncDelegation({
-                agentId: params.agentId as SpecialistId,
+            const chat = deps.createDelegation({
+                agentId: params.agentId,
                 task,
                 context: params.context,
                 runContext,
-                timeoutMs: params.timeoutMs,
-                maxRetries: params.maxRetries,
             });
+
+            const queuePosition = deps.getQueuePosition(chat.chatId);
 
             await deps.traceToolEvent({
-                type: "tool_end",
-                status: "ok",
-                runContext,
-                toolName: "delegate_task_async",
-                toolCallId,
-                details: { agentId: params.agentId, jobId: taskRecord.jobId },
+                type: "tool_end", status: "ok", runContext,
+                toolName: "delegate", toolCallId,
+                details: { agentId: params.agentId, chatId: chat.chatId, status: chat.status },
             });
 
+            const statusText = chat.status === "active"
+                ? `Chat started with ${specialist.name}. chatId=${chat.chatId}.`
+                : `Chat queued for ${specialist.name} (position ${queuePosition}). chatId=${chat.chatId}.`;
+
             return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Task queued for ${specialist.name}. jobId=${taskRecord.jobId}.`,
-                    },
-                ],
+                content: [{ type: "text", text: statusText }],
                 details: {
-                    mode: "async",
-                    jobId: taskRecord.jobId,
-                    status: taskRecord.status,
-                    agentId: taskRecord.agentId,
+                    chatId: chat.chatId,
+                    status: chat.status,
+                    agentId: chat.agentId,
+                    queuePosition,
                     runId: runContext.runId,
                     turnId: runContext.turnId,
                     toolCallId,
@@ -355,85 +176,91 @@ export function createOrchestratorTools(deps: OrchestratorToolDeps): AgentTool<a
         },
     };
 
-    const getTaskStatusTool: AgentTool<typeof getTaskStatusParameters, GetTaskStatusDetails> = {
-        name: "get_task_status",
-        label: "Get task status",
-        description: "Check async task status by jobId.",
-        parameters: getTaskStatusParameters,
-        execute: async (_toolCallId: string, params: GetTaskStatusParameters) => {
-            const task = deps.getTask(params.jobId);
-            if (!task) {
+    const delegateTaskAlias: AgentTool<typeof delegateParameters> = {
+        ...delegateTool,
+        name: "delegate_task",
+        label: "Delegate task (legacy alias)",
+        description: "Alias for delegate. Kept for backward compatibility.",
+    };
+
+    const getChatStatusTool: AgentTool<typeof getChatStatusParameters> = {
+        name: "get_chat_status",
+        label: "Get chat status",
+        description: "Check chat status by chatId.",
+        parameters: getChatStatusParameters,
+        execute: async (_toolCallId: string, params: GetChatStatusParameters) => {
+            const chat = deps.getChat(params.chatId);
+            if (!chat) {
                 return {
-                    content: [{ type: "text", text: `jobId ${params.jobId} not found.` }],
+                    content: [{ type: "text", text: `chatId ${params.chatId} not found.` }],
                     details: { found: false },
                 };
             }
+            const info = chat.status === "closed"
+                ? `chatId ${params.chatId} is closed (${chat.closeReason}).${chat.closeReason === "completed" ? " Use get_chat_result to read." : ""}`
+                : `chatId ${params.chatId} is ${chat.status}.`;
             return {
-                content: [{ type: "text", text: `jobId ${params.jobId} is ${task.status}.` }],
-                details: { found: true, job: task },
+                content: [{ type: "text", text: info }],
+                details: { found: true, chat },
             };
         },
     };
 
-    const getTaskResultTool: AgentTool<typeof getTaskResultParameters, GetTaskResultDetails> = {
-        name: "get_task_result",
-        label: "Get task result",
-        description: "Get async task result by jobId.",
-        parameters: getTaskResultParameters,
-        execute: async (_toolCallId: string, params: GetTaskResultParameters) => {
-            const task = deps.getTask(params.jobId);
-            if (!task) {
+    const getChatResultTool: AgentTool<typeof getChatResultParameters> = {
+        name: "get_chat_result",
+        label: "Get chat result",
+        description: "Get the result from a completed chat.",
+        parameters: getChatResultParameters,
+        execute: async (_toolCallId: string, params: GetChatResultParameters) => {
+            const chat = deps.getChat(params.chatId);
+            if (!chat) {
                 return {
-                    content: [{ type: "text", text: `jobId ${params.jobId} not found.` }],
+                    content: [{ type: "text", text: `chatId ${params.chatId} not found.` }],
                     details: { found: false },
                 };
             }
-
-            if (task.status !== "completed") {
+            if (chat.status !== "closed" || chat.closeReason !== "completed") {
+                const info = chat.status === "closed"
+                    ? `chatId ${params.chatId} closed: ${chat.closeReason}. Error: ${chat.error ?? "none"}`
+                    : `chatId ${params.chatId} is still ${chat.status}.`;
                 return {
-                    content: [{ type: "text", text: `jobId ${params.jobId} is ${task.status}.` }],
-                    details: { found: true, status: task.status, error: task.error },
+                    content: [{ type: "text", text: info }],
+                    details: { found: true, status: chat.status, closeReason: chat.closeReason, error: chat.error },
                 };
             }
-
             return {
-                content: [{ type: "text", text: task.result ?? "" }],
-                details: {
-                    found: true,
-                    status: task.status,
-                    result: task.result,
-                },
+                content: [{ type: "text", text: chat.result ?? "" }],
+                details: { found: true, status: chat.status, closeReason: chat.closeReason, result: chat.result },
             };
         },
     };
 
-    const cancelTaskTool: AgentTool<typeof cancelTaskParameters, CancelTaskDetails> = {
-        name: "cancel_task",
-        label: "Cancel task",
-        description: "Cancel a running or queued async task.",
-        parameters: cancelTaskParameters,
-        execute: async (_toolCallId: string, params: CancelTaskParameters) => {
-            const task = deps.cancelTask(params.jobId);
-            if (!task) {
+    const closeChatTool: AgentTool<typeof closeChatParameters> = {
+        name: "close_chat",
+        label: "Close chat",
+        description: "Close an active or waiting chat.",
+        parameters: closeChatParameters,
+        execute: async (_toolCallId: string, params: CloseChatParameters) => {
+            const chat = deps.closeChat(params.chatId);
+            if (!chat) {
                 return {
-                    content: [{ type: "text", text: `jobId ${params.jobId} not found.` }],
+                    content: [{ type: "text", text: `chatId ${params.chatId} not found.` }],
                     details: { found: false },
                 };
             }
             return {
-                content: [{ type: "text", text: `jobId ${params.jobId} is now ${task.status}.` }],
-                details: { found: true, status: task.status },
+                content: [{ type: "text", text: `chatId ${params.chatId} is now closed.` }],
+                details: { found: true, status: chat.status },
             };
         },
     };
 
     return [
         listAgentsTool as AgentTool<any>,
-        delegateTaskTool as AgentTool<any>,
-        legacyDelegateTaskTool as AgentTool<any>,
-        delegateTaskAsyncTool as AgentTool<any>,
-        getTaskStatusTool as AgentTool<any>,
-        getTaskResultTool as AgentTool<any>,
-        cancelTaskTool as AgentTool<any>,
+        delegateTool as AgentTool<any>,
+        delegateTaskAlias as AgentTool<any>,
+        getChatStatusTool as AgentTool<any>,
+        getChatResultTool as AgentTool<any>,
+        closeChatTool as AgentTool<any>,
     ];
 }

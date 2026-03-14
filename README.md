@@ -21,11 +21,13 @@ Necesito un snippet en C para imprimir del 1 al 10
 ## Qué incluye hoy
 
 - Orquestador + especialistas (`code`, `math`) en runtime único.
-- Delegación síncrona (`delegate_task_sync`) y asíncrona (`delegate_task_async`).
-- Persistencia local de conversaciones por hilo (`threadId`), trazas de ejecución y task records.
+- Toda delegación es async via chat (`delegate` tool). Sin sync path.
+- Per-agent concurrency: cada especialista tiene `maxConcurrency` slots de chat.
+- Chats con cola FIFO: si un agente está al máximo, los nuevos chats se encolan como `waiting`.
+- Persistencia local de conversaciones por hilo (`threadId`), trazas de ejecución y chat records.
 - Error handling robusto: JSONL fault-tolerant, hooks con `safeAsync`, guards en CLI/trace/persistence.
 - Modelo configurable via `PI_MODEL_PROVIDER`/`PI_MODEL_ID` (default: `openrouter`/`openrouter/free`).
-- Restauración automática de tasks interrumpidas al reiniciar sesión.
+- Restauración automática de chats interrumpidos al reiniciar sesión.
 - CLI interactiva para operar y testear sin UI.
 - Gate de decisión para saber cuándo pasar a UI/monorepo.
 
@@ -71,15 +73,35 @@ bun run ui:gate -- --session test01
 - `/help`
 - `/agents`
 - `/use <agentId>` (`orchestrator|code|math`)
-- `/jobs`
-- `/job <jobId>`
-- `/task <taskId|jobId>` vista unificada (job + trazas + mensajes relacionados)
-- `/cancel <jobId>`
+- `/chats` (alias: `/jobs`)
+- `/chat <chatId>` (aliases: `/job`, `/task`) — vista unificada (chat + trazas + mensajes)
+- `/close <chatId>` (alias: `/cancel`)
 - `/threads`
 - `/thread <threadId>`
 - `/traces [n]`
 - `/smoke <math|code|orchestrator>`
 - `/exit`
+
+## Modelo de delegación: Chats
+
+Cada delegación del orchestrator a un especialista crea un **chat** (`AgentChat`). El chat es la unidad de trabajo:
+
+- `active`: el especialista está procesando
+- `waiting`: encolado porque el agente está al máximo de concurrencia
+- `closed`: terminado (con `closeReason`: `completed`, `failed`, o `cancelled`)
+
+Cuando un chat activo se cierra, el siguiente en la cola del mismo agente pasa a `active`.
+
+### Tools del orchestrator
+
+| Tool | Descripción |
+|------|-------------|
+| `list_agents` | Lista especialistas con capacidades y slots |
+| `delegate` | Envía tarea a especialista, retorna chatId |
+| `delegate_task` | Alias legacy de `delegate` |
+| `get_chat_status` | Estado de un chat por chatId |
+| `get_chat_result` | Resultado de un chat completado |
+| `close_chat` | Cierra un chat activo o en cola |
 
 ## Persistencia local
 
@@ -93,16 +115,16 @@ Incluye:
 
 - `threads/*.jsonl`: mensajes por hilo entre participantes.
 - `traces.jsonl`: eventos de ejecución y delegación.
-- `tasks.jsonl`: snapshots de estado de tasks async (append-only, deduplicado por jobId al leer).
+- `chats.jsonl`: snapshots de estado de chats (append-only, deduplicado por chatId al leer).
 
 Las líneas corruptas en archivos JSONL se ignoran silenciosamente (fault-tolerant parsing).
-Al reiniciar una sesión, las tasks que estaban `queued` o `running` se marcan como `failed` ("Interrupted by runtime restart").
+Al reiniciar una sesión, los chats que estaban `active` o `waiting` se marcan como `closed` con error "Interrupted by runtime restart".
 
 Cada envelope de hilo incluye metadatos de relación:
 
 - `parentEnvelopeId`
 - `replyToEnvelopeId`
-- `runId`, `turnId`, `taskId?`, `toolCallId?`
+- `runId`, `turnId`, `chatId?`, `toolCallId?`
 
 ## Flujo recomendado de prueba
 
@@ -133,21 +155,21 @@ Cada envelope de hilo incluye metadatos de relación:
    /thread test01::code<->orchestrator
    ```
 
-5. Inspección por tarea:
+5. Inspección por chat:
 
    ```text
-   /task <taskId|jobId>
+   /chat <chatId>
    ```
 
 ## Estructura principal
 
 - `src/index.ts`: CLI interactiva.
 - `src/runtime.ts`: runtime multiagente, enrutado de mensajes, correlación de IDs y trazas.
-- `src/tools.ts`: tools del orquestador (`list_agents`, `delegate_task_sync`, `delegate_task_async`, `get_task_status`, `get_task_result`, `cancel_task`).
-- `src/task-manager.ts`: gestión de jobs async con timeout/retry/cancel y persistencia a disco.
-- `src/thread-store.ts`: persistencia JSONL de hilos, trazas y task records.
+- `src/tools.ts`: tools del orquestador (`list_agents`, `delegate`, `delegate_task`, `get_chat_status`, `get_chat_result`, `close_chat`).
+- `src/chat-manager.ts`: gestión de chats con per-agent concurrency, cola FIFO, timeout/retry y persistencia a disco.
+- `src/thread-store.ts`: persistencia JSONL de hilos, trazas y chat records.
 - `src/errors.ts`: utilidades de error handling (`errorMessage`, `safeAsync`, `safeParseLine`).
-- `src/contracts.ts`: contratos de `ThreadEnvelope`, `TaskRecord`, `TraceEvent`.
+- `src/contracts.ts`: contratos de `ThreadEnvelope`, `AgentChat`, `TraceEvent`.
 - `src/agents.ts`: definición de agentes con lazy model init configurable por env vars.
 - `src/ui-gate.ts`: evaluación de fricción para activar UI.
 
@@ -155,14 +177,14 @@ Cada envelope de hilo incluye metadatos de relación:
 
 - Para mensajes triviales, el orquestador puede responder sin delegar.
 - Para tareas especializadas, debe aparecer `tool_start/tool_end` en `/traces`.
-- Si no hay delegación, no verás eventos de `delegate_task_*` en la traza.
+- Si no hay delegación, no verás eventos de `delegate` en la traza.
 
 ## Troubleshooting rápido
 
 - **Respuestas fuera de contexto**: usa una sesión nueva (`--session`) para evitar historial previo.
-- **No sé si delegó**: consulta `/traces 30` y busca `delegate_task_sync` o `delegate_task_async`.
+- **No sé si delegó**: consulta `/traces 30` y busca `delegate`.
 - **Quiero ver conversación interna entre agentes**: `/threads` y luego `/thread <id>`.
-- **Quiero estado completo de una tarea**: `/task <taskId|jobId>`.
+- **Quiero estado completo de un chat**: `/chat <chatId>`.
 
 ## Nota
 

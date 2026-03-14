@@ -118,16 +118,17 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Runtime: `src/runtime.ts`
 - Tools: `src/tools.ts`
 - Agents: `src/agents.ts` (lazy model init via `PI_MODEL_PROVIDER`/`PI_MODEL_ID`)
-- Async task orchestration: `src/task-manager.ts` (with disk persistence and restore)
-- Persistence: `src/thread-store.ts` (threads, traces, task records — atomic append, fault-tolerant JSONL)
+- Chat orchestration: `src/chat-manager.ts` (per-agent concurrency with FIFO queue, disk persistence and restore)
+- Persistence: `src/thread-store.ts` (threads, traces, chat records — atomic append, fault-tolerant JSONL)
 - Error utilities: `src/errors.ts` (`errorMessage`, `safeAsync`, `safeParseLine`)
 - Contracts: `src/contracts.ts`
 
 ### Runtime goals
 
-- Keep chat-like interactions between agents (e.g., `orchestrator <-> code`).
-- Persist thread envelopes and traces for auditability.
-- Support both sync and async delegation paths.
+- Chat-based delegation: each delegation = a chat between orchestrator and specialist.
+- All delegation is async. No sync path.
+- Per-agent concurrency via `maxConcurrency` (default 1) with FIFO queue for overflow.
+- Persist thread envelopes, traces, and chat records for auditability.
 - Delay UI work until `ui:gate` indicates clear operational friction.
 
 ## Operational Runbook
@@ -147,7 +148,8 @@ Inside the CLI, useful commands:
 - `/agents`, `/use <agentId>`
 - `/traces [n]`
 - `/threads`, `/thread <threadId>`
-- `/jobs`, `/job <jobId>`, `/task <taskId|jobId>`, `/cancel <jobId>`
+- `/chats`, `/chat <chatId>`, `/close <chatId>`
+- Legacy aliases: `/jobs`=/chats, `/job`=`/task`=/chat, `/cancel`=/close
 
 ## Data and Trace Expectations
 
@@ -155,7 +157,7 @@ Inside the CLI, useful commands:
 
 - `threadId`, `fromAgentId`, `toAgentId`
 - `runId`, `turnId`
-- `taskId?`, `toolCallId?`
+- `chatId?`, `toolCallId?`
 - `parentEnvelopeId?`, `replyToEnvelopeId?`
 
 ### Trace correlation requirements
@@ -166,7 +168,7 @@ When adding or changing runtime behavior, preserve correlation IDs:
 - `runId`
 - `turnId`
 - `toolCallId` (for tool lifecycle)
-- `taskId` (for delegated work)
+- `chatId` (for delegated work)
 
 ## Development Guardrails
 
@@ -174,7 +176,7 @@ When adding or changing runtime behavior, preserve correlation IDs:
 - Do not remove backward compatibility alias `delegate_task` unless explicitly requested.
 - Prefer adding new capability through explicit tools rather than implicit behavior.
 - If you modify delegation, update both:
-  - traces (`tool_start/tool_end`, `task_*`), and
+  - traces (`tool_start/tool_end`, `chat_*`), and
   - thread persistence (`ThreadEnvelope` metadata).
 - Avoid introducing hidden state; keep state reconstructable from persisted files.
 - If changing CLI commands, update `README.md` in the same change.
@@ -188,12 +190,12 @@ When adding or changing runtime behavior, preserve correlation IDs:
 - CLI commands must be wrapped in try-catch — use `cliError(err)` helper in `src/index.ts`.
 - Task input validation: `MAX_TASK_LENGTH = 10_000` in `src/tools.ts`.
 
-## Task Persistence
+## Chat Persistence
 
-- Tasks persist to `tasks.jsonl` via `ThreadStore.appendTaskRecord()`.
-- Each state change (queued/running/completed/failed/cancelled) appends the full record.
-- On restore, `TaskManager.restore()` reads records from disk, marks interrupted tasks as failed.
-- The `TaskManager` constructor accepts optional `persistTask` and `restoreRecords` callbacks.
+- Chats persist to `chats.jsonl` via `ThreadStore.appendChatRecord()`.
+- Each state change (active/waiting/closed) appends the full record.
+- On restore, `ChatManager.restore()` reads records from disk, marks interrupted chats as closed.
+- The `ChatManager` constructor accepts optional `persistChat`, `restoreRecords`, and `getMaxConcurrency` callbacks.
 
 ## Model Configuration
 
@@ -209,7 +211,7 @@ If behavior is unexpected:
 1. Start a fresh session (`--session`).
 2. Reproduce with `orchestrator` and inspect `/traces 30`.
 3. Inspect internal thread (`/threads`, `/thread <id>`).
-4. Inspect task view (`/task <taskId|jobId>`).
+4. Inspect chat view (`/chat <chatId>`).
 5. Run `bun run typecheck`.
 
 ## UI / Monorepo Decision Rule

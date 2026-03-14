@@ -37,15 +37,15 @@ function printHelp() {
     console.log("  /help                  muestra esta ayuda");
     console.log("  /agents                lista agentes disponibles");
     console.log("  /use <agentId>         cambia agente activo");
-    console.log("  /jobs                  lista jobs async");
-    console.log("  /job <jobId>           estado detallado de un job");
-    console.log("  /task <taskId|jobId>   vista unificada de tarea (job, trazas, hilo)");
-    console.log("  /cancel <jobId>        cancela un job");
+    console.log("  /chats                 lista chats activos + en cola");
+    console.log("  /chat <chatId>         vista detallada de un chat");
+    console.log("  /close <chatId>        cierra un chat");
     console.log("  /threads               lista threadIds");
     console.log("  /thread <threadId>     muestra mensajes del thread");
     console.log("  /traces [n]            muestra ultimos n eventos de traza (default 20)");
     console.log("  /smoke <name>          corre smoke (math|code|orchestrator)");
-    console.log("  /exit                  salir\n");
+    console.log("  /exit                  salir");
+    console.log("  (aliases: /jobs=/chats, /job=/task=/chat, /cancel=/close)\n");
 }
 
 function parseCommand(input: string): { command: string; args: string[] } {
@@ -89,38 +89,29 @@ async function runInteractiveCli(runtime: MultiAgentRuntime) {
                 console.log(`Agente activo => ${currentAgent}`);
                 continue;
             }
-            if (command === "/jobs") {
-                console.log(JSON.stringify(runtime.listTasks(), null, 2));
+            if (command === "/chats" || command === "/jobs") {
+                console.log(JSON.stringify(runtime.listChats(), null, 2));
                 continue;
             }
-            if (command === "/job") {
-                const jobId = args[0];
-                if (!jobId) {
-                    console.log("Uso: /job <jobId>");
-                    continue;
-                }
-                console.log(JSON.stringify(runtime.getTask(jobId) ?? { error: "job not found" }, null, 2));
-                continue;
-            }
-            if (command === "/task") {
-                const taskId = args[0];
-                if (!taskId) {
-                    console.log("Uso: /task <taskId|jobId>");
+            if (command === "/chat" || command === "/job" || command === "/task") {
+                const chatId = args[0];
+                if (!chatId) {
+                    console.log("Uso: /chat <chatId>");
                     continue;
                 }
                 try {
-                    const details = await runtime.inspectTask(taskId);
+                    const details = await runtime.inspectChat(chatId);
                     console.log(JSON.stringify(details, null, 2));
                 } catch (err) { cliError(err); }
                 continue;
             }
-            if (command === "/cancel") {
-                const jobId = args[0];
-                if (!jobId) {
-                    console.log("Uso: /cancel <jobId>");
+            if (command === "/close" || command === "/cancel") {
+                const chatId = args[0];
+                if (!chatId) {
+                    console.log("Uso: /close <chatId>");
                     continue;
                 }
-                console.log(JSON.stringify(runtime.cancelTask(jobId) ?? { error: "job not found" }, null, 2));
+                console.log(JSON.stringify(runtime.closeChat(chatId) ?? { error: "chat not found" }, null, 2));
                 continue;
             }
             if (command === "/threads") {
@@ -190,4 +181,3 @@ if (args.smoke) {
 } else {
     await runInteractiveCli(runtime);
 }
-

@@ -1,9 +1,9 @@
 import type { Agent, AgentMessage } from "@mariozechner/pi-agent-core";
 import { createOrchestratorAgent, createSpecialistRegistry, ORCHESTRATOR_ID } from "./agents";
-import type { BaseAgentId, Initiator, RunContext, TaskRecord, ThreadEnvelope, TraceEvent } from "./contracts";
+import type { AgentChat, BaseAgentId, Initiator, RunContext, ThreadEnvelope, TraceEvent } from "./contracts";
 import { errorMessage } from "./errors";
 import { createId, now } from "./ids";
-import { TaskManager } from "./task-manager";
+import { ChatManager } from "./chat-manager";
 import { ThreadStore } from "./thread-store";
 import { createOrchestratorTools, type SpecialistRegistry } from "./tools";
 
@@ -13,7 +13,7 @@ interface RouteMessageInput {
     content: string;
     initiator: Initiator;
     runContext: RunContext;
-    taskId?: string;
+    chatId?: string;
     toolCallId?: string;
 }
 
@@ -23,17 +23,17 @@ interface RouteMessageOutput {
     threadId: string;
 }
 
-export interface TaskInspectionSummary {
+export interface ChatInspectionSummary {
     status: string;
     agentId?: string;
     createdAt?: number;
     updatedAt?: number;
 }
 
-export interface TaskInspection {
+export interface ChatInspection {
     queryId: string;
-    job?: TaskRecord;
-    summary?: TaskInspectionSummary;
+    chat?: AgentChat;
+    summary?: ChatInspectionSummary;
     traceEvents: TraceEvent[];
     threadMessages: ThreadEnvelope[];
     threadIds: string[];
@@ -52,9 +52,7 @@ export interface ChatOutput extends RouteMessageOutput {
 function extractLastAssistantText(messages: AgentMessage[]): string {
     for (let i = messages.length - 1; i >= 0; i--) {
         const message = messages[i] as { role?: string; content?: unknown };
-        if (message.role !== "assistant" || !Array.isArray(message.content)) {
-            continue;
-        }
+        if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
 
         return message.content
             .filter(
@@ -84,7 +82,7 @@ function createThreadId(sessionId: string, a: BaseAgentId, b: BaseAgentId): stri
 export class MultiAgentRuntime {
     readonly sessionId: string;
     readonly store: ThreadStore;
-    readonly taskManager: TaskManager;
+    readonly chatManager: ChatManager;
     readonly specialistRegistry: SpecialistRegistry;
     readonly orchestratorAgent: Agent;
     private readonly agentsById: Record<string, Agent>;
@@ -95,102 +93,106 @@ export class MultiAgentRuntime {
         this.store = new ThreadStore({ sessionId });
         this.specialistRegistry = createSpecialistRegistry();
 
-        this.taskManager = new TaskManager({
-            persistTask: (record) => this.store.appendTaskRecord(record),
-            restoreRecords: () => this.store.getTaskRecords(),
+        this.chatManager = new ChatManager({
+            persistChat: (chat) => this.store.appendChatRecord(chat),
+            restoreRecords: () => this.store.getChatRecords(),
+            getMaxConcurrency: (agentId) => {
+                const specialist = this.specialistRegistry[agentId];
+                return specialist?.maxConcurrency ?? 1;
+            },
             hooks: {
-                onQueued: async (record) => {
+                onCreated: async (chat) => {
                     await this.trace({
-                        type: "task_queued",
-                        status: "queued",
-                        runId: record.parentRunId,
-                        turnId: record.parentTurnId,
-                        taskId: record.jobId,
-                        agentId: record.agentId,
-                        details: { task: record.task },
+                        type: "chat_created",
+                        status: chat.status === "active" ? "running" : "queued",
+                        runId: chat.parentRunId,
+                        turnId: chat.parentTurnId,
+                        chatId: chat.chatId,
+                        agentId: chat.agentId as BaseAgentId,
+                        details: { task: chat.task, status: chat.status },
                     });
-                    await this.appendTaskStatusMessage(record, "queued", "Task queued for specialist execution.");
+                    const text = chat.status === "active"
+                        ? "Chat created and started."
+                        : "Chat created and queued (agent at capacity).";
+                    await this.appendChatStatusMessage(chat, text);
                 },
-                onStarted: async (record) => {
+                onStarted: async (chat) => {
                     await this.trace({
-                        type: "task_started",
+                        type: "chat_started",
                         status: "running",
-                        runId: record.parentRunId,
-                        turnId: record.parentTurnId,
-                        taskId: record.jobId,
-                        agentId: record.agentId,
-                        details: { attempts: record.attempts },
+                        runId: chat.parentRunId,
+                        turnId: chat.parentTurnId,
+                        chatId: chat.chatId,
+                        agentId: chat.agentId as BaseAgentId,
+                        details: { attempts: chat.attempts },
                     });
-                    await this.appendTaskStatusMessage(
-                        record,
-                        "running",
-                        `Task started (attempt ${record.attempts}/${record.maxRetries + 1}).`,
+                    await this.appendChatStatusMessage(
+                        chat,
+                        `Chat started (attempt ${chat.attempts}/${chat.maxRetries + 1}).`,
                     );
                 },
-                onRetry: async (record) => {
+                onRetry: async (chat) => {
                     await this.trace({
-                        type: "task_retry",
+                        type: "chat_retry",
                         status: "running",
-                        runId: record.parentRunId,
-                        turnId: record.parentTurnId,
-                        taskId: record.jobId,
-                        agentId: record.agentId,
-                        details: { attempts: record.attempts, error: record.error },
+                        runId: chat.parentRunId,
+                        turnId: chat.parentTurnId,
+                        chatId: chat.chatId,
+                        agentId: chat.agentId as BaseAgentId,
+                        details: { attempts: chat.attempts, error: chat.error },
                     });
-                    await this.appendTaskStatusMessage(
-                        record,
-                        "running",
-                        `Task retry scheduled after error: ${record.error ?? "unknown error"}`,
+                    await this.appendChatStatusMessage(
+                        chat,
+                        `Chat retry after error: ${chat.error ?? "unknown"}`,
                     );
                 },
-                onCompleted: async (record) => {
+                onCompleted: async (chat) => {
                     await this.trace({
-                        type: "task_completed",
+                        type: "chat_completed",
                         status: "completed",
-                        runId: record.parentRunId,
-                        turnId: record.parentTurnId,
-                        taskId: record.jobId,
-                        agentId: record.agentId,
+                        runId: chat.parentRunId,
+                        turnId: chat.parentTurnId,
+                        chatId: chat.chatId,
+                        agentId: chat.agentId as BaseAgentId,
                         details: {
-                            attempts: record.attempts,
-                            durationMs: (record.finishedAt ?? now()) - (record.startedAt ?? now()),
+                            attempts: chat.attempts,
+                            durationMs: (chat.closedAt ?? now()) - (chat.startedAt ?? now()),
                         },
                     });
-                    await this.appendTaskStatusMessage(record, "completed", "Task completed successfully.");
+                    await this.appendChatStatusMessage(chat, "Chat completed successfully.");
                 },
-                onFailed: async (record) => {
+                onFailed: async (chat) => {
                     await this.trace({
-                        type: "task_failed",
+                        type: "chat_failed",
                         status: "error",
-                        runId: record.parentRunId,
-                        turnId: record.parentTurnId,
-                        taskId: record.jobId,
-                        agentId: record.agentId,
-                        details: { attempts: record.attempts, error: record.error },
+                        runId: chat.parentRunId,
+                        turnId: chat.parentTurnId,
+                        chatId: chat.chatId,
+                        agentId: chat.agentId as BaseAgentId,
+                        details: { attempts: chat.attempts, error: chat.error },
                     });
-                    await this.appendTaskStatusMessage(
-                        record,
-                        "failed",
-                        `Task failed after ${record.attempts} attempts: ${record.error ?? "unknown error"}`,
+                    await this.appendChatStatusMessage(
+                        chat,
+                        `Chat failed after ${chat.attempts} attempts: ${chat.error ?? "unknown"}`,
                     );
                 },
-                onCancelled: async (record) => {
+                onCancelled: async (chat) => {
                     await this.trace({
-                        type: "task_cancelled",
+                        type: "chat_cancelled",
                         status: "cancelled",
-                        runId: record.parentRunId,
-                        turnId: record.parentTurnId,
-                        taskId: record.jobId,
-                        agentId: record.agentId,
-                        details: { attempts: record.attempts },
+                        runId: chat.parentRunId,
+                        turnId: chat.parentTurnId,
+                        chatId: chat.chatId,
+                        agentId: chat.agentId as BaseAgentId,
+                        details: { attempts: chat.attempts },
                     });
-                    await this.appendTaskStatusMessage(record, "cancelled", "Task cancelled.");
+                    await this.appendChatStatusMessage(chat, "Chat cancelled.");
                 },
             },
         });
 
-        void this.taskManager.restore().then(n => {
-            if (n > 0) console.error(`[runtime] restored ${n} interrupted task(s) as failed`);
+        void this.chatManager.restore().then(n => {
+            if (n > 0) console.error(`[runtime] restored ${n} interrupted chat(s) as closed`);
         });
 
         this.activeRunContext = this.createRunContext();
@@ -198,21 +200,8 @@ export class MultiAgentRuntime {
         const tools = createOrchestratorTools({
             registry: this.specialistRegistry,
             getRunContext: () => this.activeRunContext,
-            runSyncDelegation: async (input) => {
-                const taskId = createId("task");
-                const output = await this.routeMessage({
-                    fromAgentId: ORCHESTRATOR_ID,
-                    toAgentId: input.agentId,
-                    content: input.context ? `Context:\n${input.context}\n\nTask:\n${input.task}` : input.task,
-                    initiator: "orchestrator",
-                    runContext: input.runContext,
-                    taskId,
-                    toolCallId: input.toolCallId,
-                });
-                return { ...output, taskId };
-            },
-            createAsyncDelegation: (input) => {
-                return this.taskManager.createTask(
+            createDelegation: (input) => {
+                return this.chatManager.createChat(
                     {
                         sessionId: this.sessionId,
                         parentRunId: input.runContext.runId,
@@ -220,25 +209,26 @@ export class MultiAgentRuntime {
                         agentId: input.agentId,
                         task: input.task,
                         context: input.context,
-                        policy: { timeoutMs: input.timeoutMs, maxRetries: input.maxRetries },
                     },
-                    async (_ctx, record) => {
+                    async (_ctx, chat) => {
+                        const content = chat.context
+                            ? `Context:\n${chat.context}\n\nTask:\n${chat.task}`
+                            : chat.task;
                         const output = await this.routeMessage({
                             fromAgentId: ORCHESTRATOR_ID,
-                            toAgentId: input.agentId,
-                            content: input.context
-                                ? `Context:\n${input.context}\n\nTask:\n${input.task}`
-                                : input.task,
+                            toAgentId: input.agentId as Exclude<BaseAgentId, "user">,
+                            content,
                             initiator: "orchestrator",
                             runContext: input.runContext,
-                            taskId: record.jobId,
+                            chatId: chat.chatId,
                         });
                         return output.answer;
                     },
                 );
             },
-            getTask: (jobId) => this.taskManager.getTask(jobId),
-            cancelTask: (jobId) => this.taskManager.cancelTask(jobId),
+            getChat: (chatId) => this.chatManager.getChat(chatId),
+            closeChat: (chatId) => this.chatManager.closeChat(chatId),
+            getQueuePosition: (chatId) => this.chatManager.getQueuePosition(chatId),
             traceToolEvent: async (input) => {
                 await this.trace({
                     type: input.type,
@@ -271,20 +261,24 @@ export class MultiAgentRuntime {
             name: agent.name,
             role: agent.role,
             capabilities: agent.capabilities,
+            maxConcurrency: agent.maxConcurrency,
         }));
-        return [{ id: ORCHESTRATOR_ID, name: "Orchestrator", role: "Routes and delegates tasks.", capabilities: ["routing"] }, ...specialists];
+        return [
+            { id: ORCHESTRATOR_ID, name: "Orchestrator", role: "Routes and delegates tasks.", capabilities: ["routing"], maxConcurrency: Infinity },
+            ...specialists,
+        ];
     }
 
-    listTasks(): TaskRecord[] {
-        return this.taskManager.listTasks();
+    listChats(): AgentChat[] {
+        return this.chatManager.listChats();
     }
 
-    getTask(jobId: string): TaskRecord | undefined {
-        return this.taskManager.getTask(jobId);
+    getChat(chatId: string): AgentChat | undefined {
+        return this.chatManager.getChat(chatId);
     }
 
-    cancelTask(jobId: string): TaskRecord | undefined {
-        return this.taskManager.cancelTask(jobId);
+    closeChat(chatId: string): AgentChat | undefined {
+        return this.chatManager.closeChat(chatId);
     }
 
     async listThreadIds(): Promise<string[]> {
@@ -299,30 +293,22 @@ export class MultiAgentRuntime {
         return this.store.getTraces();
     }
 
-    async inspectTask(queryId: string): Promise<TaskInspection> {
-        const job = this.getTask(queryId);
+    async inspectChat(queryId: string): Promise<ChatInspection> {
+        const chat = this.getChat(queryId);
         const targetIds = new Set<string>([queryId]);
-        if (job) {
-            targetIds.add(job.jobId);
-        }
+        if (chat) targetIds.add(chat.chatId);
 
         const allTraces = await this.store.getTraces();
         const traceEvents = allTraces.filter((event) => {
-            if (event.taskId && targetIds.has(event.taskId)) {
-                return true;
-            }
-            const detailTaskId = event.details?.taskId;
-            return typeof detailTaskId === "string" && targetIds.has(detailTaskId);
+            if (event.chatId && targetIds.has(event.chatId)) return true;
+            const detailChatId = event.details?.chatId;
+            return typeof detailChatId === "string" && targetIds.has(detailChatId);
         });
 
         for (const event of traceEvents) {
-            if (event.taskId) {
-                targetIds.add(event.taskId);
-            }
-            const detailTaskId = event.details?.taskId;
-            if (typeof detailTaskId === "string") {
-                targetIds.add(detailTaskId);
-            }
+            if (event.chatId) targetIds.add(event.chatId);
+            const detailChatId = event.details?.chatId;
+            if (typeof detailChatId === "string") targetIds.add(detailChatId);
         }
 
         const threadIds = await this.store.listThreadIds();
@@ -330,18 +316,17 @@ export class MultiAgentRuntime {
         const relatedThreadIds = new Set<string>();
         for (const threadId of threadIds) {
             const messages = await this.store.getThreadMessages(threadId);
-            const matched = messages.filter((message) => message.taskId && targetIds.has(message.taskId));
+            const matched = messages.filter((m) => m.chatId && targetIds.has(m.chatId));
             if (matched.length > 0) {
                 relatedThreadIds.add(threadId);
                 threadMessages.push(...matched);
             }
         }
 
-        // Synthesize summary from traces when no job record exists (sync tasks)
-        let summary: TaskInspectionSummary | undefined;
+        let summary: ChatInspectionSummary | undefined;
         const first = traceEvents[0];
         const last = traceEvents[traceEvents.length - 1];
-        if (!job && first && last) {
+        if (!chat && first && last) {
             summary = {
                 status: last.status,
                 agentId: last.agentId,
@@ -352,7 +337,7 @@ export class MultiAgentRuntime {
 
         return {
             queryId,
-            job,
+            chat,
             summary,
             traceEvents: traceEvents.sort((a, b) => a.timestamp - b.timestamp),
             threadMessages: threadMessages.sort((a, b) => a.timestamp - b.timestamp),
@@ -394,10 +379,7 @@ export class MultiAgentRuntime {
                 details: { durationMs: output.durationMs, threadId: output.threadId },
             });
 
-            return {
-                ...output,
-                runContext,
-            };
+            return { ...output, runContext };
         } catch (error) {
             await this.trace({
                 type: "run_failed",
@@ -426,7 +408,7 @@ export class MultiAgentRuntime {
             content: [
                 "Run a delegation demo.",
                 "Call list_agents.",
-                "Then solve (24 / 3) + (7 * 2) using delegate_task_sync and return one short sentence.",
+                "Then solve (24 / 3) + (7 * 2) using delegate and then get_chat_result, and return one short sentence.",
             ].join(" "),
         });
     }
@@ -502,7 +484,7 @@ export class MultiAgentRuntime {
                             ? input.toAgentId
                             : input.toAgentId,
                 initiator: input.initiator,
-                taskId: input.taskId,
+                chatId: input.chatId,
                 toolCallId: input.toolCallId,
                 message,
             };
@@ -526,7 +508,7 @@ export class MultiAgentRuntime {
             runId: input.runContext.runId,
             turnId: input.runContext.turnId,
             agentId: input.toAgentId,
-            taskId: input.taskId,
+            chatId: input.chatId,
             toolCallId: input.toolCallId,
             details: {
                 fromAgentId: input.fromAgentId,
@@ -544,19 +526,15 @@ export class MultiAgentRuntime {
         };
     }
 
-    private async appendTaskStatusMessage(
-        record: TaskRecord,
-        status: TaskRecord["status"],
-        text: string,
-    ) {
+    private async appendChatStatusMessage(chat: AgentChat, text: string) {
         try {
-            const threadId = createThreadId(this.sessionId, ORCHESTRATOR_ID, record.agentId);
+            const threadId = createThreadId(this.sessionId, ORCHESTRATOR_ID, chat.agentId as BaseAgentId);
             const history = await this.store.getThreadMessages(threadId);
             const previousEnvelopeId = history.at(-1)?.envelopeId;
             const envelopeId = createId("env");
             const message: AgentMessage = {
                 role: "user",
-                content: `[task_status:${status}] jobId=${record.jobId} ${text}`,
+                content: `[chat_status:${chat.status}] chatId=${chat.chatId} ${text}`,
                 timestamp: now(),
             };
 
@@ -566,18 +544,18 @@ export class MultiAgentRuntime {
                 replyToEnvelopeId: previousEnvelopeId,
                 sessionId: this.sessionId,
                 threadId,
-                runId: record.parentRunId,
-                turnId: record.parentTurnId,
+                runId: chat.parentRunId,
+                turnId: chat.parentTurnId,
                 timestamp: now(),
                 fromAgentId: ORCHESTRATOR_ID,
-                toAgentId: record.agentId,
+                toAgentId: chat.agentId as BaseAgentId,
                 initiator: "system",
-                taskId: record.jobId,
+                chatId: chat.chatId,
                 message,
             };
             await this.store.appendThreadMessage(envelope);
         } catch (err) {
-            console.error("[runtime] appendTaskStatusMessage failed:", errorMessage(err));
+            console.error("[runtime] appendChatStatusMessage failed:", errorMessage(err));
         }
     }
 

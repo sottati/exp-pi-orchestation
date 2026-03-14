@@ -17,22 +17,22 @@ const store = new ThreadStore({ sessionId });
 const traces = await store.getTraces();
 
 const runCount = traces.filter((event) => event.type === "run_started").length;
-const asyncTaskCount = traces.filter((event) => event.type === "task_queued").length;
-const failureCount = traces.filter((event) => event.type === "run_failed" || event.type === "task_failed").length;
+const chatCreatedCount = traces.filter((event) => event.type === "chat_created").length;
+const failureCount = traces.filter((event) => event.type === "run_failed" || event.type === "chat_failed").length;
 
-const taskStarts = traces
-    .filter((event) => event.type === "task_started")
+const chatStarts = traces
+    .filter((event) => event.type === "chat_started")
     .map((event) => ({ ts: event.timestamp, delta: 1 }));
-const taskEnds = traces
+const chatEnds = traces
     .filter(
         (event) =>
-            event.type === "task_completed" ||
-            event.type === "task_failed" ||
-            event.type === "task_cancelled",
+            event.type === "chat_completed" ||
+            event.type === "chat_failed" ||
+            event.type === "chat_cancelled",
     )
     .map((event) => ({ ts: event.timestamp, delta: -1 }));
 
-const timeline = [...taskStarts, ...taskEnds].sort((a, b) => a.ts - b.ts);
+const timeline = [...chatStarts, ...chatEnds].sort((a, b) => a.ts - b.ts);
 let currentParallel = 0;
 let maxParallel = 0;
 for (const point of timeline) {
@@ -44,12 +44,12 @@ for (const point of timeline) {
 
 const traceVolumeHigh = traces.length >= 400;
 const hasConcurrencyPressure = maxParallel > 1;
-const hasAsyncPressure = asyncTaskCount >= 5;
+const hasChatPressure = chatCreatedCount >= 5;
 
-const shouldEnableUi = hasConcurrencyPressure || hasAsyncPressure || traceVolumeHigh;
+const shouldEnableUi = hasConcurrencyPressure || hasChatPressure || traceVolumeHigh;
 const reasons: string[] = [];
-if (hasConcurrencyPressure) reasons.push(`concurrencia detectada (maxParallelTasks=${maxParallel})`);
-if (hasAsyncPressure) reasons.push(`carga async creciente (taskQueued=${asyncTaskCount})`);
+if (hasConcurrencyPressure) reasons.push(`concurrencia detectada (maxParallelChats=${maxParallel})`);
+if (hasChatPressure) reasons.push(`carga de chats creciente (chatsCreated=${chatCreatedCount})`);
 if (traceVolumeHigh) reasons.push(`volumen de trazas alto (events=${traces.length})`);
 if (!reasons.length) reasons.push("sin señales de friccion operativa fuertes");
 
@@ -57,8 +57,8 @@ console.log("UI Gate Report");
 console.log("==============");
 console.log(`sessionId: ${sessionId}`);
 console.log(`runs: ${runCount}`);
-console.log(`asyncTasksQueued: ${asyncTaskCount}`);
-console.log(`maxParallelTasks: ${maxParallel}`);
+console.log(`chatsCreated: ${chatCreatedCount}`);
+console.log(`maxParallelChats: ${maxParallel}`);
 console.log(`failures: ${failureCount}`);
 console.log(`traceEvents: ${traces.length}`);
 console.log(`decision: ${shouldEnableUi ? "ENABLE_UI" : "STAY_TERMINAL"}`);

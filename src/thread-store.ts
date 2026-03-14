@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { appendFile, mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import type { TaskRecord, ThreadEnvelope, TraceEvent } from "./contracts";
+import type { AgentChat, ThreadEnvelope, TraceEvent } from "./contracts";
 import { errorMessage, safeParseLine } from "./errors";
 
 function hashId(value: string): string {
@@ -27,7 +27,7 @@ export class ThreadStore {
     private readonly sessionDir: string;
     private readonly threadsDir: string;
     private readonly tracesFile: string;
-    private readonly tasksFile: string;
+    private readonly chatsFile: string;
     private readonly ready: Promise<void>;
 
     constructor(opts: ThreadStoreOptions) {
@@ -35,7 +35,7 @@ export class ThreadStore {
         this.sessionDir = join(opts.baseDir ?? ".runtime-data", this.sessionId);
         this.threadsDir = join(this.sessionDir, "threads");
         this.tracesFile = join(this.sessionDir, "traces.jsonl");
-        this.tasksFile = join(this.sessionDir, "tasks.jsonl");
+        this.chatsFile = join(this.sessionDir, "chats.jsonl");
         this.ready = this.ensureDirectories();
     }
 
@@ -80,9 +80,7 @@ export class ThreadStore {
         const files = await readdir(this.threadsDir);
         const ids = new Set<string>();
         for (const fileName of files) {
-            if (!fileName.endsWith(".jsonl")) {
-                continue;
-            }
+            if (!fileName.endsWith(".jsonl")) continue;
             const fullPath = join(this.threadsDir, fileName);
             const data = await this.readFile(fullPath);
             const rows = parseJsonLines<ThreadEnvelope>(data);
@@ -103,18 +101,17 @@ export class ThreadStore {
         return rows.sort((a, b) => a.timestamp - b.timestamp);
     }
 
-    async appendTaskRecord(record: TaskRecord) {
-        await this.appendJsonl(this.tasksFile, record);
+    async appendChatRecord(chat: AgentChat) {
+        await this.appendJsonl(this.chatsFile, chat);
     }
 
-    async getTaskRecords(): Promise<TaskRecord[]> {
-        const data = await this.readFile(this.tasksFile);
-        const rows = parseJsonLines<TaskRecord>(data);
-        // Deduplicate by jobId — keep latest entry
-        const byJobId = new Map<string, TaskRecord>();
+    async getChatRecords(): Promise<AgentChat[]> {
+        const data = await this.readFile(this.chatsFile);
+        const rows = parseJsonLines<AgentChat>(data);
+        const byChatId = new Map<string, AgentChat>();
         for (const row of rows) {
-            byJobId.set(row.jobId, row);
+            byChatId.set(row.chatId, row);
         }
-        return [...byJobId.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+        return [...byChatId.values()].sort((a, b) => b.updatedAt - a.updatedAt);
     }
 }
