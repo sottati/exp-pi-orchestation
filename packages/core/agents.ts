@@ -41,25 +41,25 @@ function modelFor(agentId: ManagedAgentId) {
     return getModelCached(config.provider, config.modelId);
 }
 
-function createCodeSpecialistAgent() {
+function createCodeSpecialistAgent(tools: AgentTool<any>[] = []) {
     return new Agent({
         initialState: {
             systemPrompt:
-                "You are a coding specialist. Return concise, practical answers. Prefer short code snippets and include only essential explanation.",
+                "You are a coding specialist. Return concise, practical answers. Prefer short code snippets and include only essential explanation. You are reactive: never start outbound conversations by yourself. Only call report_to_orchestrator when the user explicitly asks you to report.",
             model: modelFor("code"),
-            tools: [],
+            tools,
             messages: [],
         },
     });
 }
 
-function createMathSpecialistAgent() {
+function createMathSpecialistAgent(tools: AgentTool<any>[] = []) {
     return new Agent({
         initialState: {
             systemPrompt:
-                "You are a math specialist. Solve arithmetic tasks clearly and accurately. Return the final numeric result in one short sentence. Show steps only if the user asks.",
+                "You are a math specialist. Solve arithmetic tasks clearly and accurately. Return the final numeric result in one short sentence. Show steps only if the user asks. You are reactive: never start outbound conversations by yourself. Only call report_to_orchestrator when the user explicitly asks you to report.",
             model: modelFor("math"),
-            tools: [],
+            tools,
             messages: [],
         },
     });

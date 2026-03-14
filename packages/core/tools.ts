@@ -13,7 +13,7 @@ export interface SpecialistDescriptor {
 }
 
 export interface SpecialistEntry extends SpecialistDescriptor {
-    createAgent: () => Agent;
+    createAgent: (tools?: AgentTool<any>[]) => Agent;
 }
 
 export type SpecialistRegistry = Record<string, SpecialistEntry>;
@@ -61,6 +61,14 @@ interface DelegationInput {
     runContext: RunContext;
 }
 
+interface SpecialistReportInput {
+    specialistId: Exclude<BaseAgentId, "user" | "orchestrator">;
+    message: string;
+    runContext: RunContext;
+    toolCallId: string;
+    chatId?: string;
+}
+
 interface ToolTraceInput {
     type: "tool_start" | "tool_end";
     status: "running" | "ok" | "error";
@@ -80,6 +88,14 @@ export interface OrchestratorToolDeps {
     closeChat: (chatId: string) => AgentChat | undefined;
     getQueuePosition: (chatId: string) => number | undefined;
     traceToolEvent: (input: ToolTraceInput) => Promise<void>;
+}
+
+export interface SpecialistToolDeps {
+    specialistId: Exclude<BaseAgentId, "user" | "orchestrator">;
+    getRunContext: () => RunContext;
+    sendReportToOrchestrator: (input: SpecialistReportInput) => Promise<string>;
+    traceToolEvent: (input: ToolTraceInput) => Promise<void>;
+    chatId?: string;
 }
 
 // --- Helpers ---
@@ -369,4 +385,73 @@ export function createOrchestratorTools(deps: OrchestratorToolDeps): AgentTool<a
         getChatResultTool as AgentTool<any>,
         closeChatTool as AgentTool<any>,
     ];
+}
+
+const reportToOrchestratorParameters = Type.Object({
+    message: Type.String({
+        description: "Summary to send to orchestrator only when user explicitly asks for a report.",
+    }),
+});
+type ReportToOrchestratorParameters = Static<typeof reportToOrchestratorParameters>;
+
+export function createSpecialistTools(deps: SpecialistToolDeps): AgentTool<any>[] {
+    const reportToOrchestratorTool: AgentTool<typeof reportToOrchestratorParameters> = {
+        name: "report_to_orchestrator",
+        label: "Report result to orchestrator",
+        description: "Send an explicit specialist report to orchestrator when requested by the user.",
+        parameters: reportToOrchestratorParameters,
+        execute: async (toolCallId: string, params: ReportToOrchestratorParameters) => {
+            const runContext = deps.getRunContext();
+            const message = validateTask(params.message);
+
+            await deps.traceToolEvent({
+                type: "tool_start",
+                status: "running",
+                runContext,
+                toolName: "report_to_orchestrator",
+                toolCallId,
+                details: {
+                    agentId: deps.specialistId,
+                    chatId: deps.chatId,
+                    args: {
+                        message,
+                    },
+                },
+            });
+
+            const reportAnswer = await deps.sendReportToOrchestrator({
+                specialistId: deps.specialistId,
+                message,
+                runContext,
+                toolCallId,
+                chatId: deps.chatId,
+            });
+
+            await deps.traceToolEvent({
+                type: "tool_end",
+                status: "ok",
+                runContext,
+                toolName: "report_to_orchestrator",
+                toolCallId,
+                details: {
+                    agentId: deps.specialistId,
+                    chatId: deps.chatId,
+                },
+            });
+
+            return {
+                content: [{ type: "text", text: `Report sent to orchestrator.` }],
+                details: {
+                    reportedBy: deps.specialistId,
+                    reported: true,
+                    orchestratorReply: reportAnswer,
+                    runId: runContext.runId,
+                    turnId: runContext.turnId,
+                    toolCallId,
+                },
+            };
+        },
+    };
+
+    return [reportToOrchestratorTool as AgentTool<any>];
 }

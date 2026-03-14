@@ -28,6 +28,7 @@ Necesito un snippet en C para imprimir del 1 al 10
 - Persistencia local de conversaciones por hilo (`threadId`), trazas de ejecución y chat records.
 - Ventana de contexto configurable por runtime (`historyWindowMessages`, default `50`) sin recortar historial persistido.
 - Ingreso unificado de mensajes (`runtime.chat`) para origen humano e intra-agente, con soporte de subscripción a eventos de generación (`onAgentEvent`) en ambos casos.
+- Especialistas reactivos por defecto; solo reportan al orchestrator via `report_to_orchestrator` cuando se pide explícitamente.
 - Error handling robusto: JSONL fault-tolerant, hooks con `safeAsync`, guards en CLI/trace/persistence.
 - Configuración de modelo por agente (`orchestrator`, `code`, `math`) en `packages/core/agents.ts`.
 - Restauración automática de chats interrumpidos al reiniciar sesión.
@@ -133,6 +134,12 @@ Política de cierre/reapertura: mientras exista un chat `active` keepAlive para 
 | `get_chat_result` | Resultado final o último resultado en chat keepAlive |
 | `close_chat` | Cierra un chat activo o en cola |
 
+### Tool de especialistas
+
+| Tool | Descripción |
+|------|-------------|
+| `report_to_orchestrator` | Reporte explícito de especialista al orchestrator (solo cuando el usuario lo pide) |
+
 ## Persistencia local
 
 Los datos se guardan en:
@@ -207,7 +214,7 @@ Cada envelope de hilo incluye metadatos de relación:
 - `apps/web/app.tsx`: SPA React (estado local + streaming).
 - `apps/web/app.css`: estilos de la UI.
 - `packages/core/runtime.ts`: runtime multiagente, enrutado de mensajes, correlación de IDs y trazas.
-- `packages/core/tools.ts`: tools del orquestador (`list_agents`, `delegate`, `delegate_task`, `follow_up_chat`, `get_chat_status`, `get_chat_result`, `close_chat`).
+- `packages/core/tools.ts`: tools del orquestador (`list_agents`, `delegate`, `delegate_task`, `follow_up_chat`, `get_chat_status`, `get_chat_result`, `close_chat`) y tool de especialista (`report_to_orchestrator`).
 - `packages/core/chat-manager.ts`: gestión de chats con per-agent concurrency, cola FIFO, timeout/retry, loop multi-turn opcional (`keepAlive`) y persistencia a disco.
 - `packages/core/thread-store.ts`: persistencia JSONL de hilos, trazas y chat records.
 - `packages/core/errors.ts`: utilidades de error handling (`errorMessage`, `safeAsync`, `safeParseLine`).

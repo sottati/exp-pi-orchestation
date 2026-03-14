@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
-import { createOrchestratorTools, type OrchestratorToolDeps, type SpecialistRegistry } from "./tools";
+import {
+    createOrchestratorTools,
+    createSpecialistTools,
+    type OrchestratorToolDeps,
+    type SpecialistRegistry,
+} from "./tools";
 
 function buildDeps() {
     const registry: SpecialistRegistry = {
@@ -198,4 +203,47 @@ test("delegate + follow_up_chat + get_chat_result keeps same chat conversation",
         status: "active",
     });
     expect(result.content).toEqual([{ type: "text", text: "ack:second" }]);
+});
+
+test("specialist report_to_orchestrator sends explicit report", async () => {
+    const sent: Array<{
+        specialistId: "code" | "math";
+        message: string;
+        toolCallId: string;
+        chatId?: string;
+        runContext: { runId: string; turnId: string; sessionId: string };
+    }> = [];
+    const tools = createSpecialistTools({
+        specialistId: "math",
+        chatId: "chat_42",
+        getRunContext: () => ({ runId: "run_7", turnId: "turn_9", sessionId: "s1" }),
+        sendReportToOrchestrator: async (input) => {
+            sent.push(input);
+            return "orchestrator-ack";
+        },
+        traceToolEvent: async () => undefined,
+    });
+
+    const report = tools.find((tool) => tool.name === "report_to_orchestrator");
+    expect(report).toBeDefined();
+
+    const result = await report!.execute("call_report", { message: "  done and verified  " } as never);
+
+    expect(sent).toEqual([
+        {
+            specialistId: "math",
+            message: "done and verified",
+            toolCallId: "call_report",
+            chatId: "chat_42",
+            runContext: { runId: "run_7", turnId: "turn_9", sessionId: "s1" },
+        },
+    ]);
+    expect(result.content).toEqual([{ type: "text", text: "Report sent to orchestrator." }]);
+    expect(result.details).toMatchObject({
+        reportedBy: "math",
+        reported: true,
+        orchestratorReply: "orchestrator-ack",
+        runId: "run_7",
+        turnId: "turn_9",
+    });
 });

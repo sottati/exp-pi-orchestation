@@ -134,6 +134,7 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Chats can run multi-turn loops with optional `keepAlive` and ordered follow-up queue per `chatId`.
 - Model context uses configurable history window via `historyWindowMessages` (default `50`) while persisted thread history remains complete.
 - Message ingress is unified through `runtime.chat` for human and intra-agent origins, and both support generation-event subscription via `onAgentEvent`.
+- Specialists stay reactive by default; they only report upward via explicit `report_to_orchestrator` tool usage when user instruction requires it.
 - Persist thread envelopes, traces, and chat records for auditability.
 - Delay UI work until `ui:gate` indicates clear operational friction.
 - Math specialist defaults to short result-only replies unless user asks for steps.

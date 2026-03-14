@@ -5,7 +5,7 @@ import { errorMessage } from "./errors";
 import { createId, now } from "./ids";
 import { ChatManager, createConversationId } from "./chat-manager";
 import { ThreadStore } from "./thread-store";
-import { createOrchestratorTools, type SpecialistRegistry } from "./tools";
+import { createOrchestratorTools, createSpecialistTools, type SpecialistRegistry } from "./tools";
 
 interface RouteMessageInput {
     fromAgentId: BaseAgentId;
@@ -16,6 +16,7 @@ interface RouteMessageInput {
     chatId?: string;
     toolCallId?: string;
     onAgentEvent?: (event: AgentEvent) => void;
+    enableOrchestratorTools?: boolean;
 }
 
 interface RouteMessageOutput {
@@ -465,18 +466,74 @@ export class MultiAgentRuntime {
         });
     }
 
-    private createAgentForRoute(toAgentId: Exclude<BaseAgentId, "user">, runContext: RunContext): Agent {
+    private createSpecialistToolsForRun(
+        runContext: RunContext,
+        specialistId: Exclude<BaseAgentId, "user" | "orchestrator">,
+        chatId?: string,
+    ) {
+        return createSpecialistTools({
+            specialistId,
+            getRunContext: () => runContext,
+            sendReportToOrchestrator: (input) => this.sendSpecialistReport(input),
+            traceToolEvent: async (traceInput) => {
+                await this.trace({
+                    type: traceInput.type,
+                    status: traceInput.status,
+                    runId: traceInput.runContext.runId,
+                    turnId: traceInput.runContext.turnId,
+                    toolName: traceInput.toolName,
+                    toolCallId: traceInput.toolCallId,
+                    details: traceInput.details,
+                });
+            },
+            chatId,
+        });
+    }
+
+    private async sendSpecialistReport(input: {
+        specialistId: Exclude<BaseAgentId, "user" | "orchestrator">;
+        message: string;
+        runContext: RunContext;
+        toolCallId: string;
+        chatId?: string;
+    }): Promise<string> {
+        const report = await this.routeMessage({
+            fromAgentId: input.specialistId,
+            toAgentId: ORCHESTRATOR_ID,
+            content: `Specialist report from ${input.specialistId}: ${input.message}`,
+            initiator: "specialist",
+            runContext: input.runContext,
+            chatId: input.chatId,
+            toolCallId: input.toolCallId,
+            enableOrchestratorTools: false,
+        });
+        return report.answer;
+    }
+
+    private createAgentForRoute(
+        toAgentId: Exclude<BaseAgentId, "user">,
+        runContext: RunContext,
+        enableOrchestratorTools = true,
+        chatId?: string,
+    ): Agent {
         if (toAgentId === ORCHESTRATOR_ID) {
-            return createOrchestratorAgent(this.createOrchestratorToolsForRun(runContext));
+            const tools = enableOrchestratorTools ? this.createOrchestratorToolsForRun(runContext) : [];
+            return createOrchestratorAgent(tools);
         }
         const specialist = this.specialistRegistry[toAgentId];
         if (!specialist) throw new Error(`Agent '${toAgentId}' is not registered.`);
-        return specialist.createAgent();
+        const specialistTools = this.createSpecialistToolsForRun(runContext, toAgentId, chatId);
+        return specialist.createAgent(specialistTools);
     }
 
     private async routeMessage(input: RouteMessageInput): Promise<RouteMessageOutput> {
         const startedAt = now();
-        const agent = this.createAgentForRoute(input.toAgentId, input.runContext);
+        const agent = this.createAgentForRoute(
+            input.toAgentId,
+            input.runContext,
+            input.enableOrchestratorTools ?? true,
+            input.chatId,
+        );
 
         const threadId = createThreadId(this.sessionId, input.fromAgentId, input.toAgentId);
         const history = await this.store.getThreadMessages(threadId);

@@ -321,3 +321,112 @@ test("runtime keeps concurrent conversation context isolated by thread identity"
     expect(humanTurn).toHaveLength(2);
     expect(delegatedTurn).toHaveLength(2);
 });
+
+test("specialist does not emit outbound report without explicit report tool usage", async () => {
+    const sessionId = `t06-reactive-${Date.now()}`;
+    const runtime = new MultiAgentRuntime(sessionId);
+
+    (runtime as unknown as {
+        createAgentForRoute: (
+            toAgentId: Exclude<BaseAgentId, "user">,
+            runContext: { runId: string; turnId: string; sessionId: string },
+            enableOrchestratorTools?: boolean,
+            chatId?: string,
+        ) => Agent;
+    }).createAgentForRoute = (toAgentId) => {
+        const state = { messages: [] as AgentMessage[] };
+        return {
+            state,
+            replaceMessages(messages: AgentMessage[]) {
+                state.messages = [...messages];
+            },
+            subscribe() {
+                return () => undefined;
+            },
+            async prompt(message: AgentMessage | AgentMessage[]) {
+                const prompted = Array.isArray(message) ? message : [message];
+                state.messages.push(...prompted);
+                state.messages.push({
+                    role: "assistant",
+                    content: toAgentId === "math" ? "math-result" : "orchestrator-result",
+                    timestamp: Date.now(),
+                } as unknown as AgentMessage);
+            },
+        } as unknown as Agent;
+    };
+
+    const response = await runtime.chat({
+        fromAgentId: "user",
+        toAgentId: "math",
+        content: "Compute 2 + 2. Do not report.",
+    });
+
+    expect(response.answer).toBe("math-result");
+
+    const reportThread = await runtime.getThread(createThreadId(sessionId, "math", "orchestrator"));
+    expect(reportThread).toHaveLength(0);
+});
+
+test("human -> math -> report_to_orchestrator completes via specialist tool", async () => {
+    const sessionId = `t06-report-${Date.now()}`;
+    const runtime = new MultiAgentRuntime(sessionId);
+
+    (runtime as unknown as {
+        createAgentForRoute: (
+            toAgentId: Exclude<BaseAgentId, "user">,
+            runContext: { runId: string; turnId: string; sessionId: string },
+            enableOrchestratorTools?: boolean,
+            chatId?: string,
+        ) => Agent;
+    }).createAgentForRoute = (toAgentId) => {
+        const state = { messages: [] as AgentMessage[] };
+        return {
+            state,
+            replaceMessages(messages: AgentMessage[]) {
+                state.messages = [...messages];
+            },
+            subscribe() {
+                return () => undefined;
+            },
+            async prompt(message: AgentMessage | AgentMessage[]) {
+                const prompted = Array.isArray(message) ? message : [message];
+                state.messages.push(...prompted);
+                state.messages.push({
+                    role: "assistant",
+                    content: toAgentId === "math" ? "math-result" : "report-received",
+                    timestamp: Date.now(),
+                } as unknown as AgentMessage);
+            },
+        } as unknown as Agent;
+    };
+
+    const first = await runtime.chat({
+        fromAgentId: "user",
+        toAgentId: "math",
+        content: "Solve 8 + 9 and then report to orchestrator.",
+    });
+    expect(first.answer).toBe("math-result");
+
+    const specialistTools = (runtime as unknown as {
+        createSpecialistToolsForRun: (
+            runContext: { runId: string; turnId: string; sessionId: string },
+            specialistId: "math",
+            chatId?: string,
+        ) => Array<{ name: string; execute: (toolCallId: string, params: unknown) => Promise<any> }>;
+    }).createSpecialistToolsForRun(first.runContext, "math");
+
+    const reportTool = specialistTools.find((tool) => tool.name === "report_to_orchestrator");
+    expect(reportTool).toBeDefined();
+
+    const report = await reportTool!.execute("call_report", { message: "sum is 17" });
+    expect(report.details).toMatchObject({
+        reportedBy: "math",
+        reported: true,
+        orchestratorReply: "report-received",
+    });
+
+    const reportThread = await runtime.getThread(createThreadId(sessionId, "math", "orchestrator"));
+    const contents = reportThread.map((env) => String(env.message.content));
+    expect(contents).toContain("Specialist report from math: sum is 17");
+    expect(contents).toContain("report-received");
+});
