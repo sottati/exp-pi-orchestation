@@ -259,3 +259,65 @@ test("runtime keeps run and turn correlation in persisted envelopes", async () =
     expect(humanTurn.map((env) => env.initiator)).toEqual(["user", "user"]);
     expect(delegatedTurn.map((env) => env.initiator)).toEqual(["orchestrator", "orchestrator"]);
 });
+
+test("runtime keeps concurrent conversation context isolated by thread identity", async () => {
+    const sessionId = `t09-concurrent-${Date.now()}`;
+    const runtime = new MultiAgentRuntime(sessionId, { historyWindowMessages: 3 });
+
+    (runtime as unknown as {
+        createAgentForRoute: (toAgentId: Exclude<BaseAgentId, "user">) => Agent;
+    }).createAgentForRoute = () => {
+        const state = { messages: [] as AgentMessage[] };
+        return {
+            state,
+            replaceMessages(messages: AgentMessage[]) {
+                state.messages = [...messages];
+            },
+            subscribe() {
+                return () => undefined;
+            },
+            async prompt(message: AgentMessage | AgentMessage[]) {
+                const prompted = Array.isArray(message) ? message : [message];
+                state.messages.push(...prompted);
+                const last = prompted.at(-1);
+                state.messages.push({
+                    role: "assistant",
+                    content: `ack:${String(last?.content ?? "")}`,
+                    timestamp: Date.now(),
+                } as unknown as AgentMessage);
+            },
+        } as unknown as Agent;
+    };
+
+    const [human, delegated] = await Promise.all([
+        runtime.chat({ fromAgentId: "user", toAgentId: "code", content: "human-concurrent" }),
+        runtime.chat({ fromAgentId: "orchestrator", toAgentId: "code", content: "delegated-concurrent" }),
+    ]);
+
+    expect(human.answer).toBe("ack:human-concurrent");
+    expect(delegated.answer).toBe("ack:delegated-concurrent");
+
+    const humanThreadId = createThreadId(sessionId, "user", "code");
+    const delegatedThreadId = createThreadId(sessionId, "orchestrator", "code");
+    const humanThread = await runtime.getThread(humanThreadId);
+    const delegatedThread = await runtime.getThread(delegatedThreadId);
+
+    expect(humanThread.every((env) => env.threadId === humanThreadId)).toBe(true);
+    expect(delegatedThread.every((env) => env.threadId === delegatedThreadId)).toBe(true);
+
+    const humanContents = humanThread.map((env) => String(env.message.content));
+    const delegatedContents = delegatedThread.map((env) => String(env.message.content));
+    expect(humanContents).toContain("human-concurrent");
+    expect(humanContents).toContain("ack:human-concurrent");
+    expect(humanContents).not.toContain("delegated-concurrent");
+    expect(delegatedContents).toContain("delegated-concurrent");
+    expect(delegatedContents).toContain("ack:delegated-concurrent");
+    expect(delegatedContents).not.toContain("human-concurrent");
+
+    const humanTurn = humanThread.filter((env) => env.runId === human.runContext.runId && env.turnId === human.runContext.turnId);
+    const delegatedTurn = delegatedThread.filter((env) =>
+        env.runId === delegated.runContext.runId && env.turnId === delegated.runContext.turnId
+    );
+    expect(humanTurn).toHaveLength(2);
+    expect(delegatedTurn).toHaveLength(2);
+});
