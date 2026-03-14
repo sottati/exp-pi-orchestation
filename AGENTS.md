@@ -114,14 +114,16 @@ For more information, read the Bun API docs in `node_modules/bun-types/docs/**.m
 
 This repository is a terminal-first multi-agent runtime prototype.
 
-- Entry point: `src/index.ts` (interactive CLI)
-- Runtime: `src/runtime.ts`
-- Tools: `src/tools.ts`
-- Agents: `src/agents.ts` (lazy model init via `PI_MODEL_PROVIDER`/`PI_MODEL_ID`)
-- Chat orchestration: `src/chat-manager.ts` (per-agent concurrency with FIFO queue, disk persistence and restore)
-- Persistence: `src/thread-store.ts` (threads, traces, chat records — atomic append, fault-tolerant JSONL)
-- Error utilities: `src/errors.ts` (`errorMessage`, `safeAsync`, `safeParseLine`)
-- Contracts: `src/contracts.ts`
+- CLI entry point: `apps/cli/index.ts`
+- Web backend entry point: `apps/backend/server.ts`
+- UI gate entry point: `apps/backend/ui-gate.ts`
+- Runtime: `packages/core/runtime.ts`
+- Tools: `packages/core/tools.ts`
+- Agents: `packages/core/agents.ts` (per-agent model config map)
+- Chat orchestration: `packages/core/chat-manager.ts` (per-agent concurrency with FIFO queue, disk persistence and restore)
+- Persistence: `packages/core/thread-store.ts` (threads, traces, chat records — atomic append, fault-tolerant JSONL)
+- Error utilities: `packages/core/errors.ts` (`errorMessage`, `safeAsync`, `safeParseLine`)
+- Contracts: `packages/core/contracts.ts`
 
 ### Runtime goals
 
@@ -130,6 +132,7 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Per-agent concurrency via `maxConcurrency` (default 1) with FIFO queue for overflow.
 - Persist thread envelopes, traces, and chat records for auditability.
 - Delay UI work until `ui:gate` indicates clear operational friction.
+- Math specialist defaults to short result-only replies unless user asks for steps.
 
 ## Operational Runbook
 
@@ -137,6 +140,7 @@ Use these project scripts:
 
 - `bun run start`
 - `bun run start -- --session <id>`
+- `bun test`
 - `bun run typecheck`
 - `bun run smoke:math`
 - `bun run smoke:code`
@@ -148,7 +152,7 @@ Inside the CLI, useful commands:
 - `/agents`, `/use <agentId>`
 - `/traces [n]`
 - `/threads`, `/thread <threadId>`
-- `/chats`, `/chat <chatId>`, `/close <chatId>`
+- `/chats`, `/chat <chatId> [--json]`, `/close <chatId>`
 - Legacy aliases: `/jobs`=/chats, `/job`=`/task`=/chat, `/cancel`=/close
 
 ## Data and Trace Expectations
@@ -183,12 +187,12 @@ When adding or changing runtime behavior, preserve correlation IDs:
 
 ## Error Handling Patterns
 
-- Use `errorMessage(err)` from `src/errors.ts` to extract message from unknown errors. Never inline `err instanceof Error ? err.message : String(err)`.
+- Use `errorMessage(err)` from `packages/core/errors.ts` to extract message from unknown errors. Never inline `err instanceof Error ? err.message : String(err)`.
 - Use `safeAsync(fn, label)` for fire-and-forget async operations (hooks, persistence). Logs to stderr on failure, returns `undefined`.
 - Use `safeParseLine<T>(line)` for JSONL fault-tolerant parsing. Returns `undefined` on corrupt lines.
 - Guard `trace()` and persistence calls with try-catch so trace failures don't shadow original errors.
-- CLI commands must be wrapped in try-catch — use `cliError(err)` helper in `src/index.ts`.
-- Task input validation: `MAX_TASK_LENGTH = 10_000` in `src/tools.ts`.
+- CLI commands must be wrapped in try-catch — use `cliError(err)` helper in `apps/cli/index.ts`.
+- Task input validation: `MAX_TASK_LENGTH = 10_000` in `packages/core/tools.ts`.
 
 ## Chat Persistence
 
@@ -199,10 +203,12 @@ When adding or changing runtime behavior, preserve correlation IDs:
 
 ## Model Configuration
 
-Agents use lazy model initialization. Set via env vars (Bun loads `.env` automatically):
+Agents use lazy model initialization with explicit per-agent config in `AGENT_MODEL_CONFIG` inside `packages/core/agents.ts`.
+Current setup keeps same model for all agents.
 
-- `PI_MODEL_PROVIDER` (default: `openrouter`)
-- `PI_MODEL_ID` (default: `openrouter/free`)
+- `orchestrator` → `openrouter/google/gemini-3.1-flash-lite-preview`
+- `code` → `openrouter/google/gemini-3.1-flash-lite-preview`
+- `math` → `openrouter/google/gemini-3.1-flash-lite-preview`
 
 ## Debug Checklist
 
@@ -211,8 +217,9 @@ If behavior is unexpected:
 1. Start a fresh session (`--session`).
 2. Reproduce with `orchestrator` and inspect `/traces 30`.
 3. Inspect internal thread (`/threads`, `/thread <id>`).
-4. Inspect chat view (`/chat <chatId>`).
+4. Inspect chat view (`/chat <chatId>`), or raw inspection (`/chat <chatId> --json`).
 5. Run `bun run typecheck`.
+6. If answer is empty, inspect `/thread <id>` for `Model error: ...` (often provider rate-limit/quota).
 
 ## UI / Monorepo Decision Rule
 

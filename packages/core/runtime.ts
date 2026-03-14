@@ -1,4 +1,4 @@
-import type { Agent, AgentMessage } from "@mariozechner/pi-agent-core";
+import type { Agent, AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
 import { createOrchestratorAgent, createSpecialistRegistry, ORCHESTRATOR_ID } from "./agents";
 import type { AgentChat, BaseAgentId, Initiator, RunContext, ThreadEnvelope, TraceEvent } from "./contracts";
 import { errorMessage } from "./errors";
@@ -15,6 +15,7 @@ interface RouteMessageInput {
     runContext: RunContext;
     chatId?: string;
     toolCallId?: string;
+    onAgentEvent?: (event: AgentEvent) => void;
 }
 
 interface RouteMessageOutput {
@@ -43,6 +44,7 @@ export interface ChatInput {
     toAgentId: Exclude<BaseAgentId, "user">;
     content: string;
     fromAgentId?: BaseAgentId;
+    onAgentEvent?: (event: AgentEvent) => void;
 }
 
 export interface ChatOutput extends RouteMessageOutput {
@@ -50,9 +52,26 @@ export interface ChatOutput extends RouteMessageOutput {
 }
 
 function extractLastAssistantText(messages: AgentMessage[]): string {
+    let lastAssistantError: string | undefined;
+
     for (let i = messages.length - 1; i >= 0; i--) {
-        const message = messages[i] as { role?: string; content?: unknown };
-        if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
+        const message = messages[i] as {
+            role?: string;
+            content?: unknown;
+            errorMessage?: unknown;
+            stopReason?: unknown;
+        };
+        if (message.role !== "assistant") continue;
+
+        if (typeof message.errorMessage === "string" && message.errorMessage.trim()) {
+            lastAssistantError = message.errorMessage.trim();
+            continue;
+        }
+
+        if (typeof message.content === "string") {
+            return message.content.trim();
+        }
+        if (!Array.isArray(message.content)) continue;
 
         return message.content
             .filter(
@@ -66,6 +85,11 @@ function extractLastAssistantText(messages: AgentMessage[]): string {
             .join("")
             .trim();
     }
+
+    if (lastAssistantError) {
+        return `Model error: ${lastAssistantError}`;
+    }
+
     return "";
 }
 
@@ -84,9 +108,6 @@ export class MultiAgentRuntime {
     readonly store: ThreadStore;
     readonly chatManager: ChatManager;
     readonly specialistRegistry: SpecialistRegistry;
-    readonly orchestratorAgent: Agent;
-    private readonly agentsById: Record<string, Agent>;
-    private activeRunContext: RunContext;
 
     constructor(sessionId = "default") {
         this.sessionId = sessionId;
@@ -195,64 +216,11 @@ export class MultiAgentRuntime {
             if (n > 0) console.error(`[runtime] restored ${n} interrupted chat(s) as closed`);
         });
 
-        this.activeRunContext = this.createRunContext();
-
-        const tools = createOrchestratorTools({
-            registry: this.specialistRegistry,
-            getRunContext: () => this.activeRunContext,
-            createDelegation: (input) => {
-                return this.chatManager.createChat(
-                    {
-                        sessionId: this.sessionId,
-                        parentRunId: input.runContext.runId,
-                        parentTurnId: input.runContext.turnId,
-                        agentId: input.agentId,
-                        task: input.task,
-                        context: input.context,
-                    },
-                    async (_ctx, chat) => {
-                        const content = chat.context
-                            ? `Context:\n${chat.context}\n\nTask:\n${chat.task}`
-                            : chat.task;
-                        const output = await this.routeMessage({
-                            fromAgentId: ORCHESTRATOR_ID,
-                            toAgentId: input.agentId as Exclude<BaseAgentId, "user">,
-                            content,
-                            initiator: "orchestrator",
-                            runContext: input.runContext,
-                            chatId: chat.chatId,
-                        });
-                        return output.answer;
-                    },
-                );
-            },
-            getChat: (chatId) => this.chatManager.getChat(chatId),
-            closeChat: (chatId) => this.chatManager.closeChat(chatId),
-            getQueuePosition: (chatId) => this.chatManager.getQueuePosition(chatId),
-            traceToolEvent: async (input) => {
-                await this.trace({
-                    type: input.type,
-                    status: input.status,
-                    runId: input.runContext.runId,
-                    turnId: input.runContext.turnId,
-                    toolName: input.toolName,
-                    toolCallId: input.toolCallId,
-                    details: input.details,
-                });
-            },
-        });
-
-        this.orchestratorAgent = createOrchestratorAgent(tools);
         const codeSpecialist = this.specialistRegistry.code;
         const mathSpecialist = this.specialistRegistry.math;
         if (!codeSpecialist || !mathSpecialist) {
             throw new Error("Specialists 'code' and 'math' are required in registry.");
         }
-        this.agentsById = {
-            [ORCHESTRATOR_ID]: this.orchestratorAgent,
-            code: codeSpecialist.agent,
-            math: mathSpecialist.agent,
-        };
     }
 
     listAgents() {
@@ -360,15 +328,14 @@ export class MultiAgentRuntime {
         });
 
         try {
-            const output = await this.withRunContext(runContext, async () =>
-                this.routeMessage({
-                    fromAgentId,
-                    toAgentId: input.toAgentId,
-                    content: input.content,
-                    initiator,
-                    runContext,
-                }),
-            );
+            const output = await this.routeMessage({
+                fromAgentId,
+                toAgentId: input.toAgentId,
+                content: input.content,
+                initiator,
+                runContext,
+                onAgentEvent: input.onAgentEvent,
+            });
 
             await this.trace({
                 type: "run_completed",
@@ -421,22 +388,65 @@ export class MultiAgentRuntime {
         };
     }
 
-    private async withRunContext<T>(runContext: RunContext, fn: () => Promise<T>): Promise<T> {
-        const previous = this.activeRunContext;
-        this.activeRunContext = runContext;
-        try {
-            return await fn();
-        } finally {
-            this.activeRunContext = previous;
+    private createOrchestratorToolsForRun(runContext: RunContext) {
+        return createOrchestratorTools({
+            registry: this.specialistRegistry,
+            getRunContext: () => runContext,
+            createDelegation: (input) => {
+                return this.chatManager.createChat(
+                    {
+                        sessionId: this.sessionId,
+                        parentRunId: input.runContext.runId,
+                        parentTurnId: input.runContext.turnId,
+                        agentId: input.agentId,
+                        task: input.task,
+                        context: input.context,
+                    },
+                    async (_ctx, chat) => {
+                        const content = chat.context
+                            ? `Context:\n${chat.context}\n\nTask:\n${chat.task}`
+                            : chat.task;
+                        const output = await this.routeMessage({
+                            fromAgentId: ORCHESTRATOR_ID,
+                            toAgentId: input.agentId as Exclude<BaseAgentId, "user">,
+                            content,
+                            initiator: "orchestrator",
+                            runContext: input.runContext,
+                            chatId: chat.chatId,
+                        });
+                        return output.answer;
+                    },
+                );
+            },
+            getChat: (chatId) => this.chatManager.getChat(chatId),
+            closeChat: (chatId) => this.chatManager.closeChat(chatId),
+            getQueuePosition: (chatId) => this.chatManager.getQueuePosition(chatId),
+            traceToolEvent: async (traceInput) => {
+                await this.trace({
+                    type: traceInput.type,
+                    status: traceInput.status,
+                    runId: traceInput.runContext.runId,
+                    turnId: traceInput.runContext.turnId,
+                    toolName: traceInput.toolName,
+                    toolCallId: traceInput.toolCallId,
+                    details: traceInput.details,
+                });
+            },
+        });
+    }
+
+    private createAgentForRoute(toAgentId: Exclude<BaseAgentId, "user">, runContext: RunContext): Agent {
+        if (toAgentId === ORCHESTRATOR_ID) {
+            return createOrchestratorAgent(this.createOrchestratorToolsForRun(runContext));
         }
+        const specialist = this.specialistRegistry[toAgentId];
+        if (!specialist) throw new Error(`Agent '${toAgentId}' is not registered.`);
+        return specialist.createAgent();
     }
 
     private async routeMessage(input: RouteMessageInput): Promise<RouteMessageOutput> {
         const startedAt = now();
-        const agent = this.agentsById[input.toAgentId];
-        if (!agent) {
-            throw new Error(`Agent '${input.toAgentId}' is not registered.`);
-        }
+        const agent = this.createAgentForRoute(input.toAgentId, input.runContext);
 
         const threadId = createThreadId(this.sessionId, input.fromAgentId, input.toAgentId);
         const history = await this.store.getThreadMessages(threadId);
@@ -450,7 +460,12 @@ export class MultiAgentRuntime {
         };
 
         const beforeCount = historyMessages.length;
-        await agent.prompt(userMessage);
+        const unsubscribe = input.onAgentEvent ? agent.subscribe(input.onAgentEvent) : undefined;
+        try {
+            await agent.prompt(userMessage);
+        } finally {
+            unsubscribe?.();
+        }
         const newMessages = agent.state.messages.slice(beforeCount);
         let previousEnvelopeId = history.at(-1)?.envelopeId;
         let currentTurnUserEnvelopeId: string | undefined;
@@ -573,5 +588,51 @@ export class MultiAgentRuntime {
         } catch (err) {
             console.error("[runtime] trace write failed:", errorMessage(err), event.type);
         }
+        debugTrace(event);
     }
+}
+
+function debugTrace(event: TraceEvent): void {
+    const d = event.details ?? {};
+    let line: string | null = null;
+
+    switch (event.type) {
+        case "run_started":
+            line = `[run]  ← ${d.fromAgentId ?? "?"}: "${String(d.preview ?? "").slice(0, 60)}"`;
+            break;
+        case "run_completed":
+            line = `[run]  ✓ done ${d.durationMs}ms`;
+            break;
+        case "run_failed":
+            line = `[run]  ✗ failed: ${d.error ?? "unknown"}`;
+            break;
+        case "tool_start": {
+            const args = (d.args ?? d) as Record<string, unknown>;
+            if (event.toolName === "delegate" || event.toolName === "delegate_task") {
+                line = `[tool] delegate → ${args.agentId}: "${String(args.task ?? "").slice(0, 60)}"`;
+            } else if (event.toolName === "get_chat_result" || event.toolName === "get_chat_status") {
+                line = `[tool] ${event.toolName} → ${args.chatId ?? "?"}`;
+            } else {
+                line = `[tool] ${event.toolName}`;
+            }
+            break;
+        }
+        case "chat_created":
+            line = `[chat] ${event.chatId} created → ${event.agentId} [${d.status}]`;
+            break;
+        case "chat_started":
+            line = `[chat] ${event.chatId} started → ${event.agentId}`;
+            break;
+        case "chat_completed":
+            line = `[chat] ${event.chatId} ✓ done ${d.durationMs}ms`;
+            break;
+        case "chat_failed":
+            line = `[chat] ${event.chatId} ✗ failed: ${d.error ?? "unknown"}`;
+            break;
+        case "chat_cancelled":
+            line = `[chat] ${event.chatId} cancelled`;
+            break;
+    }
+
+    if (line) process.stderr.write(`\x1b[2m${line}\x1b[0m\n`);
 }

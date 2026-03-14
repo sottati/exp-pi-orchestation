@@ -128,6 +128,7 @@ html, body, #root {
 .message--user      { align-self: flex-end; }
 .message--assistant { align-self: flex-start; }
 .message--error     { align-self: flex-start; }
+.message--status    { align-self: flex-start; }
 
 .message-meta {
   font-size: 10px;
@@ -170,6 +171,16 @@ html, body, #root {
 .message--error .message-content {
   border-left-color: var(--error);
   color: var(--error);
+}
+
+.message--status .message-content {
+  background: transparent;
+  border: none;
+  border-left: 2px dashed var(--text-muted);
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 0;
 }
 
 /* Streaming state */

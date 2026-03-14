@@ -1,6 +1,6 @@
 import React, { useReducer, useEffect, useRef, useCallback, useState } from "react";
 import { createRoot } from "react-dom/client";
-import "./app.css";
+import "./app.css"
 
 interface AgentInfo {
     id: string;
@@ -22,7 +22,7 @@ interface TraceEvent {
 
 interface UIMessage {
     id: string;
-    role: "user" | "assistant" | "error";
+    role: "user" | "assistant" | "error" | "status";
     agentId: string;
     content: string;
     timestamp: number;
@@ -46,6 +46,7 @@ type ServerMsg =
     | { type: "stream_delta"; runId: string; delta: string }
     | { type: "stream_end"; runId: string; answer: string; durationMs: number }
     | { type: "stream_error"; runId: string; error: string }
+    | { type: "stream_status"; runId: string; text: string }
     | { type: "trace"; event: TraceEvent }
     | { type: "chat_lifecycle"; chat: unknown };
 
@@ -99,7 +100,7 @@ function reducer(state: State, action: Action): State {
                 id: `msg-${action.runId}`,
                 role: "assistant",
                 agentId: state.activeAgent,
-                content: action.answer,
+                content: action.answer || state.streamBuffer,
                 timestamp: Date.now(),
                 runId: action.runId,
                 durationMs: action.durationMs,
@@ -129,6 +130,18 @@ function reducer(state: State, action: Action): State {
                 currentRunId: null,
                 messages: [...state.messages, msg],
             };
+        }
+
+        case "stream_status": {
+            const statusMsg: UIMessage = {
+                id: `status-${action.runId}-${Date.now()}`,
+                role: "status",
+                agentId: state.activeAgent,
+                content: action.text,
+                timestamp: Date.now(),
+                runId: action.runId,
+            };
+            return { ...state, messages: [...state.messages, statusMsg] };
         }
 
         case "trace":
@@ -183,6 +196,14 @@ function MessageBubble({ msg }: { msg: UIMessage }) {
     const color = msg.role === "user"
         ? "var(--user)"
         : AGENT_COLORS[msg.agentId] ?? "var(--text-muted)";
+
+    if (msg.role === "status") {
+        return (
+            <div className="message message--status">
+                <pre className="message-content">{msg.content}</pre>
+            </div>
+        );
+    }
 
     return (
         <div

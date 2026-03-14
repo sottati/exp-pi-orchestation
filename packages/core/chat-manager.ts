@@ -69,6 +69,15 @@ export class ChatManager {
         return safeAsync(async () => { await this.hooks[name]?.(chat); }, `hook:${name}`);
     }
 
+    private markCancelled(chat: AgentChat): boolean {
+        if (chat.status === "closed" && chat.closeReason === "cancelled") return false;
+        chat.status = "closed";
+        chat.closeReason = "cancelled";
+        chat.updatedAt = now();
+        chat.closedAt = chat.closedAt ?? now();
+        return true;
+    }
+
     async restore(): Promise<number> {
         if (!this.restoreRecords) return 0;
         const records = await this.restoreRecords();
@@ -140,6 +149,7 @@ export class ChatManager {
     closeChat(chatId: string): AgentChat | undefined {
         const runtime = this.chats.get(chatId);
         if (!runtime) return undefined;
+        if (runtime.record.status === "closed") return { ...runtime.record };
 
         // Remove from waiting queue if queued
         if (runtime.record.status === "waiting") {
@@ -150,13 +160,12 @@ export class ChatManager {
             }
         }
 
+        const changed = this.markCancelled(runtime.record);
         runtime.controller?.abort();
-        runtime.record.status = "closed";
-        runtime.record.closeReason = "cancelled";
-        runtime.record.updatedAt = now();
-        runtime.record.closedAt = now();
-        void this.safePersist(runtime.record);
-        void this.safeHook("onCancelled", runtime.record);
+        if (changed) {
+            void this.safePersist(runtime.record);
+            void this.safeHook("onCancelled", runtime.record);
+        }
 
         this.dequeueNext(runtime.record.agentId);
 
@@ -247,13 +256,12 @@ export class ChatManager {
                 if (timeoutHandle) clearTimeout(timeoutHandle);
 
                 if (runtime.controller.signal.aborted) {
-                    runtime.record.status = "closed";
-                    runtime.record.closeReason = "cancelled";
-                    runtime.record.updatedAt = now();
-                    runtime.record.closedAt = now();
-                    await this.safePersist(runtime.record);
-                    await this.safeHook("onCancelled", runtime.record);
-                    this.dequeueNext(runtime.record.agentId);
+                    const changed = this.markCancelled(runtime.record);
+                    if (changed) {
+                        await this.safePersist(runtime.record);
+                        await this.safeHook("onCancelled", runtime.record);
+                        this.dequeueNext(runtime.record.agentId);
+                    }
                     return;
                 }
 

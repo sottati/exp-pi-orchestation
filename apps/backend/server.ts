@@ -1,9 +1,9 @@
 // @ts-ignore — Bun HTML import (bundled automatically)
-import index from "./web/index.html";
-import { MultiAgentRuntime } from "./runtime";
+import index from "../web/index.html";
+import { MultiAgentRuntime } from "../../packages/core/runtime";
 import type { AgentEvent } from "@mariozechner/pi-agent-core";
-import type { TraceEvent, AgentChat, BaseAgentId } from "./contracts";
-import { errorMessage } from "./errors";
+import type { TraceEvent, AgentChat, BaseAgentId } from "../../packages/core/contracts";
+import { errorMessage } from "../../packages/core/errors";
 
 const sessionIdx = process.argv.indexOf("--session");
 const sessionId = sessionIdx !== -1 ? process.argv[sessionIdx + 1] : "default";
@@ -35,12 +35,6 @@ const _appendChatRecord = runtime.store.appendChatRecord.bind(runtime.store);
     await _appendChatRecord(chat);
     broadcast({ type: "chat_lifecycle", chat });
 };
-
-function getAgentForId(agentId: string) {
-    if (agentId === "orchestrator") return runtime.orchestratorAgent;
-    const reg = runtime.specialistRegistry as Record<string, { agent: import("@mariozechner/pi-agent-core").Agent } | undefined>;
-    return reg[agentId]?.agent;
-}
 
 const PORT = 3000;
 
@@ -102,14 +96,14 @@ Bun.serve({
             if (msg.type === "chat") {
                 const toAgentId = msg.toAgentId as Exclude<BaseAgentId, "user">;
                 const content = msg.content as string;
-                const agent = getAgentForId(toAgentId);
                 const runId = crypto.randomUUID();
 
                 ws.send(JSON.stringify({ type: "chat_sending", runId, toAgentId }));
 
-                let unsubscribe: (() => void) | undefined;
-                if (agent) {
-                    unsubscribe = agent.subscribe((event: AgentEvent) => {
+                runtime.chat({
+                    toAgentId,
+                    content,
+                    onAgentEvent: (event: AgentEvent) => {
                         if (
                             event.type === "message_update" &&
                             event.assistantMessageEvent.type === "text_delta"
@@ -119,13 +113,19 @@ Bun.serve({
                                 runId,
                                 delta: event.assistantMessageEvent.delta,
                             }));
+                        } else if (event.type === "tool_execution_start") {
+                            const args = event.args as Record<string, unknown>;
+                            let label = `→ ${event.toolName}`;
+                            if (event.toolName === "delegate" || event.toolName === "delegate_task") {
+                                label = `→ delegate → ${args.agentId}: ${String(args.task ?? "").slice(0, 80)}`;
+                            } else if (event.toolName === "get_chat_result" || event.toolName === "get_chat_status") {
+                                label = `→ ${event.toolName} → ${String(args.chatId ?? "")}`;
+                            }
+                            ws.send(JSON.stringify({ type: "stream_status", runId, text: label }));
                         }
-                    });
-                }
-
-                runtime.chat({ toAgentId, content })
+                    },
+                })
                     .then((output) => {
-                        unsubscribe?.();
                         ws.send(JSON.stringify({
                             type: "stream_end",
                             runId,
@@ -134,7 +134,6 @@ Bun.serve({
                         }));
                     })
                     .catch((err) => {
-                        unsubscribe?.();
                         ws.send(JSON.stringify({
                             type: "stream_error",
                             runId,

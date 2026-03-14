@@ -1,4 +1,4 @@
-import { ThreadStore } from "./thread-store";
+import { ThreadStore } from "../../packages/core/thread-store";
 
 function parseArgs(args: string[]) {
     let sessionId = "default";

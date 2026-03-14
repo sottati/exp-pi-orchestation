@@ -1,16 +1,17 @@
 {
   "name": "pi-agent-core",
-  "module": "src/index.ts",
+  "module": "apps/cli/index.ts",
   "type": "module",
   "private": true,
   "scripts": {
-    "start": "bun run src/index.ts",
-    "ui": "bun --hot run src/server.ts",
+    "start": "bun run apps/cli/index.ts",
+    "ui": "bun --hot run apps/backend/server.ts",
+    "test": "bun test",
     "typecheck": "bunx tsc --noEmit",
-    "smoke:orchestrator": "bun run src/index.ts --smoke orchestrator",
-    "smoke:math": "bun run src/index.ts --smoke math",
-    "smoke:code": "bun run src/index.ts --smoke code",
-    "ui:gate": "bun run src/ui-gate.ts"
+    "smoke:orchestrator": "bun run apps/cli/index.ts --smoke orchestrator",
+    "smoke:math": "bun run apps/cli/index.ts --smoke math",
+    "smoke:code": "bun run apps/cli/index.ts --smoke code",
+    "ui:gate": "bun run apps/backend/ui-gate.ts"
   },
   "devDependencies": {
     "@types/bun": "latest"

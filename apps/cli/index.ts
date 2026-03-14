@@ -1,8 +1,9 @@
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import type { BaseAgentId } from "./contracts";
-import { errorMessage } from "./errors";
-import { MultiAgentRuntime } from "./runtime";
+import type { BaseAgentId } from "../../packages/core/contracts";
+import { errorMessage } from "../../packages/core/errors";
+import type { ChatInspection } from "../../packages/core/runtime";
+import { MultiAgentRuntime } from "../../packages/core/runtime";
 
 function cliError(err: unknown) { console.error("Error:", errorMessage(err)); }
 
@@ -38,7 +39,7 @@ function printHelp() {
     console.log("  /agents                lista agentes disponibles");
     console.log("  /use <agentId>         cambia agente activo");
     console.log("  /chats                 lista chats activos + en cola");
-    console.log("  /chat <chatId>         vista detallada de un chat");
+    console.log("  /chat <chatId>         vista live de un chat (usa --json para raw)");
     console.log("  /close <chatId>        cierra un chat");
     console.log("  /threads               lista threadIds");
     console.log("  /thread <threadId>     muestra mensajes del thread");
@@ -46,6 +47,101 @@ function printHelp() {
     console.log("  /smoke <name>          corre smoke (math|code|orchestrator)");
     console.log("  /exit                  salir");
     console.log("  (aliases: /jobs=/chats, /job=/task=/chat, /cancel=/close)\n");
+}
+
+function extractText(content: unknown): string {
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+        return content
+            .map((item) => {
+                if (typeof item === "string") return item;
+                if (
+                    typeof item === "object" &&
+                    item !== null &&
+                    (item as { type?: unknown }).type === "text" &&
+                    typeof (item as { text?: unknown }).text === "string"
+                ) {
+                    return (item as { text: string }).text;
+                }
+                return "";
+            })
+            .join("")
+            .trim();
+    }
+    return "";
+}
+
+function oneLine(text: string, max = 160): string {
+    const compact = text.replace(/\s+/g, " ").trim();
+    if (compact.length <= max) return compact;
+    return `${compact.slice(0, Math.max(1, max - 1))}…`;
+}
+
+function parseChatStatus(content: string): string | undefined {
+    const match = content.match(/^\[chat_status:([^\]]+)\]\s+chatId=\S+\s+(.*)$/);
+    if (!match) return undefined;
+    return `${match[1]}: ${match[2]}`;
+}
+
+function chatSummary(details: ChatInspection): string {
+    const status = details.chat?.status ?? details.summary?.status ?? "unknown";
+    const agentId = details.chat?.agentId ?? details.summary?.agentId ?? "?";
+    const attempts = details.chat ? ` attempts=${details.chat.attempts}/${details.chat.maxRetries + 1}` : "";
+    return `chat=${details.queryId} agent=${agentId} status=${status}${attempts}`;
+}
+
+function printChatDelta(details: ChatInspection, printedEnvelopes: Set<string>) {
+    const sorted = details.threadMessages
+        .slice()
+        .sort((a, b) => a.timestamp - b.timestamp);
+
+    for (const envelope of sorted) {
+        if (!envelope.chatId || envelope.chatId !== details.queryId) continue;
+        if (printedEnvelopes.has(envelope.envelopeId)) continue;
+        printedEnvelopes.add(envelope.envelopeId);
+
+        const raw = extractText(envelope.message.content);
+        const statusLine = parseChatStatus(raw);
+        if (statusLine) {
+            console.log(`[chat] ${details.queryId} ${statusLine}`);
+            continue;
+        }
+
+        const from = envelope.fromAgentId;
+        const to = envelope.toAgentId;
+        const preview = oneLine(raw || "(sin texto)");
+        console.log(`[chat] ${details.queryId} ${from} -> ${to}: ${preview}`);
+    }
+}
+
+async function streamChatView(runtime: MultiAgentRuntime, chatId: string): Promise<void> {
+    const printedEnvelopes = new Set<string>();
+    let previousSummary = "";
+
+    while (true) {
+        const details = await runtime.inspectChat(chatId);
+        const hasData = Boolean(details.chat || details.summary || details.traceEvents.length || details.threadMessages.length);
+        if (!hasData) {
+            console.log("Chat no encontrado.");
+            return;
+        }
+
+        const summary = chatSummary(details);
+        if (summary !== previousSummary) {
+            if (!previousSummary) {
+                console.log(summary);
+            } else {
+                console.log(`[chat] ${summary}`);
+            }
+            previousSummary = summary;
+        }
+
+        printChatDelta(details, printedEnvelopes);
+
+        const status = details.chat?.status ?? details.summary?.status;
+        if (status === "closed") return;
+        await Bun.sleep(400);
+    }
 }
 
 function parseCommand(input: string): { command: string; args: string[] } {
@@ -94,14 +190,19 @@ async function runInteractiveCli(runtime: MultiAgentRuntime) {
                 continue;
             }
             if (command === "/chat" || command === "/job" || command === "/task") {
-                const chatId = args[0];
+                const chatId = args.find((arg) => !arg.startsWith("--"));
+                const asJson = args.includes("--json");
                 if (!chatId) {
-                    console.log("Uso: /chat <chatId>");
+                    console.log("Uso: /chat <chatId> [--json]");
                     continue;
                 }
                 try {
                     const details = await runtime.inspectChat(chatId);
-                    console.log(JSON.stringify(details, null, 2));
+                    if (asJson) {
+                        console.log(JSON.stringify(details, null, 2));
+                    } else {
+                        await streamChatView(runtime, chatId);
+                    }
                 } catch (err) { cliError(err); }
                 continue;
             }

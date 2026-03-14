@@ -16,22 +16,37 @@ function getModelCached(provider: string, modelId: string) {
         model = getModel(provider as any, modelId as any);
     } catch (err) {
         throw new Error(
-            `Model init failed (${provider}/${modelId}). Set PI_MODEL_PROVIDER/PI_MODEL_ID. ${errorMessage(err)}`
+            `Model init failed (${provider}/${modelId}). Update AGENT_MODEL_CONFIG in packages/core/agents.ts. ${errorMessage(err)}`
         );
     }
     _modelCache.set(key, model);
     return model;
 }
 
-const QWEN_CODER = { provider: "openrouter", modelId: "qwen/qwen3-coder:free" };
-const NVIDIA_NEMOTRON = { provider: "openrouter", modelId: "nvidia/nemotron-3-super-120b-a12b:free" };
+type ManagedAgentId = "orchestrator" | "code" | "math";
+
+interface AgentModelConfig {
+    provider: string;
+    modelId: string;
+}
+
+const AGENT_MODEL_CONFIG: Record<ManagedAgentId, AgentModelConfig> = {
+    orchestrator: { provider: "openrouter", modelId: "google/gemini-3.1-flash-lite-preview" },
+    code: { provider: "openrouter", modelId: "google/gemini-3.1-flash-lite-preview" },
+    math: { provider: "openrouter", modelId: "google/gemini-3.1-flash-lite-preview" },
+};
+
+function modelFor(agentId: ManagedAgentId) {
+    const config = AGENT_MODEL_CONFIG[agentId];
+    return getModelCached(config.provider, config.modelId);
+}
 
 function createCodeSpecialistAgent() {
     return new Agent({
         initialState: {
             systemPrompt:
                 "You are a coding specialist. Return concise, practical answers. Prefer short code snippets and include only essential explanation.",
-            model: getModelCached(QWEN_CODER.provider, QWEN_CODER.modelId),
+            model: modelFor("code"),
             tools: [],
             messages: [],
         },
@@ -42,8 +57,8 @@ function createMathSpecialistAgent() {
     return new Agent({
         initialState: {
             systemPrompt:
-                "You are a math specialist. Solve arithmetic tasks clearly and accurately. You can add, subtract, multiply, and divide.",
-            model: getModelCached(NVIDIA_NEMOTRON.provider, NVIDIA_NEMOTRON.modelId),
+                "You are a math specialist. Solve arithmetic tasks clearly and accurately. Return the final numeric result in one short sentence. Show steps only if the user asks.",
+            model: modelFor("math"),
             tools: [],
             messages: [],
         },
@@ -59,7 +74,7 @@ export function createSpecialistRegistry(): SpecialistRegistry {
             capabilities: ["code-snippet", "small-refactor", "bug-fix-hint"],
             inputHint: "Include language and constraints.",
             maxConcurrency: 1,
-            agent: createCodeSpecialistAgent(),
+            createAgent: createCodeSpecialistAgent,
         },
         math: {
             id: "math",
@@ -68,7 +83,7 @@ export function createSpecialistRegistry(): SpecialistRegistry {
             capabilities: ["add", "subtract", "multiply", "divide"],
             inputHint: "Include numbers and operation.",
             maxConcurrency: 1,
-            agent: createMathSpecialistAgent(),
+            createAgent: createMathSpecialistAgent,
         },
     };
 }
@@ -82,8 +97,9 @@ export function createOrchestratorAgent(tools: AgentTool<any>[] = []) {
                 "Use delegate to send tasks to specialists.",
                 "Then poll with get_chat_status/get_chat_result to get results.",
                 "After tool results, produce a direct final answer for the user.",
+                "Be concise by default.",
             ].join(" "),
-            model: getModelCached(QWEN_CODER.provider, QWEN_CODER.modelId),
+            model: modelFor("orchestrator"),
             tools,
             messages: [],
         },

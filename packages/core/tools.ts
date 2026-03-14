@@ -12,7 +12,7 @@ export interface SpecialistDescriptor {
 }
 
 export interface SpecialistEntry extends SpecialistDescriptor {
-    agent: Agent;
+    createAgent: () => Agent;
 }
 
 export type SpecialistRegistry = Record<string, SpecialistEntry>;
@@ -139,7 +139,14 @@ export function createOrchestratorTools(deps: OrchestratorToolDeps): AgentTool<a
             await deps.traceToolEvent({
                 type: "tool_start", status: "running", runContext,
                 toolName: "delegate", toolCallId,
-                details: { agentId: params.agentId },
+                details: {
+                    agentId: params.agentId,
+                    args: {
+                        agentId: params.agentId,
+                        task,
+                        context: params.context,
+                    },
+                },
             });
 
             const chat = deps.createDelegation({
@@ -154,7 +161,16 @@ export function createOrchestratorTools(deps: OrchestratorToolDeps): AgentTool<a
             await deps.traceToolEvent({
                 type: "tool_end", status: "ok", runContext,
                 toolName: "delegate", toolCallId,
-                details: { agentId: params.agentId, chatId: chat.chatId, status: chat.status },
+                details: {
+                    agentId: params.agentId,
+                    chatId: chat.chatId,
+                    status: chat.status,
+                    args: {
+                        agentId: params.agentId,
+                        task,
+                        context: params.context,
+                    },
+                },
             });
 
             const statusText = chat.status === "active"

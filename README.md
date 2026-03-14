@@ -26,19 +26,21 @@ Necesito un snippet en C para imprimir del 1 al 10
 - Chats con cola FIFO: si un agente está al máximo, los nuevos chats se encolan como `waiting`.
 - Persistencia local de conversaciones por hilo (`threadId`), trazas de ejecución y chat records.
 - Error handling robusto: JSONL fault-tolerant, hooks con `safeAsync`, guards en CLI/trace/persistence.
-- Modelo configurable via `PI_MODEL_PROVIDER`/`PI_MODEL_ID` (default: `openrouter`/`openrouter/free`).
+- Configuración de modelo por agente (`orchestrator`, `code`, `math`) en `packages/core/agents.ts`.
 - Restauración automática de chats interrumpidos al reiniciar sesión.
 - CLI interactiva para operar y testear sin UI.
 - Gate de decisión para saber cuándo pasar a UI/monorepo.
 
 ## Configuración del modelo
 
-Variables de entorno opcionales (Bun las carga automáticamente desde `.env`):
+Configuración explícita por agente en `packages/core/agents.ts` (`AGENT_MODEL_CONFIG`).
+Hoy, los tres agentes usan `openrouter/google/gemini-3.1-flash-lite-preview`.
 
-| Variable | Default | Descripción |
+| Agent ID | Provider | Model ID |
 |---|---|---|
-| `PI_MODEL_PROVIDER` | `openrouter` | Proveedor de LLM |
-| `PI_MODEL_ID` | `openrouter/free` | ID del modelo |
+| `orchestrator` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
+| `code` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
+| `math` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
 
 ## Requisitos
 
@@ -55,6 +57,7 @@ bun install
 ```bash
 bun run start
 bun run ui
+bun test
 bun run typecheck
 bun run smoke:math
 bun run smoke:code
@@ -92,7 +95,7 @@ La CLI (`bun run start`) y el servidor UI son entradas independientes que compar
 - `/agents`
 - `/use <agentId>` (`orchestrator|code|math`)
 - `/chats` (alias: `/jobs`)
-- `/chat <chatId>` (aliases: `/job`, `/task`) — vista unificada (chat + trazas + mensajes)
+- `/chat <chatId> [--json]` (aliases: `/job`, `/task`) — transcript live; con `--json` devuelve inspección raw
 - `/close <chatId>` (alias: `/cancel`)
 - `/threads`
 - `/thread <threadId>`
@@ -173,36 +176,48 @@ Cada envelope de hilo incluye metadatos de relación:
    /thread test01::code<->orchestrator
    ```
 
-5. Inspección por chat:
+5. Inspección por chat (live):
 
    ```text
    /chat <chatId>
    ```
 
+   Inspección raw JSON:
+
+   ```text
+   /chat <chatId> --json
+   ```
+
 ## Estructura principal
 
-- `src/index.ts`: CLI interactiva.
-- `src/runtime.ts`: runtime multiagente, enrutado de mensajes, correlación de IDs y trazas.
-- `src/tools.ts`: tools del orquestador (`list_agents`, `delegate`, `delegate_task`, `get_chat_status`, `get_chat_result`, `close_chat`).
-- `src/chat-manager.ts`: gestión de chats con per-agent concurrency, cola FIFO, timeout/retry y persistencia a disco.
-- `src/thread-store.ts`: persistencia JSONL de hilos, trazas y chat records.
-- `src/errors.ts`: utilidades de error handling (`errorMessage`, `safeAsync`, `safeParseLine`).
-- `src/contracts.ts`: contratos de `ThreadEnvelope`, `AgentChat`, `TraceEvent`.
-- `src/agents.ts`: definición de agentes con lazy model init configurable por env vars.
-- `src/ui-gate.ts`: evaluación de fricción para activar UI.
+- `apps/cli/index.ts`: CLI interactiva.
+- `apps/backend/server.ts`: servidor web con REST + WebSocket.
+- `apps/backend/ui-gate.ts`: evaluación de fricción para activar UI.
+- `apps/web/index.html`: shell HTML de la UI.
+- `apps/web/app.tsx`: SPA React (estado local + streaming).
+- `apps/web/app.css`: estilos de la UI.
+- `packages/core/runtime.ts`: runtime multiagente, enrutado de mensajes, correlación de IDs y trazas.
+- `packages/core/tools.ts`: tools del orquestador (`list_agents`, `delegate`, `delegate_task`, `get_chat_status`, `get_chat_result`, `close_chat`).
+- `packages/core/chat-manager.ts`: gestión de chats con per-agent concurrency, cola FIFO, timeout/retry y persistencia a disco.
+- `packages/core/thread-store.ts`: persistencia JSONL de hilos, trazas y chat records.
+- `packages/core/errors.ts`: utilidades de error handling (`errorMessage`, `safeAsync`, `safeParseLine`).
+- `packages/core/contracts.ts`: contratos de `ThreadEnvelope`, `AgentChat`, `TraceEvent`.
+- `packages/core/agents.ts`: definición de agentes con configuración de modelo por agente.
 
 ## Comportamientos esperados
 
 - Para mensajes triviales, el orquestador puede responder sin delegar.
 - Para tareas especializadas, debe aparecer `tool_start/tool_end` en `/traces`.
 - Si no hay delegación, no verás eventos de `delegate` en la traza.
+- El especialista `math` responde corto por defecto (solo resultado, salvo pedido de pasos).
 
 ## Troubleshooting rápido
 
 - **Respuestas fuera de contexto**: usa una sesión nueva (`--session`) para evitar historial previo.
 - **No sé si delegó**: consulta `/traces 30` y busca `delegate`.
 - **Quiero ver conversación interna entre agentes**: `/threads` y luego `/thread <id>`.
-- **Quiero estado completo de un chat**: `/chat <chatId>`.
+- **Quiero estado completo raw de un chat**: `/chat <chatId> --json`.
+- **Veo `(sin texto)` o respuesta vacía**: revisa `/thread <id>`; si hay `Model error: ...` suele ser rate-limit/cuota del proveedor.
 
 ## Nota
 
