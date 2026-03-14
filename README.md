@@ -26,6 +26,7 @@ Necesito un snippet en C para imprimir del 1 al 10
 - Chats con cola FIFO: si un agente está al máximo, los nuevos chats se encolan como `waiting`.
 - Identidad conversacional estable por `sessionId` + par de agentes (`conversationId`), reutilizada en delegaciones sucesivas.
 - Persistencia local de conversaciones por hilo (`threadId`), trazas de ejecución y chat records.
+- Ventana de contexto configurable por runtime (`historyWindowMessages`, default `50`) sin recortar historial persistido.
 - Error handling robusto: JSONL fault-tolerant, hooks con `safeAsync`, guards en CLI/trace/persistence.
 - Configuración de modelo por agente (`orchestrator`, `code`, `math`) en `packages/core/agents.ts`.
 - Restauración automática de chats interrumpidos al reiniciar sesión.

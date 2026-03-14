@@ -51,6 +51,25 @@ export interface ChatOutput extends RouteMessageOutput {
     runContext: RunContext;
 }
 
+export interface RuntimeOptions {
+    historyWindowMessages?: number;
+}
+
+const DEFAULT_HISTORY_WINDOW_MESSAGES = 50;
+
+function resolveHistoryWindowMessages(limit?: number): number {
+    if (typeof limit !== "number" || !Number.isFinite(limit)) {
+        return DEFAULT_HISTORY_WINDOW_MESSAGES;
+    }
+    return Math.max(0, Math.trunc(limit));
+}
+
+function selectHistoryWindow(messages: AgentMessage[], limit: number): AgentMessage[] {
+    if (limit <= 0) return [];
+    if (messages.length <= limit) return messages;
+    return messages.slice(-limit);
+}
+
 function extractLastAssistantText(messages: AgentMessage[]): string {
     let lastAssistantError: string | undefined;
 
@@ -108,9 +127,11 @@ export class MultiAgentRuntime {
     readonly store: ThreadStore;
     readonly chatManager: ChatManager;
     readonly specialistRegistry: SpecialistRegistry;
+    readonly historyWindowMessages: number;
 
-    constructor(sessionId = "default") {
+    constructor(sessionId = "default", options: RuntimeOptions = {}) {
         this.sessionId = sessionId;
+        this.historyWindowMessages = resolveHistoryWindowMessages(options.historyWindowMessages);
         this.store = new ThreadStore({ sessionId });
         this.specialistRegistry = createSpecialistRegistry();
 
@@ -452,7 +473,8 @@ export class MultiAgentRuntime {
         const threadId = createThreadId(this.sessionId, input.fromAgentId, input.toAgentId);
         const history = await this.store.getThreadMessages(threadId);
         const historyMessages = history.map((item) => item.message);
-        agent.replaceMessages(historyMessages);
+        const contextMessages = selectHistoryWindow(historyMessages, this.historyWindowMessages);
+        agent.replaceMessages(contextMessages);
 
         const userMessage: AgentMessage = {
             role: "user",
@@ -460,7 +482,7 @@ export class MultiAgentRuntime {
             timestamp: now(),
         };
 
-        const beforeCount = historyMessages.length;
+        const beforeCount = contextMessages.length;
         const unsubscribe = input.onAgentEvent ? agent.subscribe(input.onAgentEvent) : undefined;
         try {
             await agent.prompt(userMessage);
@@ -532,6 +554,9 @@ export class MultiAgentRuntime {
                 threadId,
                 durationMs,
                 messageCount: newMessages.length,
+                historyTotal: historyMessages.length,
+                contextWindowSize: contextMessages.length,
+                contextWindowLimit: this.historyWindowMessages,
             },
         });
 

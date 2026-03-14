@@ -132,6 +132,7 @@ This repository is a terminal-first multi-agent runtime prototype.
 - All delegation is async. No sync path.
 - Per-agent concurrency via `maxConcurrency` (default 1) with FIFO queue for overflow.
 - Chats can run multi-turn loops with optional `keepAlive` and ordered follow-up queue per `chatId`.
+- Model context uses configurable history window via `historyWindowMessages` (default `50`) while persisted thread history remains complete.
 - Persist thread envelopes, traces, and chat records for auditability.
 - Delay UI work until `ui:gate` indicates clear operational friction.
 - Math specialist defaults to short result-only replies unless user asks for steps.
