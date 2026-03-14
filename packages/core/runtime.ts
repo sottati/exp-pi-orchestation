@@ -423,6 +423,7 @@ export class MultiAgentRuntime {
                         conversationId: createConversationId(this.sessionId, ORCHESTRATOR_ID, input.agentId),
                         task: input.task,
                         context: input.context,
+                        keepAlive: true,
                     },
                     async (_ctx, chat) => {
                         const content = chat.context
@@ -440,6 +441,13 @@ export class MultiAgentRuntime {
                     },
                 );
             },
+            findContinuableChat: ({ sessionId, agentId }) => {
+                const conversationId = createConversationId(sessionId, ORCHESTRATOR_ID, agentId);
+                return this.chatManager
+                    .listChats()
+                    .find((chat) => chat.conversationId === conversationId && chat.status === "active" && chat.keepAlive);
+            },
+            sendChatFollowUp: (chatId, input) => this.chatManager.sendMessage(chatId, input),
             getChat: (chatId) => this.chatManager.getChat(chatId),
             closeChat: (chatId) => this.chatManager.closeChat(chatId),
             getQueuePosition: (chatId) => this.chatManager.getQueuePosition(chatId),
@@ -636,7 +644,7 @@ function debugTrace(event: TraceEvent): void {
             const args = (d.args ?? d) as Record<string, unknown>;
             if (event.toolName === "delegate" || event.toolName === "delegate_task") {
                 line = `[tool] delegate → ${args.agentId}: "${String(args.task ?? "").slice(0, 60)}"`;
-            } else if (event.toolName === "get_chat_result" || event.toolName === "get_chat_status") {
+            } else if (event.toolName === "get_chat_result" || event.toolName === "get_chat_status" || event.toolName === "follow_up_chat") {
                 line = `[tool] ${event.toolName} → ${args.chatId ?? "?"}`;
             } else {
                 line = `[tool] ${event.toolName}`;

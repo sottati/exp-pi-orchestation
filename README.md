@@ -108,7 +108,7 @@ La CLI (`bun run start`) y el servidor UI son entradas independientes que compar
 
 ## Modelo de delegación: Chats
 
-Cada delegación del orchestrator a un especialista crea un **chat** (`AgentChat`). El chat es la unidad de trabajo:
+Cada delegación del orchestrator a un especialista crea o continúa un **chat** (`AgentChat`). El chat es la unidad de trabajo:
 
 - `chatId`: unidad efímera de ejecución (una delegación concreta).
 - `conversationId`: identidad lógica estable por sesión + par de agentes (ej: `demo::code<->orchestrator`).
@@ -119,17 +119,18 @@ Cada delegación del orchestrator a un especialista crea un **chat** (`AgentChat
 - `keepAlive` (opcional): mantiene el chat `active` tras una respuesta y procesa follow-ups en orden dentro del mismo `chatId`
 
 Cuando un chat activo se cierra, el siguiente en la cola del mismo agente pasa a `active`.
-Política de cierre/reapertura: cerrar un `chatId` no cierra la conversación lógica; una nueva delegación al mismo especialista reabre la conversación creando un nuevo `chatId` con el mismo `conversationId`.
+Política de cierre/reapertura: mientras exista un chat `active` keepAlive para la misma conversación, `delegate` continúa ese `chatId`; si no existe, crea uno nuevo con el mismo `conversationId`.
 
 ### Tools del orchestrator
 
 | Tool | Descripción |
 |------|-------------|
 | `list_agents` | Lista especialistas con capacidades y slots |
-| `delegate` | Envía tarea a especialista, retorna chatId |
+| `delegate` | Crea o continúa delegación al especialista, retorna chatId |
 | `delegate_task` | Alias legacy de `delegate` |
+| `follow_up_chat` | Envía follow-up explícito a chat keepAlive abierto |
 | `get_chat_status` | Estado de un chat por chatId |
-| `get_chat_result` | Resultado de un chat completado |
+| `get_chat_result` | Resultado final o último resultado en chat keepAlive |
 | `close_chat` | Cierra un chat activo o en cola |
 
 ## Persistencia local
@@ -206,7 +207,7 @@ Cada envelope de hilo incluye metadatos de relación:
 - `apps/web/app.tsx`: SPA React (estado local + streaming).
 - `apps/web/app.css`: estilos de la UI.
 - `packages/core/runtime.ts`: runtime multiagente, enrutado de mensajes, correlación de IDs y trazas.
-- `packages/core/tools.ts`: tools del orquestador (`list_agents`, `delegate`, `delegate_task`, `get_chat_status`, `get_chat_result`, `close_chat`).
+- `packages/core/tools.ts`: tools del orquestador (`list_agents`, `delegate`, `delegate_task`, `follow_up_chat`, `get_chat_status`, `get_chat_result`, `close_chat`).
 - `packages/core/chat-manager.ts`: gestión de chats con per-agent concurrency, cola FIFO, timeout/retry, loop multi-turn opcional (`keepAlive`) y persistencia a disco.
 - `packages/core/thread-store.ts`: persistencia JSONL de hilos, trazas y chat records.
 - `packages/core/errors.ts`: utilidades de error handling (`errorMessage`, `safeAsync`, `safeParseLine`).

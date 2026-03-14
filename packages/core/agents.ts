@@ -95,6 +95,7 @@ export function createOrchestratorAgent(tools: AgentTool<any>[] = []) {
                 "You are an orchestrator agent.",
                 "Use list_agents to discover available specialists.",
                 "Use delegate to send tasks to specialists.",
+                "If chat is already active, use follow_up_chat to continue same chatId.",
                 "Then poll with get_chat_status/get_chat_result to get results.",
                 "After tool results, produce a direct final answer for the user.",
                 "Be concise by default.",

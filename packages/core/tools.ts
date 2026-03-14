@@ -1,5 +1,6 @@
 import { type Agent, type AgentTool } from "@mariozechner/pi-agent-core";
 import { Type, type Static } from "@sinclair/typebox";
+import { createConversationId } from "./chat-manager";
 import type { AgentChat, BaseAgentId, RunContext } from "./contracts";
 
 export interface SpecialistDescriptor {
@@ -39,6 +40,13 @@ const getChatResultParameters = Type.Object({
 });
 type GetChatResultParameters = Static<typeof getChatResultParameters>;
 
+const followUpChatParameters = Type.Object({
+    chatId: Type.String({ description: "Active keepAlive chat ID to continue." }),
+    task: Type.String({ description: "Follow-up task for the existing chat." }),
+    context: Type.Optional(Type.String({ description: "Optional extra context for the follow-up." })),
+});
+type FollowUpChatParameters = Static<typeof followUpChatParameters>;
+
 const closeChatParameters = Type.Object({
     chatId: Type.String({ description: "Chat ID to close." }),
 });
@@ -66,6 +74,8 @@ export interface OrchestratorToolDeps {
     registry: SpecialistRegistry;
     getRunContext: () => RunContext;
     createDelegation: (input: DelegationInput) => AgentChat;
+    findContinuableChat: (input: { sessionId: string; agentId: string }) => AgentChat | undefined;
+    sendChatFollowUp: (chatId: string, input: { task: string; context?: string }) => Promise<AgentChat>;
     getChat: (chatId: string) => AgentChat | undefined;
     closeChat: (chatId: string) => AgentChat | undefined;
     getQueuePosition: (chatId: string) => number | undefined;
@@ -149,12 +159,16 @@ export function createOrchestratorTools(deps: OrchestratorToolDeps): AgentTool<a
                 },
             });
 
-            const chat = deps.createDelegation({
-                agentId: params.agentId,
-                task,
-                context: params.context,
-                runContext,
-            });
+            const conversationId = createConversationId(runContext.sessionId, "orchestrator", params.agentId);
+            const existing = deps.findContinuableChat({ sessionId: runContext.sessionId, agentId: params.agentId });
+            const chat = existing
+                ? await deps.sendChatFollowUp(existing.chatId, { task, context: params.context })
+                : deps.createDelegation({
+                    agentId: params.agentId,
+                    task,
+                    context: params.context,
+                    runContext,
+                });
 
             const queuePosition = deps.getQueuePosition(chat.chatId);
 
@@ -164,8 +178,9 @@ export function createOrchestratorTools(deps: OrchestratorToolDeps): AgentTool<a
                 details: {
                     agentId: params.agentId,
                     chatId: chat.chatId,
-                    conversationId: chat.conversationId,
+                    conversationId: chat.conversationId || conversationId,
                     status: chat.status,
+                    continued: Boolean(existing),
                     args: {
                         agentId: params.agentId,
                         task,
@@ -174,16 +189,19 @@ export function createOrchestratorTools(deps: OrchestratorToolDeps): AgentTool<a
                 },
             });
 
-            const statusText = chat.status === "active"
-                ? `Chat started with ${specialist.name}. chatId=${chat.chatId}.`
-                : `Chat queued for ${specialist.name} (position ${queuePosition}). chatId=${chat.chatId}.`;
+            const statusText = existing
+                ? `Follow-up sent to ${specialist.name}. chatId=${chat.chatId}.`
+                : chat.status === "active"
+                    ? `Chat started with ${specialist.name}. chatId=${chat.chatId}.`
+                    : `Chat queued for ${specialist.name} (position ${queuePosition}). chatId=${chat.chatId}.`;
 
             return {
                 content: [{ type: "text", text: statusText }],
                 details: {
                     chatId: chat.chatId,
-                    conversationId: chat.conversationId,
+                    conversationId: chat.conversationId || conversationId,
                     status: chat.status,
+                    continued: Boolean(existing),
                     agentId: chat.agentId,
                     queuePosition,
                     runId: runContext.runId,
@@ -199,6 +217,61 @@ export function createOrchestratorTools(deps: OrchestratorToolDeps): AgentTool<a
         name: "delegate_task",
         label: "Delegate task (legacy alias)",
         description: "Alias for delegate. Kept for backward compatibility.",
+    };
+
+    const followUpChatTool: AgentTool<typeof followUpChatParameters> = {
+        name: "follow_up_chat",
+        label: "Send follow-up to active chat",
+        description: "Send a follow-up message to an open keepAlive chat.",
+        parameters: followUpChatParameters,
+        execute: async (toolCallId: string, params: FollowUpChatParameters) => {
+            const runContext = deps.getRunContext();
+            const task = validateTask(params.task);
+
+            await deps.traceToolEvent({
+                type: "tool_start", status: "running", runContext,
+                toolName: "follow_up_chat", toolCallId,
+                details: {
+                    chatId: params.chatId,
+                    args: {
+                        chatId: params.chatId,
+                        task,
+                        context: params.context,
+                    },
+                },
+            });
+
+            const chat = await deps.sendChatFollowUp(params.chatId, { task, context: params.context });
+            const queuePosition = deps.getQueuePosition(chat.chatId);
+
+            await deps.traceToolEvent({
+                type: "tool_end", status: "ok", runContext,
+                toolName: "follow_up_chat", toolCallId,
+                details: {
+                    chatId: chat.chatId,
+                    conversationId: chat.conversationId,
+                    status: chat.status,
+                    args: {
+                        chatId: params.chatId,
+                        task,
+                        context: params.context,
+                    },
+                },
+            });
+
+            return {
+                content: [{ type: "text", text: `Follow-up queued. chatId=${chat.chatId}.` }],
+                details: {
+                    chatId: chat.chatId,
+                    conversationId: chat.conversationId,
+                    status: chat.status,
+                    queuePosition,
+                    runId: runContext.runId,
+                    turnId: runContext.turnId,
+                    toolCallId,
+                },
+            };
+        },
     };
 
     const getChatStatusTool: AgentTool<typeof getChatStatusParameters> = {
@@ -237,6 +310,20 @@ export function createOrchestratorTools(deps: OrchestratorToolDeps): AgentTool<a
                     details: { found: false },
                 };
             }
+
+            if (chat.keepAlive && chat.result !== undefined) {
+                return {
+                    content: [{ type: "text", text: chat.result }],
+                    details: {
+                        found: true,
+                        status: chat.status,
+                        closeReason: chat.closeReason,
+                        result: chat.result,
+                        keepAlive: true,
+                    },
+                };
+            }
+
             if (chat.status !== "closed" || chat.closeReason !== "completed") {
                 const info = chat.status === "closed"
                     ? `chatId ${params.chatId} closed: ${chat.closeReason}. Error: ${chat.error ?? "none"}`
@@ -277,6 +364,7 @@ export function createOrchestratorTools(deps: OrchestratorToolDeps): AgentTool<a
         listAgentsTool as AgentTool<any>,
         delegateTool as AgentTool<any>,
         delegateTaskAlias as AgentTool<any>,
+        followUpChatTool as AgentTool<any>,
         getChatStatusTool as AgentTool<any>,
         getChatResultTool as AgentTool<any>,
         closeChatTool as AgentTool<any>,

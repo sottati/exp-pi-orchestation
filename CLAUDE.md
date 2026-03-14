@@ -127,7 +127,7 @@ This repository is a terminal-first multi-agent runtime prototype.
 
 ### Runtime goals
 
-- Chat-based delegation: each delegation = a chat between orchestrator and specialist.
+- Chat-based delegation: delegate creates or continues a chat between orchestrator and specialist.
 - Stable conversation identity: `conversationId` is scoped to `sessionId` + agent pair and reused across delegations.
 - All delegation is async. No sync path.
 - Per-agent concurrency via `maxConcurrency` (default 1) with FIFO queue for overflow.
@@ -206,6 +206,7 @@ When adding or changing runtime behavior, preserve correlation IDs:
 - On restore, `ChatManager.restore()` reads records from disk, marks interrupted chats as closed.
 - The `ChatManager` constructor accepts optional `persistChat`, `restoreRecords`, and `getMaxConcurrency` callbacks.
 - Keep-alive chats remain open across turns; follow-ups are processed in FIFO order and close remains explicit.
+- If an active keepAlive chat exists for same conversation, `delegate` continues same `chatId` (or use `follow_up_chat` explicitly).
 - Closing a `chatId` does not close the stable conversation; next delegation reuses `conversationId` with a new `chatId`.
 
 ## Model Configuration
