@@ -2,6 +2,7 @@ import { type Agent, type AgentTool } from "@mariozechner/pi-agent-core";
 import { Type, type Static } from "@sinclair/typebox";
 import { createConversationId } from "./chat-manager";
 import type { AgentChat, BaseAgentId, RunContext } from "./contracts";
+import { errorMessage } from "./errors";
 
 export interface SpecialistDescriptor {
     id: string;
@@ -52,6 +53,13 @@ const closeChatParameters = Type.Object({
 });
 type CloseChatParameters = Static<typeof closeChatParameters>;
 
+const runBashParameters = Type.Object({
+    command: Type.String({ description: "Shell command to execute." }),
+    cwd: Type.Optional(Type.String({ description: "Optional working directory. Defaults to workspace root." })),
+    timeoutMs: Type.Optional(Type.Number({ description: "Optional timeout in milliseconds." })),
+});
+type RunBashParameters = Static<typeof runBashParameters>;
+
 // --- Dependencies ---
 
 interface DelegationInput {
@@ -78,6 +86,22 @@ interface ToolTraceInput {
     details?: Record<string, unknown>;
 }
 
+interface BashExecutionInput {
+    command: string;
+    cwd?: string;
+    timeoutMs?: number;
+}
+
+interface BashExecutionResult {
+    output: string;
+    cwd: string;
+    timeoutMs: number;
+    durationMs: number;
+    exitCode: number;
+    truncated: boolean;
+    fullOutputPath?: string;
+}
+
 export interface OrchestratorToolDeps {
     registry: SpecialistRegistry;
     getRunContext: () => RunContext;
@@ -86,6 +110,7 @@ export interface OrchestratorToolDeps {
     sendChatFollowUp: (chatId: string, input: { task: string; context?: string }) => Promise<AgentChat>;
     getChat: (chatId: string) => AgentChat | undefined;
     closeChat: (chatId: string) => AgentChat | undefined;
+    runBash: (input: BashExecutionInput) => Promise<BashExecutionResult>;
     getQueuePosition: (chatId: string) => number | undefined;
     traceToolEvent: (input: ToolTraceInput) => Promise<void>;
 }
@@ -111,6 +136,7 @@ function normalizeTask(task: string): string {
 }
 
 const MAX_TASK_LENGTH = 10_000;
+const MAX_BASH_COMMAND_LENGTH = 10_000;
 
 function validateTask(task: string): string {
     const normalized = normalizeTask(task);
@@ -126,6 +152,23 @@ function validateTask(task: string): string {
     if (balance !== 0) throw new Error("Task has unbalanced parentheses.");
 
     return normalized;
+}
+
+function validateBashCommand(command: string): string {
+    const normalized = command.trim();
+    if (!normalized) throw new Error("Command cannot be empty.");
+    if (normalized.length > MAX_BASH_COMMAND_LENGTH) {
+        throw new Error(`Command exceeds maximum length of ${MAX_BASH_COMMAND_LENGTH} characters.`);
+    }
+    return normalized;
+}
+
+function validateTimeoutMs(timeoutMs?: number): number | undefined {
+    if (timeoutMs === undefined) return undefined;
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+        throw new Error("timeoutMs must be a positive number.");
+    }
+    return Math.trunc(timeoutMs);
 }
 
 // --- Tool factory ---
@@ -376,6 +419,91 @@ export function createOrchestratorTools(deps: OrchestratorToolDeps): AgentTool<a
         },
     };
 
+    const runBashTool: AgentTool<typeof runBashParameters> = {
+        name: "run_bash",
+        label: "Run bash command",
+        description: "Run a shell command from orchestrator. Use for technical checks and command output.",
+        parameters: runBashParameters,
+        execute: async (toolCallId: string, params: RunBashParameters) => {
+            const runContext = deps.getRunContext();
+            const command = validateBashCommand(params.command);
+            const timeoutMs = validateTimeoutMs(params.timeoutMs);
+            const cwd = params.cwd?.trim() || undefined;
+
+            await deps.traceToolEvent({
+                type: "tool_start",
+                status: "running",
+                runContext,
+                toolName: "run_bash",
+                toolCallId,
+                details: {
+                    args: {
+                        command,
+                        cwd,
+                        timeoutMs,
+                    },
+                },
+            });
+
+            let result: BashExecutionResult;
+            try {
+                result = await deps.runBash({ command, cwd, timeoutMs });
+            } catch (err) {
+                await deps.traceToolEvent({
+                    type: "tool_end",
+                    status: "error",
+                    runContext,
+                    toolName: "run_bash",
+                    toolCallId,
+                    details: {
+                        args: {
+                            command,
+                            cwd,
+                            timeoutMs,
+                        },
+                        error: errorMessage(err),
+                    },
+                });
+                throw err;
+            }
+
+            await deps.traceToolEvent({
+                type: "tool_end",
+                status: "ok",
+                runContext,
+                toolName: "run_bash",
+                toolCallId,
+                details: {
+                    args: {
+                        command,
+                        cwd: result.cwd,
+                        timeoutMs: result.timeoutMs,
+                    },
+                    exitCode: result.exitCode,
+                    durationMs: result.durationMs,
+                    truncated: result.truncated,
+                    fullOutputPath: result.fullOutputPath,
+                },
+            });
+
+            return {
+                content: [{ type: "text", text: result.output || "(no output)" }],
+                details: {
+                    command,
+                    cwd: result.cwd,
+                    timeoutMs: result.timeoutMs,
+                    durationMs: result.durationMs,
+                    exitCode: result.exitCode,
+                    truncated: result.truncated,
+                    fullOutputPath: result.fullOutputPath,
+                    runId: runContext.runId,
+                    turnId: runContext.turnId,
+                    toolCallId,
+                },
+            };
+        },
+    };
+
     return [
         listAgentsTool as AgentTool<any>,
         delegateTool as AgentTool<any>,
@@ -384,6 +512,7 @@ export function createOrchestratorTools(deps: OrchestratorToolDeps): AgentTool<a
         getChatStatusTool as AgentTool<any>,
         getChatResultTool as AgentTool<any>,
         closeChatTool as AgentTool<any>,
+        runBashTool as AgentTool<any>,
     ];
 }
 

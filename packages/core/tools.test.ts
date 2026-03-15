@@ -20,6 +20,7 @@ function buildDeps() {
 
     const delegatedCalls: Array<{ agentId: string; task: string; context?: string }> = [];
     const followUps: Array<{ chatId: string; task: string; context?: string }> = [];
+    const traceEvents: Array<{ type: "tool_start" | "tool_end"; status: "running" | "ok" | "error"; toolName: string }> = [];
 
     let activeChat: {
         chatId: string;
@@ -131,11 +132,27 @@ function buildDeps() {
             };
         },
         closeChat: () => undefined,
+        runBash: async ({ command, cwd, timeoutMs }) => {
+            if (command === "exit 4") {
+                throw new Error("Command exited with code 4");
+            }
+            return {
+                output: `out:${command}`,
+                cwd: cwd ?? "/repo",
+                timeoutMs: timeoutMs ?? 20_000,
+                durationMs: 12,
+                exitCode: 0,
+                truncated: false,
+                fullOutputPath: undefined,
+            };
+        },
         getQueuePosition: () => undefined,
-        traceToolEvent: async () => undefined,
+        traceToolEvent: async (input) => {
+            traceEvents.push({ type: input.type, status: input.status, toolName: input.toolName });
+        },
     };
 
-    return { deps, delegatedCalls, followUps };
+    return { deps, delegatedCalls, followUps, traceEvents };
 }
 
 test("delegate_task alias matches delegate behavior", async () => {
@@ -246,4 +263,45 @@ test("specialist report_to_orchestrator sends explicit report", async () => {
         runId: "run_7",
         turnId: "turn_9",
     });
+});
+
+test("run_bash executes command and traces start/end", async () => {
+    const { deps, traceEvents } = buildDeps();
+    const tools = createOrchestratorTools(deps);
+    const runBash = tools.find((tool) => tool.name === "run_bash");
+
+    expect(runBash).toBeDefined();
+
+    const result = await runBash!.execute("call_bash", {
+        command: "printf 'ok'",
+        cwd: "subdir",
+        timeoutMs: 1500,
+    } as never);
+
+    expect(result.content).toEqual([{ type: "text", text: "out:printf 'ok'" }]);
+    expect(result.details).toMatchObject({
+        command: "printf 'ok'",
+        cwd: "subdir",
+        timeoutMs: 1500,
+        exitCode: 0,
+    });
+    expect(traceEvents).toEqual([
+        { type: "tool_start", status: "running", toolName: "run_bash" },
+        { type: "tool_end", status: "ok", toolName: "run_bash" },
+    ]);
+});
+
+test("run_bash traces tool_end error when command fails", async () => {
+    const { deps, traceEvents } = buildDeps();
+    const tools = createOrchestratorTools(deps);
+    const runBash = tools.find((tool) => tool.name === "run_bash");
+
+    expect(runBash).toBeDefined();
+
+    await expect(runBash!.execute("call_bash", { command: "exit 4" } as never)).rejects.toThrow("code 4");
+
+    expect(traceEvents).toEqual([
+        { type: "tool_start", status: "running", toolName: "run_bash" },
+        { type: "tool_end", status: "error", toolName: "run_bash" },
+    ]);
 });

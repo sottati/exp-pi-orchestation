@@ -1,4 +1,8 @@
 import type { Agent, AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
+import { randomBytes } from "node:crypto";
+import { createWriteStream, existsSync, statSync, type WriteStream } from "node:fs";
+import { tmpdir } from "node:os";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { createOrchestratorAgent, createSpecialistRegistry, ORCHESTRATOR_ID } from "./agents";
 import type { AgentChat, BaseAgentId, Initiator, RunContext, ThreadEnvelope, TraceEvent } from "./contracts";
 import { errorMessage } from "./errors";
@@ -57,6 +61,97 @@ export interface RuntimeOptions {
 }
 
 const DEFAULT_HISTORY_WINDOW_MESSAGES = 50;
+const DEFAULT_BASH_TIMEOUT_MS = 20_000;
+const MAX_BASH_TIMEOUT_MS = 120_000;
+const MAX_BASH_OUTPUT_LINES = 2_000;
+const MAX_BASH_OUTPUT_BYTES = 50 * 1024;
+const MAX_BASH_ROLLING_BYTES = MAX_BASH_OUTPUT_BYTES * 2;
+
+interface BashRunInput {
+    command: string;
+    cwd?: string;
+    timeoutMs?: number;
+}
+
+interface BashRunOutput {
+    output: string;
+    cwd: string;
+    timeoutMs: number;
+    durationMs: number;
+    exitCode: number;
+    truncated: boolean;
+    fullOutputPath?: string;
+}
+
+interface TailTruncationResult {
+    content: string;
+    truncated: boolean;
+    totalLines: number;
+    outputLines: number;
+}
+
+function stripAnsi(text: string): string {
+    return text.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
+}
+
+function sanitizeShellOutput(text: string): string {
+    return stripAnsi(text)
+        .replace(/\r/g, "")
+        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "");
+}
+
+function truncateStringToBytesFromEnd(text: string, maxBytes: number): string {
+    const buffer = Buffer.from(text, "utf-8");
+    if (buffer.length <= maxBytes) return text;
+    let start = buffer.length - maxBytes;
+    while (start < buffer.length) {
+        const byte = buffer[start];
+        if (byte === undefined || (byte & 0xc0) !== 0x80) break;
+        start += 1;
+    }
+    return buffer.slice(start).toString("utf-8");
+}
+
+function truncateTail(text: string, maxLines = MAX_BASH_OUTPUT_LINES, maxBytes = MAX_BASH_OUTPUT_BYTES): TailTruncationResult {
+    const totalLines = text.length === 0 ? 0 : text.split("\n").length;
+    const totalBytes = Buffer.byteLength(text, "utf-8");
+    if (totalLines <= maxLines && totalBytes <= maxBytes) {
+        return { content: text, truncated: false, totalLines, outputLines: totalLines };
+    }
+
+    const lines = text.split("\n");
+    const outputLines: string[] = [];
+    let outputBytes = 0;
+
+    for (let i = lines.length - 1; i >= 0 && outputLines.length < maxLines; i -= 1) {
+        const line = lines[i] ?? "";
+        const lineBytes = Buffer.byteLength(line, "utf-8") + (outputLines.length > 0 ? 1 : 0);
+        if (outputBytes + lineBytes > maxBytes) {
+            if (outputLines.length === 0) {
+                outputLines.unshift(truncateStringToBytesFromEnd(line, maxBytes));
+            }
+            break;
+        }
+        outputLines.unshift(line);
+        outputBytes += lineBytes;
+    }
+
+    return {
+        content: outputLines.join("\n"),
+        truncated: true,
+        totalLines,
+        outputLines: outputLines.length,
+    };
+}
+
+function createTempOutputPath(): string {
+    return join(tmpdir(), `pi-agent-core-bash-${randomBytes(8).toString("hex")}.log`);
+}
+
+function isWithinRoot(root: string, target: string): boolean {
+    const rel = relative(root, target);
+    return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
 
 function resolveHistoryWindowMessages(limit?: number): number {
     if (typeof limit !== "number" || !Number.isFinite(limit)) {
@@ -129,9 +224,11 @@ export class MultiAgentRuntime {
     readonly chatManager: ChatManager;
     readonly specialistRegistry: SpecialistRegistry;
     readonly historyWindowMessages: number;
+    readonly workspaceRoot: string;
 
     constructor(sessionId = "default", options: RuntimeOptions = {}) {
         this.sessionId = sessionId;
+        this.workspaceRoot = process.cwd();
         this.historyWindowMessages = resolveHistoryWindowMessages(options.historyWindowMessages);
         this.store = new ThreadStore({ sessionId });
         this.specialistRegistry = createSpecialistRegistry();
@@ -451,6 +548,7 @@ export class MultiAgentRuntime {
             sendChatFollowUp: (chatId, input) => this.chatManager.sendMessage(chatId, input),
             getChat: (chatId) => this.chatManager.getChat(chatId),
             closeChat: (chatId) => this.chatManager.closeChat(chatId),
+            runBash: (input) => this.runBashCommand(input),
             getQueuePosition: (chatId) => this.chatManager.getQueuePosition(chatId),
             traceToolEvent: async (traceInput) => {
                 await this.trace({
@@ -665,6 +763,154 @@ export class MultiAgentRuntime {
         }
     }
 
+    private resolveBashCwd(cwd?: string): string {
+        const candidate = cwd?.trim()
+            ? isAbsolute(cwd.trim())
+                ? resolve(cwd.trim())
+                : resolve(this.workspaceRoot, cwd.trim())
+            : this.workspaceRoot;
+
+        if (!isWithinRoot(this.workspaceRoot, candidate)) {
+            throw new Error(`cwd must stay inside workspace root: ${this.workspaceRoot}`);
+        }
+
+        if (!existsSync(candidate)) {
+            throw new Error(`cwd does not exist: ${candidate}`);
+        }
+
+        if (!statSync(candidate).isDirectory()) {
+            throw new Error(`cwd is not a directory: ${candidate}`);
+        }
+
+        return candidate;
+    }
+
+    private resolveBashTimeoutMs(timeoutMs?: number): number {
+        if (timeoutMs === undefined) return DEFAULT_BASH_TIMEOUT_MS;
+        const normalized = Math.trunc(timeoutMs);
+        if (!Number.isFinite(normalized) || normalized <= 0) {
+            throw new Error("timeoutMs must be a positive number.");
+        }
+        return Math.min(normalized, MAX_BASH_TIMEOUT_MS);
+    }
+
+    private async runBashCommand(input: BashRunInput): Promise<BashRunOutput> {
+        const startedAt = now();
+        const cwd = this.resolveBashCwd(input.cwd);
+        const timeoutMs = this.resolveBashTimeoutMs(input.timeoutMs);
+
+        const abortController = new AbortController();
+        let timedOut = false;
+        const timeoutHandle = setTimeout(() => {
+            timedOut = true;
+            abortController.abort();
+        }, timeoutMs);
+
+        const processRef = Bun.spawn({
+            cmd: ["bash", "-lc", input.command],
+            cwd,
+            env: process.env,
+            stdout: "pipe",
+            stderr: "pipe",
+            signal: abortController.signal,
+        });
+
+        let totalOutputBytes = 0;
+        let rollingBytes = 0;
+        const rollingChunks: string[] = [];
+        const bufferedOutput: string[] = [];
+        let fullOutputPath: string | undefined;
+        let outputStream: WriteStream | undefined;
+
+        const appendChunk = (chunk: Uint8Array) => {
+            const text = sanitizeShellOutput(new TextDecoder().decode(chunk));
+            if (!text) return;
+
+            const chunkBytes = Buffer.byteLength(text, "utf-8");
+            totalOutputBytes += chunkBytes;
+
+            if (!outputStream) {
+                bufferedOutput.push(text);
+            }
+
+            if (!outputStream && totalOutputBytes > MAX_BASH_OUTPUT_BYTES) {
+                fullOutputPath = createTempOutputPath();
+                outputStream = createWriteStream(fullOutputPath, { flags: "a" });
+                for (const existing of bufferedOutput) outputStream.write(existing);
+                bufferedOutput.length = 0;
+            }
+
+            if (outputStream) outputStream.write(text);
+
+            rollingChunks.push(text);
+            rollingBytes += chunkBytes;
+            while (rollingBytes > MAX_BASH_ROLLING_BYTES && rollingChunks.length > 1) {
+                const removed = rollingChunks.shift() ?? "";
+                rollingBytes -= Buffer.byteLength(removed, "utf-8");
+            }
+        };
+
+        const consumeStream = async (stream: ReadableStream<Uint8Array> | null | undefined) => {
+            if (!stream) return;
+            const reader = stream.getReader();
+            try {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    if (value) appendChunk(value);
+                }
+            } catch (err) {
+                if (!abortController.signal.aborted) {
+                    throw err;
+                }
+            } finally {
+                reader.releaseLock();
+            }
+        };
+
+        let exitCode: number;
+        try {
+            const [code] = await Promise.all([
+                processRef.exited,
+                consumeStream(processRef.stdout),
+                consumeStream(processRef.stderr),
+            ]);
+            exitCode = code;
+        } finally {
+            clearTimeout(timeoutHandle);
+            if (outputStream) {
+                await new Promise<void>((resolveEnd) => {
+                    outputStream!.end(() => resolveEnd());
+                });
+            }
+        }
+
+        const recentOutput = outputStream ? rollingChunks.join("") : bufferedOutput.join("");
+        const truncation = truncateTail(recentOutput);
+        let output = truncation.content || "(no output)";
+        if (truncation.truncated && fullOutputPath) {
+            output += `\n\n[output truncated: showing last ${truncation.outputLines} lines out of ${truncation.totalLines}. full output: ${fullOutputPath}]`;
+        }
+
+        if (timedOut) {
+            throw new Error(`${output}\n\nCommand timed out after ${timeoutMs}ms.`);
+        }
+
+        if (exitCode !== 0) {
+            throw new Error(`${output}\n\nCommand exited with code ${exitCode}.`);
+        }
+
+        return {
+            output,
+            cwd,
+            timeoutMs,
+            durationMs: now() - startedAt,
+            exitCode,
+            truncated: truncation.truncated,
+            fullOutputPath,
+        };
+    }
+
     private async trace(
         input: Omit<TraceEvent, "eventId" | "timestamp" | "sessionId">,
     ) {
@@ -703,6 +949,8 @@ function debugTrace(event: TraceEvent): void {
                 line = `[tool] delegate → ${args.agentId}: "${String(args.task ?? "").slice(0, 60)}"`;
             } else if (event.toolName === "get_chat_result" || event.toolName === "get_chat_status" || event.toolName === "follow_up_chat") {
                 line = `[tool] ${event.toolName} → ${args.chatId ?? "?"}`;
+            } else if (event.toolName === "run_bash") {
+                line = `[tool] run_bash → "${String(args.command ?? "").slice(0, 60)}"`;
             } else {
                 line = `[tool] ${event.toolName}`;
             }

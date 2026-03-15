@@ -492,3 +492,31 @@ test("human -> math -> report_to_orchestrator completes via specialist tool", as
     expect(contents).toContain("Specialist report from math: sum is 17");
     expect(contents).toContain("report-received");
 });
+
+test("orchestrator run_bash executes command and persists tool traces", async () => {
+    const sessionId = `t10-bash-${Date.now()}`;
+    const runtime = new MultiAgentRuntime(sessionId);
+
+    const runContext = { runId: "run_bash", turnId: "turn_bash", sessionId };
+    const orchestratorTools = (runtime as unknown as {
+        createOrchestratorToolsForRun: (
+            runContext: { runId: string; turnId: string; sessionId: string },
+        ) => Array<{ name: string; execute: (toolCallId: string, params: unknown) => Promise<any> }>;
+    }).createOrchestratorToolsForRun(runContext);
+
+    const runBash = orchestratorTools.find((tool) => tool.name === "run_bash");
+    expect(runBash).toBeDefined();
+
+    const result = await runBash!.execute("call_run_bash", { command: "printf 'hello'" });
+    expect(result.content).toEqual([{ type: "text", text: "hello" }]);
+    expect(result.details).toMatchObject({
+        exitCode: 0,
+        timeoutMs: 20_000,
+    });
+
+    const traces = await runtime.getTraces();
+    const bashTraces = traces.filter((trace) => trace.toolName === "run_bash");
+    expect(bashTraces).toHaveLength(2);
+    expect(bashTraces.map((trace) => trace.type)).toEqual(["tool_start", "tool_end"]);
+    expect(bashTraces.map((trace) => trace.status)).toEqual(["running", "ok"]);
+});

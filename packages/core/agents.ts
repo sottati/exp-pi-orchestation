@@ -97,6 +97,8 @@ export function createOrchestratorAgent(tools: AgentTool<any>[] = []) {
                 "Use delegate to send tasks to specialists.",
                 "If chat is already active, use follow_up_chat to continue same chatId.",
                 "Then poll with get_chat_status/get_chat_result to get results.",
+                "Use run_bash only for terminal checks/commands the user asks for.",
+                "Prefer delegate for specialist work (math/code), not run_bash.",
                 "After tool results, produce a direct final answer for the user.",
                 "Be concise by default.",
             ].join(" "),
