@@ -157,7 +157,7 @@ Inside the CLI, useful commands:
 - `/agents`, `/use <agentId>`
 - `/traces [n]`
 - `/threads`, `/thread <threadId>`
-- `/chats`, `/chat <chatId> [--json]`, `/close <chatId>`
+- `/chats`, `/chat <chatId> [--json]`, `/close <chatId>` (`/chat` live agrupa salida por turn usando `runId`/`turnId`)
 - Legacy aliases: `/jobs`=/chats, `/job`=`/task`=/chat, `/cancel`=/close
 
 ## Data and Trace Expectations

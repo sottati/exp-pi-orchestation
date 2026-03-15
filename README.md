@@ -99,7 +99,7 @@ La CLI (`bun run start`) y el servidor UI son entradas independientes que compar
 - `/agents`
 - `/use <agentId>` (`orchestrator|code|math`)
 - `/chats` (alias: `/jobs`)
-- `/chat <chatId> [--json]` (aliases: `/job`, `/task`) — transcript live; con `--json` devuelve inspección raw
+- `/chat <chatId> [--json]` (aliases: `/job`, `/task`) — transcript live agrupado por turn (`runId`/`turnId`); con `--json` devuelve inspección raw
 - `/close <chatId>` (alias: `/cancel`)
 - `/threads`
 - `/thread <threadId>`
@@ -198,6 +198,8 @@ Cada envelope de hilo incluye metadatos de relación:
    ```text
    /chat <chatId>
    ```
+
+   La vista live imprime encabezados por turn (`runId`/`turnId`) y luego los mensajes del turn en orden.
 
    Inspección raw JSON:
 

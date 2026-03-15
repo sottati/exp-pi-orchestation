@@ -76,6 +76,7 @@ function buildEnvelope(input: {
     threadId: string;
     envelopeId: string;
     parentEnvelopeId?: string;
+    chatId?: string;
     role: "user" | "assistant";
     content: string;
 }): ThreadEnvelope {
@@ -91,6 +92,7 @@ function buildEnvelope(input: {
         fromAgentId: input.role === "user" ? "user" : "code",
         toAgentId: input.role === "user" ? "code" : "user",
         initiator: input.role === "user" ? "user" : "specialist",
+        chatId: input.chatId,
         message: {
             role: input.role,
             content: input.content,
@@ -180,6 +182,66 @@ test("runtime keeps full persisted thread while trimming model context", async (
     const replaced = fake.getReplacedMessages();
     expect(replaced).toHaveLength(1);
     expect(replaced[0]).toMatchObject({ role: "assistant", content: "old-assistant" });
+});
+
+test("inspectChat returns consistent trace and thread audit for same chat", async () => {
+    const sessionId = `t07-audit-${Date.now()}`;
+    const runtime = new MultiAgentRuntime(sessionId);
+    const chatId = "chat-audit-1";
+    const runId = "run-audit-1";
+    const turnId = "turn-audit-1";
+    const threadId = createThreadId(sessionId, "orchestrator", "code");
+
+    await runtime.store.appendTrace({
+        eventId: "trace-1",
+        timestamp: Date.now(),
+        sessionId,
+        runId,
+        turnId,
+        type: "chat_created",
+        status: "running",
+        chatId,
+        agentId: "code",
+        details: { chatId },
+    });
+    await runtime.store.appendThreadMessage(buildEnvelope({
+        sessionId,
+        threadId,
+        envelopeId: "env-1",
+        chatId,
+        role: "user",
+        content: "start task",
+    }));
+    await runtime.store.appendThreadMessage(buildEnvelope({
+        sessionId,
+        threadId,
+        envelopeId: "env-2",
+        chatId,
+        parentEnvelopeId: "env-1",
+        role: "assistant",
+        content: "task done",
+    }));
+    await runtime.store.appendTrace({
+        eventId: "trace-2",
+        timestamp: Date.now() + 1,
+        sessionId,
+        runId,
+        turnId,
+        type: "chat_completed",
+        status: "completed",
+        chatId,
+        agentId: "code",
+        details: { chatId },
+    });
+
+    const details = await runtime.inspectChat(chatId);
+
+    expect(details.queryId).toBe(chatId);
+    expect(details.summary).toMatchObject({ status: "completed", agentId: "code" });
+    expect(details.traceEvents.map((event) => event.type)).toEqual(["chat_created", "chat_completed"]);
+    expect(details.threadIds).toEqual([threadId]);
+    expect(details.threadMessages.map((env) => String(env.message.content))).toEqual(["start task", "task done"]);
+    expect(details.threadMessages.every((env) => env.chatId === chatId)).toBe(true);
 });
 
 test("runtime uses same routing pipeline for human and intra-agent inputs", async () => {
