@@ -205,6 +205,7 @@ When adding or changing runtime behavior, preserve correlation IDs:
 - Each chat record includes `conversationId` (stable identity) plus `chatId` (single execution).
 - Each state change (active/waiting/closed) appends the full record.
 - On restore, `ChatManager.restore()` reads records from disk, marks interrupted chats as closed.
+- Restart policy is explicit: no auto-resume for interrupted executions, scheduling state is rebuilt cleanly, and a later `close` on already-restored closed chats does not append duplicate close records.
 - The `ChatManager` constructor accepts optional `persistChat`, `restoreRecords`, and `getMaxConcurrency` callbacks.
 - Keep-alive chats remain open across turns; follow-ups are processed in FIFO order and close remains explicit.
 - If an active keepAlive chat exists for same conversation, `delegate` continues same `chatId` (or use `follow_up_chat` explicitly).

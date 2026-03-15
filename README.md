@@ -157,6 +157,7 @@ Incluye:
 
 Las líneas corruptas en archivos JSONL se ignoran silenciosamente (fault-tolerant parsing).
 Al reiniciar una sesión, los chats que estaban `active` o `waiting` se marcan como `closed` con error "Interrupted by runtime restart".
+La política es explícita y determinística: no hay auto-resume de ejecución interrumpida, las colas activas se reconstruyen limpias, y un `close` posterior sobre esos chats ya cerrados no re-persista estados.
 
 Cada envelope de hilo incluye metadatos de relación:
 

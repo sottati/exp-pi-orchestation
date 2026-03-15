@@ -188,6 +188,49 @@ test("restore closes interrupted chats", async () => {
     expect(persisted.length).toBe(2);
 });
 
+test("restore leaves scheduler clean for new chats", async () => {
+    const manager = new ChatManager({
+        getMaxConcurrency: () => 1,
+        restoreRecords: async () => [
+            sampleRecord({ chatId: "old-active", status: "active", agentId: "code" }),
+            sampleRecord({ chatId: "old-waiting", status: "waiting", agentId: "code" }),
+        ],
+    });
+
+    const recovered = await manager.restore();
+    expect(recovered).toBe(2);
+
+    const first = manager.createChat(baseInput({ agentId: "code", task: "new-1" }), async () => "ok-1");
+    const second = manager.createChat(baseInput({ agentId: "code", task: "new-2" }), async () => "ok-2");
+
+    expect(manager.getChat("old-active")?.status).toBe("closed");
+    expect(manager.getChat("old-waiting")?.status).toBe("closed");
+    expect(manager.getChat(first.chatId)?.status).toBe("active");
+    expect(manager.getChat(second.chatId)?.status).toBe("waiting");
+
+    await waitUntil(() => manager.getChat(second.chatId)?.status === "closed");
+    expect(manager.getChat(second.chatId)?.closeReason).toBe("completed");
+});
+
+test("restore interrupted close is idempotent on explicit close", async () => {
+    const persisted: AgentChat[] = [];
+    const manager = new ChatManager({
+        restoreRecords: async () => [sampleRecord({ chatId: "old-active", status: "active" })],
+        persistChat: async (chat) => {
+            persisted.push({ ...chat });
+        },
+    });
+
+    const recovered = await manager.restore();
+    expect(recovered).toBe(1);
+    expect(persisted.length).toBe(1);
+
+    const closed = manager.closeChat("old-active");
+    expect(closed?.status).toBe("closed");
+    expect(closed?.closeReason).toBe("failed");
+    expect(persisted.length).toBe(1);
+});
+
 test("keepAlive chat handles 3+ turns without auto-close", async () => {
     const seenTasks: string[] = [];
     const manager = new ChatManager();
