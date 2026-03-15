@@ -7,6 +7,7 @@ Runtime de prueba para orquestación y delegación entre agentes usando `@marioz
 ```bash
 bun install
 bun run start -- --session demo-1
+bun run tui -- --session demo-1
 ```
 
 Después, en la CLI:
@@ -34,6 +35,7 @@ Necesito un snippet en C para imprimir del 1 al 10
 - Configuración de modelo por agente (`orchestrator`, `code`, `math`) en `packages/core/agents.ts`.
 - Restore explícito al reiniciar: chats interrumpidos quedan `closed` (sin auto-resume), con scheduler limpio e idempotencia de `close` posterior.
 - CLI interactiva para operar y testear sin UI.
+- TUI interactiva basada en **openTUI** para operar chats, streaming y diagnósticos desde terminal.
 - Gate de decisión para saber cuándo pasar a UI/monorepo.
 
 ## Configuración del modelo
@@ -61,12 +63,14 @@ bun install
 
 ```bash
 bun run start
+bun run tui
 bun run ui
 bun test
 bun run typecheck
 bun run smoke:math
 bun run smoke:code
 bun run smoke:orchestrator
+bun run smoke:all
 bun run ui:gate
 ```
 
@@ -74,6 +78,7 @@ Con sesión específica:
 
 ```bash
 bun run start -- --session test01
+bun run tui -- --session test01
 bun run ui -- --session test01
 bun run ui:gate -- --session test01
 ```
@@ -105,8 +110,29 @@ La CLI (`bun run start`) y el servidor UI son entradas independientes que compar
 - `/threads`
 - `/thread <threadId>`
 - `/traces [n]`
-- `/smoke <math|code|orchestrator>`
+- `/smoke <math|code|orchestrator|all>`
 - `/exit`
+
+## TUI (openTUI)
+
+```bash
+bun run tui -- --session demo-1
+```
+
+Atajos principales:
+
+- `Enter`: enviar mensaje al agente activo
+- `Tab`: cambiar agente (`orchestrator` → `code` → `math`)
+- `Ctrl+R`: refrescar panel de diagnósticos
+- `Ctrl+T`: ejecutar smoke suite (`math`, `code`, `orchestrator`)
+- `Ctrl+L`: limpiar panel de salida
+- `Esc`: salir
+
+La TUI muestra:
+
+- **Salida y streaming**: texto incremental del agente + eventos de tools en tiempo real.
+- **Panel de diagnósticos**: estado de chats y últimos eventos de tools/orquestación.
+- **Entrada**: prompt simple para conversar con el agente activo.
 
 ## Modelo de delegación: Chats
 
@@ -219,6 +245,7 @@ Cada envelope de hilo incluye metadatos de relación:
 ## Estructura principal
 
 - `apps/cli/index.ts`: CLI interactiva.
+- `apps/tui/index.ts`: TUI terminal-first con openTUI (streaming, input, diagnósticos y smoke suite).
 - `apps/backend/server.ts`: servidor web con REST + WebSocket.
 - `apps/backend/ui-gate.ts`: evaluación de fricción para activar UI.
 - `apps/web/index.html`: shell HTML de la UI.
@@ -249,4 +276,4 @@ Cada envelope de hilo incluye metadatos de relación:
 
 ## Nota
 
-Este repo está en modo MPV terminal-first. La UI se activa cuando el gate indique fricción operativa real (concurrencia, HITL frecuente o volumen alto de trazas).
+Este repo está en modo MPV terminal-first. CLI y TUI cubren la operación diaria; la UI web se activa cuando el gate indique fricción operativa real (concurrencia, HITL frecuente o volumen alto de trazas).
