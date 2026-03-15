@@ -139,6 +139,12 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Delay UI work until `ui:gate` indicates clear operational friction.
 - Math specialist defaults to short result-only replies unless user asks for steps.
 
+### Conversational invariants
+
+- Context to model is capped by `historyWindowMessages` (default `50`) without trimming persisted history.
+- Specialist-to-orchestrator reporting is explicit-only via `report_to_orchestrator` under human instruction.
+- Audit path stays terminal-first: `/traces` for tool/chat lifecycle, `/threads`/`/thread` for persisted envelopes, `/chat <chatId> [--json]` for turn-level chat inspection.
+
 ## Operational Runbook
 
 Use these project scripts:

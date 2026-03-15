@@ -31,7 +31,7 @@ Necesito un snippet en C para imprimir del 1 al 10
 - Especialistas reactivos por defecto; solo reportan al orchestrator via `report_to_orchestrator` cuando se pide explícitamente.
 - Error handling robusto: JSONL fault-tolerant, hooks con `safeAsync`, guards en CLI/trace/persistence.
 - Configuración de modelo por agente (`orchestrator`, `code`, `math`) en `packages/core/agents.ts`.
-- Restauración automática de chats interrumpidos al reiniciar sesión.
+- Restore explícito al reiniciar: chats interrumpidos quedan `closed` (sin auto-resume), con scheduler limpio e idempotencia de `close` posterior.
 - CLI interactiva para operar y testear sin UI.
 - Gate de decisión para saber cuándo pasar a UI/monorepo.
 
@@ -121,6 +121,12 @@ Cada delegación del orchestrator a un especialista crea o continúa un **chat**
 
 Cuando un chat activo se cierra, el siguiente en la cola del mismo agente pasa a `active`.
 Política de cierre/reapertura: mientras exista un chat `active` keepAlive para la misma conversación, `delegate` continúa ese `chatId`; si no existe, crea uno nuevo con el mismo `conversationId`.
+
+### Reglas operativas clave
+
+- **Límite de historial al modelo**: `historyWindowMessages` (default `50`) recorta solo el contexto enviado al modelo; no recorta historial persistido.
+- **Regla de reporte especialista**: especialistas son reactivos por defecto y solo reportan al orchestrator mediante `report_to_orchestrator` cuando la instrucción humana lo pide.
+- **Flujo de auditoría**: usar `/traces` para lifecycle/tools, `/threads` + `/thread <id>` para envelopes persistidos y `/chat <chatId>` (`--json` opcional) para conversación intra-agente por turn.
 
 ### Tools del orchestrator
 
