@@ -11,6 +11,36 @@ const SMOKE_ORDER = ["math", "code", "orchestrator"] as const;
 const MAX_LOG_LINES = 400;
 const DIAGNOSTIC_CHAT_LINES = 8;
 const DIAGNOSTIC_TRACE_LINES = 10;
+const MIN_CHAT_WIDTH = 24;
+const LOADER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
+const LOADER_INTERVAL_MS = 90;
+const AGENT_OUTPUT_THEME: Record<
+    ChatTarget,
+    { borderColor: string; backgroundColor: string; textColor: string }
+> = {
+    orchestrator: {
+        borderColor: "#6ea8ff",
+        backgroundColor: "#0f1f34",
+        textColor: "#d7e7ff",
+    },
+    code: {
+        borderColor: "#6fd6a7",
+        backgroundColor: "#0f2a22",
+        textColor: "#d6fbe9",
+    },
+    math: {
+        borderColor: "#f2c879",
+        backgroundColor: "#2f2412",
+        textColor: "#ffefd0",
+    },
+};
+
+type MessageAlign = "left" | "right";
+type MessageLogOptions = {
+    align?: MessageAlign;
+    spacer?: boolean;
+    agent?: ChatTarget;
+};
 
 function parseArgs(args: string[]) {
     let sessionId = "default";
@@ -69,6 +99,31 @@ function formatTrace(trace: TraceEvent): string {
         return `${prefix} chat=${trace.chatId} (${trace.status})`;
     }
     return `${prefix} ${trace.status}`;
+}
+
+function wrapText(text: string, width: number): string[] {
+    const safeWidth = Math.max(1, width);
+    const output: string[] = [];
+    for (const rawLine of text.split("\n")) {
+        if (!rawLine) {
+            output.push("");
+            continue;
+        }
+
+        let remaining = rawLine;
+        while (remaining.length > safeWidth) {
+            const splitAt = remaining.lastIndexOf(" ", safeWidth);
+            if (splitAt <= 0) {
+                output.push(remaining.slice(0, safeWidth));
+                remaining = remaining.slice(safeWidth);
+                continue;
+            }
+            output.push(remaining.slice(0, splitAt));
+            remaining = remaining.slice(splitAt + 1).trimStart();
+        }
+        output.push(remaining);
+    }
+    return output;
 }
 
 async function main() {
@@ -174,17 +229,75 @@ async function main() {
     let isBusy = false;
     let streamBuffer = "";
     let statusMessage = "Lista.";
-    const logLines: string[] = [];
+    const logLinesByAgent: Record<ChatTarget, string[]> = {
+        orchestrator: [],
+        code: [],
+        math: [],
+    };
+    let runningAgent: ChatTarget | undefined;
+    let loaderFrame = 0;
+    let loaderTimer: ReturnType<typeof setInterval> | undefined;
     let diagnosticsBody = "Cargando…";
     let diagnosticsTimer: ReturnType<typeof setInterval> | undefined;
     let shuttingDown = false;
 
-    function pushLog(line: string) {
-        logLines.push(line);
-        if (logLines.length > MAX_LOG_LINES) {
-            logLines.splice(0, logLines.length - MAX_LOG_LINES);
+    function currentLoaderGlyph() {
+        return LOADER_FRAMES[loaderFrame % LOADER_FRAMES.length];
+    }
+
+    function loadingPreview() {
+        return `${currentLoaderGlyph()} pensando...`;
+    }
+
+    function startLoader() {
+        if (loaderTimer) return;
+        loaderTimer = setInterval(() => {
+            loaderFrame = (loaderFrame + 1) % LOADER_FRAMES.length;
+            if (!isBusy) return;
+            renderHeader();
+            renderOutput();
+        }, LOADER_INTERVAL_MS);
+    }
+
+    function stopLoader() {
+        if (loaderTimer) {
+            clearInterval(loaderTimer);
+            loaderTimer = undefined;
         }
-        renderOutput();
+        loaderFrame = 0;
+    }
+
+    function chatWidth(): number {
+        const width = outputPanel.width;
+        if (!Number.isFinite(width) || width <= 0) return 80;
+        return Math.max(MIN_CHAT_WIDTH, width - 6);
+    }
+
+    function rightAlignLine(line: string, width: number): string {
+        if (!line) return line;
+        if (line.length >= width) return line;
+        return `${" ".repeat(width - line.length)}${line}`;
+    }
+
+    function pushLog(line: string, options: MessageLogOptions = {}) {
+        const align = options.align ?? "left";
+        const spacer = options.spacer ?? false;
+        const targetAgent = options.agent ?? currentAgent;
+        const targetLog = logLinesByAgent[targetAgent];
+        const width = chatWidth();
+        const wrapped = wrapText(line, width);
+        for (const part of wrapped) {
+            targetLog.push(align === "right" ? rightAlignLine(part, width) : part);
+        }
+        if (spacer) {
+            targetLog.push("");
+        }
+        if (targetLog.length > MAX_LOG_LINES) {
+            targetLog.splice(0, targetLog.length - MAX_LOG_LINES);
+        }
+        if (targetAgent === currentAgent) {
+            renderOutput();
+        }
     }
 
     function setStatus(text: string) {
@@ -192,8 +305,17 @@ async function main() {
         renderHeader();
     }
 
+    function applyOutputTheme(agent: ChatTarget) {
+        const theme = AGENT_OUTPUT_THEME[agent];
+        outputPanel.borderColor = theme.borderColor;
+        outputPanel.backgroundColor = theme.backgroundColor;
+        outputText.fg = theme.textColor;
+    }
+
     function renderHeader() {
-        const mode = isBusy ? "EJECUTANDO" : "LISTO";
+        const mode = isBusy ? `EJECUTANDO ${currentLoaderGlyph()}` : "LISTO";
+        applyOutputTheme(currentAgent);
+        outputPanel.title = currentAgent;
         headerText.content = [
             `session=${runtime.sessionId}  agente=${currentAgent}  estado=${mode}`,
             "Tab: cambiar agente  Ctrl+R: refrescar  Ctrl+T: smoke all  Ctrl+L: limpiar  Esc: salir",
@@ -202,10 +324,10 @@ async function main() {
     }
 
     function renderOutput() {
-        const lines = [...logLines];
-        if (isBusy) {
-            const preview = streamBuffer || "…";
-            lines.push(`${currentAgent}: ${preview}`);
+        const lines = [...logLinesByAgent[currentAgent]];
+        if (isBusy && runningAgent === currentAgent) {
+            const preview = streamBuffer || loadingPreview();
+            lines.push(...wrapText(preview, chatWidth()));
         }
         outputText.content = lines.join("\n");
         outputPanel.scrollTop = outputPanel.scrollHeight;
@@ -217,7 +339,7 @@ async function main() {
     }
 
     function clearOutput() {
-        logLines.length = 0;
+        logLinesByAgent[currentAgent].length = 0;
         streamBuffer = "";
         renderOutput();
     }
@@ -228,6 +350,7 @@ async function main() {
         if (next) {
             currentAgent = next;
             setStatus(`Agente activo -> ${currentAgent}`);
+            renderOutput();
         }
     }
 
@@ -273,6 +396,7 @@ async function main() {
             return;
         }
         isBusy = true;
+        startLoader();
         streamBuffer = "";
         renderHeader();
         renderOutput();
@@ -286,6 +410,7 @@ async function main() {
             }
         }
         isBusy = false;
+        stopLoader();
         streamBuffer = "";
         setStatus("Smoke suite finalizada.");
         renderOutput();
@@ -303,17 +428,20 @@ async function main() {
 
         input.value = "";
         isBusy = true;
+        startLoader();
+        const targetAgent = currentAgent;
+        runningAgent = targetAgent;
         streamBuffer = "";
         renderHeader();
         renderOutput();
 
-        pushLog(`usuario -> ${currentAgent}: ${message}`);
-        setStatus(`Enviando mensaje a ${currentAgent}...`);
+        pushLog(message, { align: "right", spacer: true, agent: targetAgent });
+        setStatus(`Enviando mensaje a ${targetAgent}...`);
 
         try {
             const output = await runtime.chat({
                 fromAgentId: "user",
-                toAgentId: currentAgent,
+                toAgentId: targetAgent,
                 content: message,
                 onAgentEvent: (event) => {
                     const delta = textFromEvent(event);
@@ -324,26 +452,28 @@ async function main() {
                     }
 
                     if (event.type === "tool_execution_start") {
-                        pushLog(`[tool:start] ${describeToolStart(event)}`);
+                        pushLog(`[tool:start] ${describeToolStart(event)}`, { agent: targetAgent });
                         return;
                     }
                     if (event.type === "tool_execution_end") {
-                        pushLog(`[tool:${event.isError ? "error" : "ok"}] ${event.toolName}`);
+                        pushLog(`[tool:${event.isError ? "error" : "ok"}] ${event.toolName}`, { agent: targetAgent });
                     }
                 },
             });
 
             const finalAnswer = streamBuffer.trim() || output.answer || "(sin texto)";
             streamBuffer = "";
-            pushLog(`${currentAgent}: ${finalAnswer}`);
-            pushLog(`[run] ${output.runContext.runId} completado en ${output.durationMs}ms`);
-            setStatus(`Respuesta recibida de ${currentAgent}.`);
+            pushLog(finalAnswer, { align: "left", spacer: true, agent: targetAgent });
+            pushLog(`[run] ${output.runContext.runId} completado en ${output.durationMs}ms`, { agent: targetAgent });
+            setStatus(`Respuesta recibida de ${targetAgent}.`);
         } catch (err) {
             streamBuffer = "";
-            pushLog(`[error] ${errorMessage(err)}`);
+            pushLog(`[error] ${errorMessage(err)}`, { agent: targetAgent });
             setStatus("La ejecución terminó con error.");
         } finally {
             isBusy = false;
+            stopLoader();
+            runningAgent = undefined;
             renderHeader();
             renderOutput();
             await refreshDiagnostics();
@@ -351,9 +481,9 @@ async function main() {
         }
     }
 
-    input.onSubmit = () => {
+    input.on("enter", () => {
         void sendPrompt();
-    };
+    });
 
     renderer.keyInput.on("keypress", (key) => {
         if (key.name === "tab") {
@@ -388,6 +518,7 @@ async function main() {
         if (shuttingDown) return;
         shuttingDown = true;
         if (diagnosticsTimer) clearInterval(diagnosticsTimer);
+        if (loaderTimer) clearInterval(loaderTimer);
         try {
             renderer.destroy();
         } catch {

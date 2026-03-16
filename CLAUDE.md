@@ -300,6 +300,13 @@ bun run tui -- --session <id>
 - `Ctrl+L`: limpiar salida
 - `Esc`: salir
 
+Notas de UI TUI:
+- El título del panel de salida muestra solo el agente activo (`orchestrator|code|math`).
+- El panel de salida cambia color de borde/fondo según el agente activo.
+- Mensajes de humano se muestran a la derecha; mensajes del agente a la izquierda.
+- Estados de carga usan spinner braille animado (`⠋`) en header/chat.
+- Al cambiar agente con `Tab`, el panel muestra el historial de conversación de ese agente.
+
 ## UI / Monorepo Decision Rule
 
 Stay terminal-first by default. Consider UI (and Turbo monorepo split) only when at least one is true:

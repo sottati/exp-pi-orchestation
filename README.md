@@ -130,7 +130,7 @@ Atajos principales:
 
 La TUI muestra:
 
-- **Salida y streaming**: texto incremental del agente + eventos de tools en tiempo real.
+- **Panel de salida**: título muestra solo el agente activo (`orchestrator|code|math`), con color de borde/fondo por agente. Mensajes de humano a la derecha y respuestas del agente a la izquierda. Carga usa spinner braille animado (`⠋`) en header/chat, y al cambiar con `Tab` se muestra el historial de ese agente.
 - **Panel de diagnósticos**: estado de chats y últimos eventos de tools/orquestación.
 - **Entrada**: prompt simple para conversar con el agente activo.
 
