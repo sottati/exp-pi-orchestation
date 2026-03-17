@@ -1,12 +1,15 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 
-export type BaseAgentId = "user" | "orchestrator" | "code" | "math";
+export type BaseAgentId = string;
 export type Initiator = "user" | "orchestrator" | "specialist" | "system";
+export type Permission = "allow" | "deny" | "hitl";
 
 export interface RunContext {
     runId: string;
     turnId: string;
     sessionId: string;
+    delegationDepth?: number;
+    delegationChain?: string[];
 }
 
 export interface ThreadEnvelope {
@@ -70,11 +73,43 @@ export interface TraceEvent {
         | "chat_retry"
         | "chat_completed"
         | "chat_failed"
-        | "chat_cancelled";
+        | "chat_cancelled"
+        | "tool_unavailable"
+        | "mcp_server_failed"
+        | "tool_permission_check"
+        | "tool_hitl_requested"
+        | "tool_hitl_approved"
+        | "tool_hitl_denied"
+        | "tool_hitl_timeout"
+        | "job_created"
+        | "job_triggered"
+        | "job_completed"
+        | "job_failed"
+        | "job_cancelled"
+        | "job_paused"
+        | "job_resumed";
     status: TraceStatus;
     agentId?: BaseAgentId;
     toolName?: string;
     toolCallId?: string;
     chatId?: string;
     details?: Record<string, unknown>;
+}
+
+export type ScheduledJobStatus = "active" | "paused" | "cancelled";
+
+export interface ScheduledJob {
+    jobId: string;
+    sessionId: string;
+    createdBy: string;
+    targetAgentId: string;
+    task: string;
+    schedule: { type: "cron"; cron: string } | { type: "interval"; intervalMs: number } | { type: "once"; runAt: number };
+    status: ScheduledJobStatus;
+    runCount: number;
+    createdAt: number;
+    updatedAt: number;
+    lastRunAt?: number;
+    nextRunAt?: number;
+    lastError?: string;
 }
