@@ -115,6 +115,7 @@ For more information, read the Bun API docs in `node_modules/bun-types/docs/**.m
 This repository is a terminal-first multi-agent runtime prototype.
 
 - CLI entry point: `apps/cli/index.ts`
+- TUI entry point: `apps/tui/index.ts`
 - Web backend entry point: `apps/backend/server.ts`
 - UI gate entry point: `apps/backend/ui-gate.ts`
 - Runtime: `packages/core/runtime.ts`
@@ -152,11 +153,14 @@ Use these project scripts:
 
 - `bun run start`
 - `bun run start -- --session <id>`
+- `bun run tui`
+- `bun run tui -- --session <id>`
 - `bun test`
 - `bun run typecheck`
 - `bun run smoke:math`
 - `bun run smoke:code`
 - `bun run smoke:orchestrator`
+- `bun run smoke:all`
 - `bun run ui:gate`
 
 Inside the CLI, useful commands:
@@ -165,6 +169,7 @@ Inside the CLI, useful commands:
 - `/traces [n]`
 - `/threads`, `/thread <threadId>`
 - `/chats`, `/chat <chatId> [--json]`, `/close <chatId>` (`/chat` live agrupa salida por turn usando `runId`/`turnId`)
+- `/smoke <math|code|orchestrator|all>`
 - Legacy aliases: `/jobs`=/chats, `/job`=`/task`=/chat, `/cancel`=/close
 
 ## Data and Trace Expectations
@@ -245,3 +250,27 @@ Stay terminal-first by default. Consider UI (and Turbo monorepo split) only when
 - parallel task pressure is recurrent,
 - HITL actions become frequent,
 - trace volume makes terminal-only debugging inefficient.
+
+## Terminal TUI (openTUI)
+
+Entry point: `apps/tui/index.ts` — interfaz terminal interactiva, independiente de la CLI line-based.
+
+Run with:
+```bash
+bun run tui -- --session <id>
+```
+
+### Atajos principales
+- `Enter`: enviar mensaje
+- `Tab`: cambiar agente activo
+- `Ctrl+R`: refrescar diagnósticos (chats/trazas)
+- `Ctrl+T`: ejecutar smoke suite end-to-end (`math`, `code`, `orchestrator`)
+- `Ctrl+L`: limpiar salida
+- `Esc`: salir
+
+Notas de UI TUI:
+- El título del panel de salida muestra solo el agente activo (`orchestrator|code|math`).
+- El panel de salida cambia color de borde/fondo según el agente activo.
+- Mensajes de humano se muestran a la derecha; mensajes del agente a la izquierda.
+- Estados de carga usan spinner braille animado (`⠋`) en header/chat.
+- Al cambiar agente con `Tab`, el panel muestra el historial de conversación de ese agente.

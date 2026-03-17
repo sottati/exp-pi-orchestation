@@ -8,7 +8,7 @@ import { chatSummary, collectChatDelta } from "./chat-view";
 function cliError(err: unknown) { console.error("Error:", errorMessage(err)); }
 
 type ChatTarget = Exclude<BaseAgentId, "user">;
-const VALID_SMOKES = ["math", "code", "orchestrator"] as const;
+const VALID_SMOKES = ["math", "code", "orchestrator", "all"] as const;
 
 function parseArgs(args: string[]) {
     const parsed: { sessionId: string; smoke?: (typeof VALID_SMOKES)[number] } = {
@@ -44,7 +44,7 @@ function printHelp() {
     console.log("  /threads               lista threadIds");
     console.log("  /thread <threadId>     muestra mensajes del thread");
     console.log("  /traces [n]            muestra ultimos n eventos de traza (default 20)");
-    console.log("  /smoke <name>          corre smoke (math|code|orchestrator)");
+    console.log("  /smoke <name>          corre smoke (math|code|orchestrator|all)");
     console.log("  /exit                  salir");
     console.log("  (aliases: /jobs=/chats, /job=/task=/chat, /cancel=/close)\n");
 }
@@ -183,12 +183,20 @@ async function runInteractiveCli(runtime: MultiAgentRuntime) {
             if (command === "/smoke") {
                 const smokeName = args[0] as (typeof VALID_SMOKES)[number] | undefined;
                 if (!smokeName || !VALID_SMOKES.includes(smokeName)) {
-                    console.log("Uso: /smoke math|code|orchestrator");
+                    console.log("Uso: /smoke math|code|orchestrator|all");
                     continue;
                 }
                 try {
-                    const result = await runtime.runSmokeScenario(smokeName);
-                    console.log(`\n[smoke:${smokeName}] ${result.answer}\n`);
+                    if (smokeName === "all") {
+                        for (const target of ["math", "code", "orchestrator"] as const) {
+                            const result = await runtime.runSmokeScenario(target);
+                            console.log(`[smoke:${target}] ${result.answer}`);
+                        }
+                        console.log("");
+                    } else {
+                        const result = await runtime.runSmokeScenario(smokeName);
+                        console.log(`\n[smoke:${smokeName}] ${result.answer}\n`);
+                    }
                 } catch (err) { cliError(err); }
                 continue;
             }
@@ -216,8 +224,15 @@ const args = parseArgs(Bun.argv.slice(2));
 const runtime = new MultiAgentRuntime(args.sessionId);
 
 if (args.smoke) {
-    const result = await runtime.runSmokeScenario(args.smoke);
-    console.log(`[smoke:${args.smoke}] ${result.answer}`);
+    if (args.smoke === "all") {
+        for (const target of ["math", "code", "orchestrator"] as const) {
+            const result = await runtime.runSmokeScenario(target);
+            console.log(`[smoke:${target}] ${result.answer}`);
+        }
+    } else {
+        const result = await runtime.runSmokeScenario(args.smoke);
+        console.log(`[smoke:${args.smoke}] ${result.answer}`);
+    }
 } else {
     await runInteractiveCli(runtime);
 }
