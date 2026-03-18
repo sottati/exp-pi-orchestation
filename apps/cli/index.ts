@@ -3,6 +3,8 @@ import { stdin, stdout } from "node:process";
 import { errorMessage } from "../../packages/core/errors";
 import type { ChatInspection } from "../../packages/core/runtime";
 import { MultiAgentRuntime } from "../../packages/core/runtime";
+import type { HITLHandler, HITLRequest } from "../../packages/core/tool-middleware";
+import { createAgentDefinitions } from "../../packages/core/agents";
 
 function cliError(err: unknown) { console.error("Error:", errorMessage(err)); }
 
@@ -32,6 +34,16 @@ function parseArgs(args: string[]) {
     return parsed;
 }
 
+function createCliHitlHandler(rl: ReturnType<typeof createInterface>): HITLHandler {
+    return async (request: HITLRequest): Promise<{ approved: boolean; modifiedParams?: Record<string, unknown> }> => {
+        console.log(`\n[HITL] Agent '${request.agentId}' wants to use '${request.toolName}'`);
+        console.log(`  Params: ${JSON.stringify(request.params, null, 2)}`);
+        const answer = await rl.question("  Approve? [y/N]: ");
+        const approved = answer.trim().toLowerCase() === "y";
+        return { approved };
+    };
+}
+
 function printHelp() {
     console.log("\nComandos:");
     console.log("  /help                  muestra esta ayuda");
@@ -40,6 +52,8 @@ function printHelp() {
     console.log("  /chats                 lista chats activos + en cola");
     console.log("  /chat <chatId>         vista live de un chat (usa --json para raw)");
     console.log("  /close <chatId>        cierra un chat");
+    console.log("  /scheduled [jobId]     lista scheduled jobs o inspecciona uno");
+    console.log("  /cancel-job <jobId>    cancela un scheduled job");
     console.log("  /threads               lista threadIds");
     console.log("  /thread <threadId>     muestra mensajes del thread");
     console.log("  /traces [n]            muestra ultimos n eventos de traza (default 20)");
@@ -148,8 +162,8 @@ function parseCommand(input: string): { command: string; args: string[] } {
     return { command: command.toLowerCase(), args };
 }
 
-async function runInteractiveCli(runtime: MultiAgentRuntime) {
-    const rl = createInterface({ input: stdin, output: stdout });
+async function runInteractiveCli(runtime: MultiAgentRuntime, rl?: ReturnType<typeof createInterface>) {
+    const readline = rl ?? createInterface({ input: stdin, output: stdout });
     let currentAgent: ChatTarget = "orchestrator";
 
     console.log(`\nSesion: ${runtime.sessionId}`);
@@ -157,7 +171,7 @@ async function runInteractiveCli(runtime: MultiAgentRuntime) {
     printHelp();
 
     while (true) {
-        const rawInput = (await rl.question(`${currentAgent}> `)).trim();
+        const rawInput = (await readline.question(`${currentAgent}> `)).trim();
         if (!rawInput) continue;
 
         if (rawInput.startsWith("/")) {
@@ -253,6 +267,27 @@ async function runInteractiveCli(runtime: MultiAgentRuntime) {
                 continue;
             }
 
+            if (command === "/scheduled") {
+                try {
+                    const jobId = args[0];
+                    if (jobId) {
+                        const job = runtime.scheduler?.getJob(jobId);
+                        console.log(job ? JSON.stringify(job, null, 2) : "Job not found.");
+                    } else {
+                        const jobs = runtime.scheduler?.listJobs() ?? [];
+                        console.log(JSON.stringify(jobs, null, 2));
+                    }
+                } catch (err) { cliError(err); }
+                continue;
+            }
+            if (command === "/cancel-job") {
+                const jobId = args[0];
+                if (!jobId) { console.log("Uso: /cancel-job <jobId>"); continue; }
+                const removed = runtime.scheduler?.removeJob(jobId);
+                console.log(removed ? "Job cancelled." : "Job not found.");
+                continue;
+            }
+
             console.log("Comando no reconocido. Usa /help.");
             continue;
         }
@@ -269,15 +304,24 @@ async function runInteractiveCli(runtime: MultiAgentRuntime) {
         }
     }
 
-    rl.close();
+    readline.close();
 }
 
 const args = parseArgs(Bun.argv.slice(2));
-const runtime = new MultiAgentRuntime(args.sessionId);
 
 if (args.smoke) {
+    const runtime = new MultiAgentRuntime({
+        sessionId: args.sessionId,
+        agents: createAgentDefinitions(),
+    });
     const result = await runtime.runSmokeScenario(args.smoke);
     console.log(`[smoke:${args.smoke}] ${result.answer}`);
 } else {
-    await runInteractiveCli(runtime);
+    const rl = createInterface({ input: stdin, output: stdout });
+    const runtime = new MultiAgentRuntime({
+        sessionId: args.sessionId,
+        agents: createAgentDefinitions(),
+        hitlHandler: createCliHitlHandler(rl),
+    });
+    await runInteractiveCli(runtime, rl);
 }
