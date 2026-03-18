@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { appendFile, mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import type { AgentChat, ThreadEnvelope, TraceEvent } from "./contracts";
+import type { AgentChat, ScheduledJob, ThreadEnvelope, TraceEvent } from "./contracts";
 import { errorMessage, safeParseLine } from "./errors";
 
 function hashId(value: string): string {
@@ -28,6 +28,7 @@ export class ThreadStore {
     private readonly threadsDir: string;
     private readonly tracesFile: string;
     private readonly chatsFile: string;
+    private readonly jobsFile: string;
     private readonly ready: Promise<void>;
 
     constructor(opts: ThreadStoreOptions) {
@@ -36,6 +37,7 @@ export class ThreadStore {
         this.threadsDir = join(this.sessionDir, "threads");
         this.tracesFile = join(this.sessionDir, "traces.jsonl");
         this.chatsFile = join(this.sessionDir, "chats.jsonl");
+        this.jobsFile = join(this.sessionDir, "jobs.jsonl");
         this.ready = this.ensureDirectories();
     }
 
@@ -113,5 +115,19 @@ export class ThreadStore {
             byChatId.set(row.chatId, row);
         }
         return [...byChatId.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+    }
+
+    async appendJob(job: ScheduledJob) {
+        await this.appendJsonl(this.jobsFile, job);
+    }
+
+    async getJobRecords(): Promise<ScheduledJob[]> {
+        const data = await this.readFile(this.jobsFile);
+        const rows = parseJsonLines<ScheduledJob>(data);
+        const byJobId = new Map<string, ScheduledJob>();
+        for (const row of rows) {
+            byJobId.set(row.jobId, row);
+        }
+        return [...byJobId.values()];
     }
 }
