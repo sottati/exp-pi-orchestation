@@ -26,14 +26,17 @@ Necesito un snippet en C para imprimir del 1 al 10
 - Chats con cola FIFO: si un agente está al máximo, los nuevos chats se encolan como `waiting`.
 - Persistencia local de conversaciones por hilo (`threadId`), trazas de ejecución y chat records.
 - Error handling robusto: JSONL fault-tolerant, hooks con `safeAsync`, guards en CLI/trace/persistence.
-- Configuración de modelo por agente (`orchestrator`, `code`, `math`) en `packages/core/agents.ts`.
-- Restauración automática de chats interrumpidos al reiniciar sesión.
-- CLI interactiva para operar y testear sin UI.
+- Configuración de modelo por agente (`orchestrator`, `code`, `math`) via builder pattern en `packages/core/agents.ts`.
+- Sistema extensible de agentes: agent builder, tool registry, tool middleware con permisos y HITL.
+- Scheduler integrado: cron, one-time, delayed tasks con persistencia JSONL.
+- Prompt compiler: ensamblado de system prompt en 5 capas (base, tools, delegation, rules, examples).
+- Restauración automática de chats y scheduled jobs interrumpidos al reiniciar sesión.
+- CLI interactiva para operar y testear sin UI, con HITL approval prompts.
 - Gate de decisión para saber cuándo pasar a UI/monorepo.
 
 ## Configuración del modelo
 
-Configuración explícita por agente en `packages/core/agents.ts` (`AGENT_MODEL_CONFIG`).
+Agentes definidos via builder pattern en `packages/core/agents.ts` usando `defineAgent()`.
 Hoy, los tres agentes usan `openrouter/google/gemini-3.1-flash-lite-preview`.
 
 | Agent ID | Provider | Model ID |
@@ -85,7 +88,7 @@ Abre http://localhost:3000 para ver la interfaz web:
 - **Panel de mensajes**: conversación filtrada por agente activo, con streaming en tiempo real.
 - **Panel de trazas**: últimas 50 trazas en tiempo real vía WebSocket.
 - **WebSocket** en `/ws`: deltas de streaming, lifecycle de chats y push de trazas.
-- **REST API**: `/api/agents`, `/api/chats`, `/api/threads`, `/api/traces`.
+- **REST API**: `/api/agents`, `/api/chats`, `/api/threads`, `/api/traces`, `/api/jobs`.
 
 La CLI (`bun run start`) y el servidor UI son entradas independientes que comparten `MultiAgentRuntime`.
 
@@ -97,6 +100,8 @@ La CLI (`bun run start`) y el servidor UI son entradas independientes que compar
 - `/chats` (alias: `/jobs`)
 - `/chat <chatId> [--json]` (aliases: `/job`, `/task`) — transcript live; con `--json` devuelve inspección raw
 - `/close <chatId>` (alias: `/cancel`)
+- `/scheduled [jobId]` — lista scheduled jobs o inspecciona uno
+- `/cancel-job <jobId>` — cancela un scheduled job
 - `/threads`
 - `/thread <threadId>`
 - `/traces [n]`
@@ -198,11 +203,56 @@ Cada envelope de hilo incluye metadatos de relación:
 - `apps/web/app.css`: estilos de la UI.
 - `packages/core/runtime.ts`: runtime multiagente, enrutado de mensajes, correlación de IDs y trazas.
 - `packages/core/tools.ts`: tools del orquestador (`list_agents`, `delegate`, `delegate_task`, `get_chat_status`, `get_chat_result`, `close_chat`).
+- `packages/core/agents.ts`: definición de agentes via builder pattern (`defineAgent()`).
+- `packages/core/agent-builder.ts`: builder pattern para declarar agentes.
+- `packages/core/tool-registry.ts`: registro y resolución de tools con glob patterns, ciclo de vida MCP.
+- `packages/core/tool-middleware.ts`: `wrapTool` con permisos, HITL approval y hooks.
+- `packages/core/prompt-compiler.ts`: compilador de system prompt en 5 capas.
+- `packages/core/delegation.ts`: delegate tool con control de depth, whitelist y ciclos.
+- `packages/core/scheduler.ts`: cron parser, timer basado en setTimeout, persistencia JSONL.
+- `packages/core/scheduler-tools.ts`: tools de scheduling (`schedule_task`, `list_scheduled_jobs`, `cancel_scheduled_job`).
+- `packages/core/mcp-client.ts`: interfaz `McpConnector` para servidores de tools externos.
 - `packages/core/chat-manager.ts`: gestión de chats con per-agent concurrency, cola FIFO, timeout/retry y persistencia a disco.
 - `packages/core/thread-store.ts`: persistencia JSONL de hilos, trazas y chat records.
 - `packages/core/errors.ts`: utilidades de error handling (`errorMessage`, `safeAsync`, `safeParseLine`).
-- `packages/core/contracts.ts`: contratos de `ThreadEnvelope`, `AgentChat`, `TraceEvent`.
-- `packages/core/agents.ts`: definición de agentes con configuración de modelo por agente.
+- `packages/core/contracts.ts`: contratos de `ThreadEnvelope`, `AgentChat`, `TraceEvent`, `ScheduledJob`.
+
+## Agent Builder Pattern
+
+Los agentes se definen declarativamente:
+
+```ts
+import { defineAgent } from "./packages/core/agent-builder";
+
+const agent = defineAgent("myAgent")
+  .name("My Agent")
+  .role("Does things")
+  .model("openrouter", "google/gemini-3.1-flash-lite-preview")
+  .systemPrompt("You are a helpful agent.")
+  .capabilities(["cap1", "cap2"])
+  .tools(["tool1", "tool2"])
+  .permissions({ "tool1": "allow" })
+  .maxConcurrency(1)
+  .build();
+```
+
+## Tool Permissions & HITL
+
+Las tools tienen un `defaultPermission`: `"allow"`, `"deny"`, o `"hitl"`.
+Orden de resolución: runtime override → agent permissions → exact match → glob pattern → default.
+
+Cuando el permiso resuelve a `"hitl"`, se llama al `HITLHandler` para pedir aprobación:
+
+- **CLI**: prompt via readline en terminal
+- **Web**: request/response via WebSocket con timeout configurable
+
+## Scheduler
+
+El runtime incluye un `Scheduler` para ejecución cron, one-time y delayed:
+
+- Jobs persisten a JSONL y se restauran al reiniciar.
+- Tools de agente: `schedule_task` (hitl), `list_scheduled_jobs` (allow), `cancel_scheduled_job` (hitl).
+- Schedules configurables via `RuntimeOptions.schedules`.
 
 ## Comportamientos esperados
 

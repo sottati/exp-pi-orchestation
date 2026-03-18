@@ -119,7 +119,15 @@ This repository is a terminal-first multi-agent runtime prototype.
 - UI gate entry point: `apps/backend/ui-gate.ts`
 - Runtime: `packages/core/runtime.ts`
 - Tools: `packages/core/tools.ts`
-- Agents: `packages/core/agents.ts` (per-agent model config map)
+- Agents: `packages/core/agents.ts` (agent definitions via builder pattern)
+- Agent builder: `packages/core/agent-builder.ts` (`defineAgent().name().model().tools().build()`)
+- Tool registry: `packages/core/tool-registry.ts` (register/resolve tools with glob patterns, MCP lifecycle)
+- Tool middleware: `packages/core/tool-middleware.ts` (`wrapTool` with permission check, HITL approval, hooks)
+- Prompt compiler: `packages/core/prompt-compiler.ts` (5-layer system prompt assembly)
+- Delegation: `packages/core/delegation.ts` (restricted delegate tool with depth/whitelist/cycle checks)
+- Scheduler: `packages/core/scheduler.ts` (cron parser, setTimeout-based timer, JSONL persistence)
+- Scheduler tools: `packages/core/scheduler-tools.ts` (`schedule_task`, `list_scheduled_jobs`, `cancel_scheduled_job`)
+- MCP client: `packages/core/mcp-client.ts` (`McpConnector` interface for external tool servers)
 - Chat orchestration: `packages/core/chat-manager.ts` (per-agent concurrency with FIFO queue, disk persistence and restore)
 - Persistence: `packages/core/thread-store.ts` (threads, traces, chat records — atomic append, fault-tolerant JSONL)
 - Error utilities: `packages/core/errors.ts` (`errorMessage`, `safeAsync`, `safeParseLine`)
@@ -153,6 +161,8 @@ Inside the CLI, useful commands:
 - `/traces [n]`
 - `/threads`, `/thread <threadId>`
 - `/chats`, `/chat <chatId> [--json]`, `/close <chatId>`
+- `/scheduled [jobId]` — list scheduled jobs or inspect one
+- `/cancel-job <jobId>` — cancel a scheduled job
 - Legacy aliases: `/jobs`=/chats, `/job`=`/task`=/chat, `/cancel`=/close
 
 ## Data and Trace Expectations
@@ -203,12 +213,45 @@ When adding or changing runtime behavior, preserve correlation IDs:
 
 ## Model Configuration
 
-Agents use lazy model initialization with explicit per-agent config in `AGENT_MODEL_CONFIG` inside `packages/core/agents.ts`.
+Agents are defined via the builder pattern in `packages/core/agents.ts` using `defineAgent()`.
 Current setup keeps same model for all agents.
 
 - `orchestrator` → `openrouter/google/gemini-3.1-flash-lite-preview`
 - `code` → `openrouter/google/gemini-3.1-flash-lite-preview`
 - `math` → `openrouter/google/gemini-3.1-flash-lite-preview`
+
+## Agent Builder Pattern
+
+Define agents declaratively:
+
+```ts
+const agent = defineAgent("myAgent")
+  .name("My Agent")
+  .role("Does things")
+  .model("openrouter", "google/gemini-3.1-flash-lite-preview")
+  .systemPrompt("You are a helpful agent.")
+  .capabilities(["cap1", "cap2"])
+  .tools(["tool1", "tool2"])         // tool refs resolved from ToolRegistry
+  .permissions({ "tool1": "allow" }) // per-tool permission overrides
+  .maxConcurrency(1)
+  .build();
+```
+
+## Tool Permissions & HITL
+
+Tools have a `defaultPermission` of `"allow"`, `"deny"`, or `"hitl"`.
+Resolution order: runtime override → agent permissions → exact match → glob pattern → default.
+
+When permission resolves to `"hitl"`, the `HITLHandler` is called to prompt the user for approval.
+- CLI: readline prompt in terminal
+- Web: WebSocket request/response with configurable timeout
+
+## Scheduler
+
+The runtime includes a `Scheduler` for cron, one-time, and delayed task execution.
+- Jobs persist to JSONL and restore on restart.
+- Agent tools: `schedule_task` (hitl), `list_scheduled_jobs` (allow), `cancel_scheduled_job` (hitl).
+- Config-driven schedules can be passed via `RuntimeOptions.schedules`.
 
 ## Debug Checklist
 
@@ -239,10 +282,13 @@ Serves on http://localhost:3000.
 
 ### WebSocket protocol
 **Client → Server:**
+
 - `{ type: "chat", toAgentId, content }` — send message to agent
 - `{ type: "close_chat", chatId }` — cancel a chat
+- `{ type: "hitl_response", reqId, approved, modifiedParams? }` — respond to HITL request
 
 **Server → Client:**
+
 - `{ type: "agents", agents }` — on connect
 - `{ type: "chat_sending", runId, toAgentId }` — before chat starts
 - `{ type: "stream_delta", runId, delta }` — streaming text token
@@ -250,6 +296,8 @@ Serves on http://localhost:3000.
 - `{ type: "stream_error", runId, error }` — chat failed
 - `{ type: "trace", event }` — real-time trace push
 - `{ type: "chat_lifecycle", chat }` — chat state change
+- `{ type: "job_lifecycle", job }` — scheduled job state change
+- `{ type: "hitl_request", reqId, agentId, toolName, params, timeout }` — HITL approval request
 
 ### REST API
 | Route | Method | Description |
@@ -260,6 +308,8 @@ Serves on http://localhost:3000.
 | `/api/threads` | GET | List thread IDs |
 | `/api/threads/:id` | GET | Get thread envelopes |
 | `/api/traces` | GET | Get all traces |
+| `/api/jobs` | GET | List scheduled jobs |
+| `/api/jobs/:id` | GET/DELETE | Inspect or cancel scheduled job |
 
 ## UI / Monorepo Decision Rule
 
