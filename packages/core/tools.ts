@@ -1,6 +1,7 @@
 import { type Agent, type AgentTool } from "@mariozechner/pi-agent-core";
 import { Type, type Static } from "@sinclair/typebox";
 import type { AgentChat, BaseAgentId, RunContext } from "./contracts";
+import type { ToolEntry } from "./tool-registry";
 
 export interface SpecialistDescriptor {
     id: string;
@@ -279,4 +280,17 @@ export function createOrchestratorTools(deps: OrchestratorToolDeps): AgentTool<a
         getChatResultTool as AgentTool<any>,
         closeChatTool as AgentTool<any>,
     ];
+}
+
+export function createOrchestratorToolEntries(deps: OrchestratorToolDeps): ToolEntry[] {
+    const agentTools = createOrchestratorTools(deps);
+    return agentTools.map((tool) => ({
+        name: tool.name,
+        source: "local" as const,
+        description: tool.description,
+        parameters: tool.parameters,
+        execute: tool.execute,
+        defaultPermission: "allow" as const,
+        available: true,
+    }));
 }
