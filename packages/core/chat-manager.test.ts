@@ -165,3 +165,23 @@ test("restore closes interrupted chats", async () => {
 
     expect(persisted.length).toBe(2);
 });
+
+test("pauseTimeout prevents chat timeout during HITL", async () => {
+  const manager = new ChatManager();
+  let hitlResolved = false;
+
+  const chat = manager.createChat(
+    { ...baseInput({ task: "hitl-test" }), timeoutMs: 50 },
+    async (_ctx, chatRecord) => {
+      manager.pauseTimeout(chatRecord.chatId);
+      await Bun.sleep(150);
+      manager.resumeTimeout(chatRecord.chatId);
+      hitlResolved = true;
+      return "done";
+    }
+  );
+
+  await waitUntil(() => manager.getChat(chat.chatId)?.status === "closed");
+  expect(hitlResolved).toBe(true);
+  expect(manager.getChat(chat.chatId)?.closeReason).toBe("completed");
+});
