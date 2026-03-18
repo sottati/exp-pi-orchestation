@@ -1,13 +1,12 @@
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import type { BaseAgentId } from "../../packages/core/contracts";
 import { errorMessage } from "../../packages/core/errors";
 import type { ChatInspection } from "../../packages/core/runtime";
 import { MultiAgentRuntime } from "../../packages/core/runtime";
 
 function cliError(err: unknown) { console.error("Error:", errorMessage(err)); }
 
-type ChatTarget = Exclude<BaseAgentId, "user">;
+type ChatTarget = string;
 const VALID_SMOKES = ["math", "code", "orchestrator"] as const;
 
 function parseArgs(args: string[]) {

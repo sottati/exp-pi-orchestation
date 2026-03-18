@@ -54,6 +54,55 @@ test("ScheduledJob has required fields", () => {
   expect(job.schedule.type).toBe("cron");
 });
 
+test("ScheduledJob supports 'once' schedule variant", () => {
+  const now = Date.now();
+  const job: ScheduledJob = {
+    jobId: "job_2",
+    sessionId: "s1",
+    createdBy: "orchestrator",
+    targetAgentId: "math",
+    task: "One-time report",
+    schedule: { type: "once", runAt: now + 60_000 },
+    status: "completed",
+    maxRuns: 1,
+    runCount: 1,
+    createdAt: now,
+    updatedAt: now,
+    lastRunAt: now + 60_000,
+    nextRunAt: undefined,
+    error: undefined,
+  };
+  expect(job.schedule.type).toBe("once");
+  expect(job.schedule.runAt).toBeGreaterThan(now);
+  expect(job.status).toBe("completed");
+  expect(job.maxRuns).toBe(1);
+});
+
+test("ScheduledJob supports 'delay' schedule variant with optional fields", () => {
+  const now = Date.now();
+  const job: ScheduledJob = {
+    jobId: "job_3",
+    sessionId: "s1",
+    createdBy: "orchestrator",
+    targetAgentId: "code",
+    task: "Delayed task",
+    schedule: { type: "delay", delayMs: 5000 },
+    status: "failed",
+    runCount: 2,
+    maxRuns: 3,
+    createdAt: now,
+    updatedAt: now,
+    lastRunAt: now - 1000,
+    error: "timeout exceeded",
+  };
+  expect(job.schedule.type).toBe("delay");
+  expect(job.schedule.delayMs).toBe(5000);
+  expect(job.status).toBe("failed");
+  expect(job.error).toBe("timeout exceeded");
+  expect(job.maxRuns).toBe(3);
+  expect(job.lastRunAt).toBeDefined();
+});
+
 test("TraceEvent type includes new event types", () => {
   const types: TraceEvent["type"][] = [
     "run_started", "run_completed", "run_failed",

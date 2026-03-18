@@ -9,7 +9,7 @@ import { createOrchestratorTools, type SpecialistRegistry } from "./tools";
 
 interface RouteMessageInput {
     fromAgentId: BaseAgentId;
-    toAgentId: Exclude<BaseAgentId, "user">;
+    toAgentId: string;
     content: string;
     initiator: Initiator;
     runContext: RunContext;
@@ -41,7 +41,7 @@ export interface ChatInspection {
 }
 
 export interface ChatInput {
-    toAgentId: Exclude<BaseAgentId, "user">;
+    toAgentId: string;
     content: string;
     fromAgentId?: BaseAgentId;
     onAgentEvent?: (event: AgentEvent) => void;
@@ -408,7 +408,7 @@ export class MultiAgentRuntime {
                             : chat.task;
                         const output = await this.routeMessage({
                             fromAgentId: ORCHESTRATOR_ID,
-                            toAgentId: input.agentId as Exclude<BaseAgentId, "user">,
+                            toAgentId: input.agentId,
                             content,
                             initiator: "orchestrator",
                             runContext: input.runContext,
@@ -435,7 +435,7 @@ export class MultiAgentRuntime {
         });
     }
 
-    private createAgentForRoute(toAgentId: Exclude<BaseAgentId, "user">, runContext: RunContext): Agent {
+    private createAgentForRoute(toAgentId: string, runContext: RunContext): Agent {
         if (toAgentId === ORCHESTRATOR_ID) {
             return createOrchestratorAgent(this.createOrchestratorToolsForRun(runContext));
         }

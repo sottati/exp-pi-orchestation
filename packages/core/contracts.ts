@@ -96,20 +96,24 @@ export interface TraceEvent {
     details?: Record<string, unknown>;
 }
 
-export type ScheduledJobStatus = "active" | "paused" | "cancelled";
-
 export interface ScheduledJob {
     jobId: string;
     sessionId: string;
     createdBy: string;
     targetAgentId: string;
     task: string;
-    schedule: { type: "cron"; cron: string } | { type: "interval"; intervalMs: number } | { type: "once"; runAt: number };
-    status: ScheduledJobStatus;
+    schedule: {
+        type: "cron" | "once" | "delay";
+        cron?: string;
+        runAt?: number;
+        delayMs?: number;
+    };
+    status: "active" | "paused" | "completed" | "failed";
+    maxRuns?: number;
     runCount: number;
     createdAt: number;
     updatedAt: number;
     lastRunAt?: number;
     nextRunAt?: number;
-    lastError?: string;
+    error?: string;
 }
