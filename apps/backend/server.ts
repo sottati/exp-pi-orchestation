@@ -2,16 +2,52 @@
 import index from "../web/index.html";
 import { MultiAgentRuntime } from "../../packages/core/runtime";
 import type { AgentEvent } from "@mariozechner/pi-agent-core";
-import type { TraceEvent, AgentChat, BaseAgentId } from "../../packages/core/contracts";
+import type { TraceEvent, AgentChat, ScheduledJob, BaseAgentId } from "../../packages/core/contracts";
 import { errorMessage } from "../../packages/core/errors";
+import type { HITLHandler } from "../../packages/core/tool-middleware";
+import { createAgentDefinitions } from "../../packages/core/agents";
 
 const sessionIdx = process.argv.indexOf("--session");
 const sessionId = sessionIdx !== -1 ? process.argv[sessionIdx + 1] : "default";
 
-const runtime = new MultiAgentRuntime(sessionId);
-
 type WsClient = import("bun").ServerWebSocket<unknown>;
 const clients = new Set<WsClient>();
+
+const hitlPending = new Map<string, (response: { approved: boolean; modifiedParams?: Record<string, unknown> }) => void>();
+
+function createWebHitlHandler(wsClients: Set<WsClient>): HITLHandler {
+    return (request) => {
+        return new Promise((resolve) => {
+            const reqId = crypto.randomUUID();
+            const msg = JSON.stringify({ type: "hitl_request", reqId, ...request });
+            for (const ws of wsClients) {
+                try { ws.send(msg); } catch { /* ignore */ }
+            }
+
+            let resolved = false;
+            const timeout = setTimeout(() => {
+                if (!resolved) {
+                    resolved = true;
+                    hitlPending.delete(reqId);
+                    resolve({ approved: false });
+                }
+            }, request.timeout);
+
+            hitlPending.set(reqId, (response) => {
+                if (resolved) return;
+                resolved = true;
+                clearTimeout(timeout);
+                resolve(response);
+            });
+        });
+    };
+}
+
+const runtime = new MultiAgentRuntime({
+    sessionId,
+    agents: createAgentDefinitions(),
+    hitlHandler: createWebHitlHandler(clients),
+});
 
 function broadcast(msg: object) {
     const text = JSON.stringify(msg);
@@ -34,6 +70,14 @@ const _appendChatRecord = runtime.store.appendChatRecord.bind(runtime.store);
 (runtime.store as any).appendChatRecord = async (chat: AgentChat) => {
     await _appendChatRecord(chat);
     broadcast({ type: "chat_lifecycle", chat });
+};
+
+// Monkey-patch for job lifecycle push
+const _appendJob = runtime.store.appendJob.bind(runtime.store);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+(runtime.store as any).appendJob = async (job: ScheduledJob) => {
+    await _appendJob(job);
+    broadcast({ type: "job_lifecycle", job });
 };
 
 const PORT = 3000;
@@ -74,6 +118,19 @@ Bun.serve({
         },
         "/api/traces": {
             GET: async () => Response.json(await runtime.getTraces()),
+        },
+        "/api/jobs": {
+            GET: () => Response.json(runtime.scheduler?.listJobs() ?? []),
+        },
+        "/api/jobs/:id": {
+            GET: (req) => {
+                const job = runtime.scheduler?.getJob(req.params.id);
+                return job ? Response.json(job) : Response.json({ error: "not found" }, { status: 404 });
+            },
+            DELETE: (req) => {
+                const removed = runtime.scheduler?.removeJob(req.params.id);
+                return removed ? Response.json({ ok: true }) : Response.json({ error: "not found" }, { status: 404 });
+            },
         },
     },
     websocket: {
@@ -143,6 +200,16 @@ Bun.serve({
 
             } else if (msg.type === "close_chat") {
                 runtime.closeChat(msg.chatId as string);
+            } else if (msg.type === "hitl_response") {
+                const reqId = msg.reqId as string;
+                const resolver = hitlPending.get(reqId);
+                if (resolver) {
+                    hitlPending.delete(reqId);
+                    resolver({
+                        approved: msg.approved as boolean,
+                        modifiedParams: msg.modifiedParams as Record<string, unknown> | undefined,
+                    });
+                }
             }
         },
     },
