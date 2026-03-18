@@ -1,11 +1,16 @@
 import type { Agent, AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
-import { createOrchestratorAgent, createSpecialistRegistry, ORCHESTRATOR_ID } from "./agents";
+import { createOrchestratorAgent, createSpecialistRegistry, createAgentDefinitions, ORCHESTRATOR_ID } from "./agents";
 import type { AgentChat, BaseAgentId, Initiator, RunContext, ThreadEnvelope, TraceEvent } from "./contracts";
 import { errorMessage } from "./errors";
 import { createId, now } from "./ids";
 import { ChatManager } from "./chat-manager";
 import { ThreadStore } from "./thread-store";
-import { createOrchestratorTools, type SpecialistRegistry } from "./tools";
+import { createOrchestratorTools, createOrchestratorToolEntries, type SpecialistRegistry } from "./tools";
+import { ToolRegistry } from "./tool-registry";
+import { type AgentDefinition } from "./agent-builder";
+import { type HITLHandler, wrapTool, resolvePermission } from "./tool-middleware";
+import { compileSystemPrompt } from "./prompt-compiler";
+import { Scheduler } from "./scheduler";
 
 interface RouteMessageInput {
     fromAgentId: BaseAgentId;
@@ -103,16 +108,43 @@ function createThreadId(sessionId: string, a: BaseAgentId, b: BaseAgentId): stri
     return `${sessionId}::${[a, b].sort().join("<->")}`;
 }
 
+export interface RuntimeOptions {
+    sessionId?: string;
+    agents?: AgentDefinition[];
+    hitlHandler?: HITLHandler;
+    schedules?: Array<{ id: string; cron: string; agentId: string; task: string }>;
+}
+
+const denyAllHandler: HITLHandler = async () => ({ approved: false });
+
 export class MultiAgentRuntime {
     readonly sessionId: string;
     readonly store: ThreadStore;
     readonly chatManager: ChatManager;
     readonly specialistRegistry: SpecialistRegistry;
+    readonly toolRegistry: ToolRegistry;
+    readonly agentDefs: Map<string, AgentDefinition>;
+    readonly hitlHandler: HITLHandler;
+    readonly scheduler: Scheduler;
 
-    constructor(sessionId = "default") {
-        this.sessionId = sessionId;
-        this.store = new ThreadStore({ sessionId });
+    constructor(optionsOrSessionId?: RuntimeOptions | string) {
+        const options: RuntimeOptions = typeof optionsOrSessionId === "string"
+            ? { sessionId: optionsOrSessionId }
+            : optionsOrSessionId ?? {};
+
+        this.sessionId = options.sessionId ?? "default";
+        this.store = new ThreadStore({ sessionId: this.sessionId });
+        this.hitlHandler = options.hitlHandler ?? denyAllHandler;
+
+        // Agent definitions
+        const agentDefList = options.agents ?? createAgentDefinitions();
+        this.agentDefs = new Map(agentDefList.map(d => [d.id, d]));
+
+        // Backward-compatible specialist registry (used by orchestrator tools)
         this.specialistRegistry = createSpecialistRegistry();
+
+        // Tool registry
+        this.toolRegistry = new ToolRegistry();
 
         this.chatManager = new ChatManager({
             persistChat: (chat) => this.store.appendChatRecord(chat),
@@ -221,20 +253,48 @@ export class MultiAgentRuntime {
         if (!codeSpecialist || !mathSpecialist) {
             throw new Error("Specialists 'code' and 'math' are required in registry.");
         }
+
+        // Scheduler
+        this.scheduler = new Scheduler({
+            persistJob: (job) => this.store.appendJob(job),
+            restoreJobs: () => this.store.getJobRecords(),
+            executeTask: async (agentId, task) => {
+                const result = await this.chat({ toAgentId: agentId, content: task });
+                return result.answer;
+            },
+            trace: async (event) => {
+                await this.trace({
+                    ...event,
+                    sessionId: this.sessionId,
+                } as any);
+            },
+        });
+
+        // Config-driven schedules
+        if (options.schedules) {
+            for (const sched of options.schedules) {
+                this.scheduler.addJob({
+                    sessionId: this.sessionId,
+                    createdBy: "runtime",
+                    targetAgentId: sched.agentId,
+                    task: sched.task,
+                    schedule: { type: "cron", cron: sched.cron },
+                });
+            }
+        }
+
+        // Restore persisted jobs
+        void this.scheduler.restore();
     }
 
     listAgents() {
-        const specialists = Object.values(this.specialistRegistry).map((agent) => ({
-            id: agent.id as BaseAgentId,
-            name: agent.name,
-            role: agent.role,
-            capabilities: agent.capabilities,
-            maxConcurrency: agent.maxConcurrency,
+        return [...this.agentDefs.values()].map((def) => ({
+            id: def.id,
+            name: def.name,
+            role: def.role,
+            capabilities: def.capabilities,
+            maxConcurrency: def.maxConcurrency,
         }));
-        return [
-            { id: ORCHESTRATOR_ID, name: "Orchestrator", role: "Routes and delegates tasks.", capabilities: ["routing"], maxConcurrency: Infinity },
-            ...specialists,
-        ];
     }
 
     listChats(): AgentChat[] {
