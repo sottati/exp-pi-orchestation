@@ -37,8 +37,8 @@ describe("createRestrictedDelegateTool", () => {
     });
 
     const result = await tool.execute("tc1", { agentId: "math", task: "compute 2+2" });
-    expect(result.content[0].text).toContain("math");
-    expect(result.content[0].text).toContain("chatId");
+    expect((result.content[0] as any).text).toContain("math");
+    expect((result.content[0] as any).text).toContain("chatId");
   });
 
   test("rejects target not in allowedTargets", async () => {
@@ -52,7 +52,7 @@ describe("createRestrictedDelegateTool", () => {
     });
 
     const result = await tool.execute("tc1", { agentId: "search", task: "find stuff" });
-    expect(result.content[0].text).toContain("not allowed");
+    expect((result.content[0] as any).text).toContain("not allowed");
   });
 
   test("rejects when maxDepth exceeded", async () => {
@@ -66,7 +66,7 @@ describe("createRestrictedDelegateTool", () => {
     });
 
     const result = await tool.execute("tc1", { agentId: "math", task: "compute" });
-    expect(result.content[0].text).toContain("depth");
+    expect((result.content[0] as any).text).toContain("depth");
   });
 
   test("detects cycle in delegationChain", async () => {
@@ -81,7 +81,7 @@ describe("createRestrictedDelegateTool", () => {
 
     // "code" is already in the chain -> cycle
     const result = await tool.execute("tc1", { agentId: "code", task: "refactor" });
-    expect(result.content[0].text).toContain("cycle");
+    expect((result.content[0] as any).text).toContain("cycle");
   });
 
   test("tool name is 'delegate' (not delegate_task)", () => {

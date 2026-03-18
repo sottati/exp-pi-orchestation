@@ -11,7 +11,7 @@ export function parseCronField(field: string, min: number, max: number): number[
     let rangeStr = part;
 
     if (part.includes("/")) {
-      [rangeStr, stepStr] = part.split("/");
+      [rangeStr = "", stepStr] = part.split("/");
     }
 
     const step = stepStr ? parseInt(stepStr, 10) : 1;
@@ -21,7 +21,7 @@ export function parseCronField(field: string, min: number, max: number): number[
     if (rangeStr === "*") {
       // default range
     } else if (rangeStr.includes("-")) {
-      const [s, e] = rangeStr.split("-");
+      const [s = "0", e = "0"] = rangeStr.split("-");
       start = parseInt(s, 10);
       end = parseInt(e, 10);
     } else {
@@ -46,14 +46,14 @@ export function nextCronTick(pattern: string, from: Date): Date {
   const fields = pattern.trim().split(/\s+/);
   if (fields.length !== 5) throw new Error(`Invalid cron pattern: expected 5 fields, got ${fields.length}`);
 
-  const minutes = parseCronField(fields[0], 0, 59);
-  const hours = parseCronField(fields[1], 0, 23);
-  const daysOfMonth = parseCronField(fields[2], 1, 31);
-  const months = parseCronField(fields[3], 1, 12);
-  const daysOfWeek = parseCronField(fields[4], 0, 6);
+  const minutes = parseCronField(fields[0]!, 0, 59);
+  const hours = parseCronField(fields[1]!, 0, 23);
+  const daysOfMonth = parseCronField(fields[2]!, 1, 31);
+  const months = parseCronField(fields[3]!, 1, 12);
+  const daysOfWeek = parseCronField(fields[4]!, 0, 6);
 
-  const hasDowConstraint = fields[4] !== "*";
-  const hasDomConstraint = fields[2] !== "*";
+  const hasDowConstraint = fields[4]! !== "*";
+  const hasDomConstraint = fields[2]! !== "*";
 
   // Start searching from 1 minute after `from`
   const candidate = new Date(from.getTime());

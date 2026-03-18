@@ -40,21 +40,24 @@ export function createRestrictedDelegateTool(options: RestrictedDelegateOptions)
       // 1. Check depth
       if (currentDepth >= maxDepth) {
         return {
-          content: [{ type: "text", text: `Cannot delegate: max depth ${maxDepth} reached.` }],
+          content: [{ type: "text" as const, text: `Cannot delegate: max depth ${maxDepth} reached.` }],
+          details: {},
         };
       }
 
       // 2. Check target whitelist
       if (!allowedTargets.includes(params.agentId)) {
         return {
-          content: [{ type: "text", text: `Agent '${params.agentId}' is not allowed. Allowed: ${allowedTargets.join(", ")}.` }],
+          content: [{ type: "text" as const, text: `Agent '${params.agentId}' is not allowed. Allowed: ${allowedTargets.join(", ")}.` }],
+          details: {},
         };
       }
 
       // 3. Check cycle
       if (delegationChain.includes(params.agentId)) {
         return {
-          content: [{ type: "text", text: `Delegation cycle detected: ${[...delegationChain, params.agentId].join(" -> ")}.` }],
+          content: [{ type: "text" as const, text: `Delegation cycle detected: ${[...delegationChain, params.agentId].join(" -> ")}.` }],
+          details: {},
         };
       }
 

@@ -1,11 +1,12 @@
 import type { TSchema } from "@sinclair/typebox";
 import { Type } from "@sinclair/typebox";
 import type { Permission } from "./contracts";
+import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 
 export type ToolExecuteFn = (
   toolCallId: string,
   params: Record<string, unknown>,
-) => Promise<{ content: Array<{ type: string; text: string }>; details?: Record<string, unknown> }>;
+) => Promise<AgentToolResult<any>>;
 
 export interface ToolEntry {
   name: string;
@@ -108,7 +109,7 @@ export class ToolRegistry {
         parameters,
         execute: async (_toolCallId, params) => {
           const result = await connector.callTool(desc.name, params);
-          return { content: [{ type: "text", text: result }] };
+          return { content: [{ type: "text" as const, text: result }], details: {} };
         },
         defaultPermission: "allow",
         available: true,

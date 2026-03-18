@@ -30,7 +30,7 @@ function fakeTool(name: string, description: string): AgentTool<any> {
     label: name,
     description,
     parameters: Type.Object({}),
-    execute: async () => ({ content: [{ type: "text", text: "ok" }] }),
+    execute: async () => ({ content: [{ type: "text" as const, text: "ok" }], details: {} }),
   };
 }
 

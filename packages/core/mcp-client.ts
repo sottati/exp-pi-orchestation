@@ -41,7 +41,7 @@ export function mcpToolsToEntries(
 
     const execute: ToolExecuteFn = async (_toolCallId, params) => {
       const result = await callTool(t.name, params);
-      return { content: [{ type: "text", text: result }] };
+      return { content: [{ type: "text" as const, text: result }], details: {} };
     };
 
     return {

@@ -32,7 +32,7 @@ test("appendJob and getJobRecords round-trip", async () => {
 
   const records = await store.getJobRecords();
   expect(records.length).toBe(1);
-  expect(records[0].jobId).toBe("job_1");
+  expect(records[0]!.jobId).toBe("job_1");
 });
 
 test("getJobRecords deduplicates by jobId (last wins)", async () => {
@@ -42,8 +42,8 @@ test("getJobRecords deduplicates by jobId (last wins)", async () => {
 
   const records = await store.getJobRecords();
   expect(records.length).toBe(1);
-  expect(records[0].status).toBe("completed");
-  expect(records[0].runCount).toBe(3);
+  expect(records[0]!.status).toBe("completed");
+  expect(records[0]!.runCount).toBe(3);
 });
 
 test("getJobRecords returns empty array when no file", async () => {

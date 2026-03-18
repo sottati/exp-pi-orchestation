@@ -10,6 +10,7 @@ function makeTool(overrides: Partial<ToolEntry> = {}): ToolEntry {
     parameters: overrides.parameters ?? Type.Object({}),
     execute: overrides.execute ?? (async () => ({
       content: [{ type: "text" as const, text: "ok" }],
+      details: {},
     })),
     defaultPermission: overrides.defaultPermission ?? "allow",
     available: overrides.available ?? true,
@@ -45,7 +46,7 @@ describe("ToolRegistry", () => {
     registry.register(makeTool({ name: "write_file" }));
     const resolved = registry.resolve(["read_file"]);
     expect(resolved.length).toBe(1);
-    expect(resolved[0].name).toBe("read_file");
+    expect(resolved[0]!.name).toBe("read_file");
   });
 
   test("resolve supports glob pattern with *", () => {
@@ -67,7 +68,7 @@ describe("ToolRegistry", () => {
     registry.register(makeTool({ name: "mcp:fs/write", available: true }));
     const resolved = registry.resolve(["mcp:fs/*"]);
     expect(resolved.length).toBe(1);
-    expect(resolved[0].name).toBe("mcp:fs/write");
+    expect(resolved[0]!.name).toBe("mcp:fs/write");
   });
 
   test("resolve deduplicates when multiple refs match same tool", () => {

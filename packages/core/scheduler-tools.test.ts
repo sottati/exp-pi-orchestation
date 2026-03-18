@@ -53,19 +53,19 @@ describe("createSchedulerToolEntries", () => {
     const ok = await scheduleTool.execute("tc1", {
       targetAgentId: "math", task: "compute", cron: "* * * * *",
     });
-    expect(ok.content[0].text).toContain("Scheduled");
+    expect((ok.content[0] as any).text).toContain("Scheduled");
 
     // Self is always allowed
     const self = await scheduleTool.execute("tc2", {
       targetAgentId: "code", task: "self task", cron: "0 * * * *",
     });
-    expect(self.content[0].text).toContain("Scheduled");
+    expect((self.content[0] as any).text).toContain("Scheduled");
 
     // Not allowed target
     const denied = await scheduleTool.execute("tc3", {
       targetAgentId: "search", task: "find", cron: "0 0 * * *",
     });
-    expect(denied.content[0].text).toContain("not allowed");
+    expect((denied.content[0] as any).text).toContain("not allowed");
 
     scheduler.shutdown();
   });
@@ -84,7 +84,7 @@ describe("createSchedulerToolEntries", () => {
     });
     const listTool = entries.find(e => e.name === "list_scheduled_jobs")!;
     const result = await listTool.execute("tc1", {});
-    expect(result.content[0].text).toContain("code");
+    expect((result.content[0] as any).text).toContain("code");
     scheduler.shutdown();
   });
 });

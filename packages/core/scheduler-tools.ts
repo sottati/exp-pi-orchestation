@@ -29,7 +29,8 @@ export function createSchedulerToolEntries(opts: SchedulerToolOptions): ToolEntr
       // Validate target: must be self or in allowedTargets
       if (target !== callerAgentId && allowedTargets !== null && !allowedTargets.includes(target)) {
         return {
-          content: [{ type: "text", text: `Target '${target}' is not allowed. Allowed: self (${callerAgentId}), ${(allowedTargets ?? []).join(", ")}.` }],
+          content: [{ type: "text" as const, text: `Target '${target}' is not allowed. Allowed: self (${callerAgentId}), ${(allowedTargets ?? []).join(", ")}.` }],
+          details: {},
         };
       }
 
@@ -48,7 +49,8 @@ export function createSchedulerToolEntries(opts: SchedulerToolOptions): ToolEntr
       });
 
       return {
-        content: [{ type: "text", text: `Scheduled job ${job.jobId} for ${target}. Next run: ${job.nextRunAt ? new Date(job.nextRunAt).toISOString() : "computing"}.` }],
+        content: [{ type: "text" as const, text: `Scheduled job ${job.jobId} for ${target}. Next run: ${job.nextRunAt ? new Date(job.nextRunAt).toISOString() : "computing"}.` }],
+        details: {},
       };
     },
     defaultPermission: "hitl",
@@ -63,12 +65,12 @@ export function createSchedulerToolEntries(opts: SchedulerToolOptions): ToolEntr
     execute: async () => {
       const jobs = scheduler.listJobs();
       if (jobs.length === 0) {
-        return { content: [{ type: "text", text: "No scheduled jobs." }] };
+        return { content: [{ type: "text" as const, text: "No scheduled jobs." }], details: {} };
       }
       const summary = jobs.map(j =>
         `${j.jobId}: ${j.targetAgentId} - "${j.task}" [${j.status}] next=${j.nextRunAt ? new Date(j.nextRunAt).toISOString() : "none"}`
       ).join("\n");
-      return { content: [{ type: "text", text: summary }] };
+      return { content: [{ type: "text" as const, text: summary }], details: {} };
     },
     defaultPermission: "allow",
     available: true,
@@ -84,7 +86,8 @@ export function createSchedulerToolEntries(opts: SchedulerToolOptions): ToolEntr
     execute: async (_toolCallId, params) => {
       const removed = scheduler.removeJob(params.jobId as string);
       return {
-        content: [{ type: "text", text: removed ? `Job ${params.jobId} cancelled.` : `Job ${params.jobId} not found.` }],
+        content: [{ type: "text" as const, text: removed ? `Job ${params.jobId} cancelled.` : `Job ${params.jobId} not found.` }],
+        details: {},
       };
     },
     defaultPermission: "hitl",

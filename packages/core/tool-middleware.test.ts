@@ -12,6 +12,7 @@ function fakeTool(name = "test_tool"): AgentTool<any> {
     parameters: Type.Object({ input: Type.String() }),
     execute: async (_id: string, params: any) => ({
       content: [{ type: "text" as const, text: `result:${params.input}` }],
+      details: {},
     }),
   };
 }
@@ -19,6 +20,10 @@ function fakeTool(name = "test_tool"): AgentTool<any> {
 const approveAll: HITLHandler = async () => ({ approved: true });
 const denyAll: HITLHandler = async () => ({ approved: false });
 const noopTrace = async () => {};
+
+function getText(result: { content: any[] }, idx = 0): string {
+  return (result.content[idx] as { text: string }).text;
+}
 
 describe("wrapTool", () => {
   test("allow permission passes through to original execute", async () => {
@@ -30,7 +35,7 @@ describe("wrapTool", () => {
     });
 
     const result = await wrapped.execute("tc1", { input: "hello" });
-    expect(result.content[0].text).toBe("result:hello");
+    expect(getText(result)).toBe("result:hello");
   });
 
   test("deny permission blocks execution", async () => {
@@ -42,7 +47,7 @@ describe("wrapTool", () => {
     });
 
     const result = await wrapped.execute("tc1", { input: "hello" });
-    expect(result.content[0].text).toContain("denied");
+    expect(getText(result)).toContain("denied");
   });
 
   test("hitl permission with approval passes through", async () => {
@@ -54,7 +59,7 @@ describe("wrapTool", () => {
     });
 
     const result = await wrapped.execute("tc1", { input: "hello" });
-    expect(result.content[0].text).toBe("result:hello");
+    expect(getText(result)).toBe("result:hello");
   });
 
   test("hitl permission with denial blocks execution", async () => {
@@ -66,7 +71,7 @@ describe("wrapTool", () => {
     });
 
     const result = await wrapped.execute("tc1", { input: "hello" });
-    expect(result.content[0].text).toContain("denied");
+    expect(getText(result)).toContain("denied");
   });
 
   test("hitl with modifiedParams uses new params", async () => {
@@ -83,7 +88,7 @@ describe("wrapTool", () => {
     });
 
     const result = await wrapped.execute("tc1", { input: "original" });
-    expect(result.content[0].text).toBe("result:modified");
+    expect(getText(result)).toBe("result:modified");
   });
 
   test("beforeTool hook can transform params", async () => {
@@ -98,7 +103,7 @@ describe("wrapTool", () => {
     });
 
     const result = await wrapped.execute("tc1", { input: "original" });
-    expect(result.content[0].text).toBe("result:hooked");
+    expect(getText(result)).toBe("result:hooked");
   });
 
   test("afterTool hook can transform result", async () => {
@@ -109,12 +114,13 @@ describe("wrapTool", () => {
       tracePermission: noopTrace,
       hooks: {
         afterTool: async (_name, result) => ({
-          content: [{ type: "text", text: "after-hooked" }],
+          content: [{ type: "text" as const, text: "after-hooked" }],
+          details: {},
         }),
       },
     });
 
     const result = await wrapped.execute("tc1", { input: "hello" });
-    expect(result.content[0].text).toBe("after-hooked");
+    expect(getText(result)).toBe("after-hooked");
   });
 });

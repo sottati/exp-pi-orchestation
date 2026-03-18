@@ -63,6 +63,7 @@ export function wrapTool(
       if (permission === "deny") {
         return {
           content: [{ type: "text", text: `Tool '${tool.name}' is denied for agent '${agentId}'.` }],
+          details: {},
         };
       }
 
@@ -90,6 +91,7 @@ export function wrapTool(
           if (err instanceof Error && err.message === "HITL_TIMEOUT") {
             return {
               content: [{ type: "text", text: `Approval timed out, tool '${tool.name}' denied.` }],
+              details: {},
             };
           }
           throw err;
@@ -98,6 +100,7 @@ export function wrapTool(
         if (!response.approved) {
           return {
             content: [{ type: "text", text: `Tool '${tool.name}' denied by human.` }],
+            details: {},
           };
         }
 
