@@ -128,6 +128,9 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Scheduler: `packages/core/scheduler.ts` (cron parser, setTimeout-based timer, JSONL persistence)
 - Scheduler tools: `packages/core/scheduler-tools.ts` (`schedule_task`, `list_scheduled_jobs`, `cancel_scheduled_job`)
 - MCP client: `packages/core/mcp-client.ts` (`McpConnector` interface for external tool servers)
+- Browser wrapper: `packages/core/browser.ts` (Playwright-based `browseUrl`, `searchWeb`, `interactWithPage`)
+- Explorer tools: `packages/core/explorer-tools.ts` (`browse_url`, `search_web`, `interact_page` tool entries)
+- Credential store: `packages/core/credential-store.ts` (AES-256-GCM encrypted credential storage)
 - Chat orchestration: `packages/core/chat-manager.ts` (per-agent concurrency with FIFO queue, disk persistence and restore)
 - Persistence: `packages/core/thread-store.ts` (threads, traces, chat records — atomic append, fault-tolerant JSONL)
 - Error utilities: `packages/core/errors.ts` (`errorMessage`, `safeAsync`, `safeParseLine`)
@@ -153,6 +156,7 @@ Use these project scripts:
 - `bun run smoke:math`
 - `bun run smoke:code`
 - `bun run smoke:orchestrator`
+- `bun run smoke:explorer`
 - `bun run ui:gate`
 
 Inside the CLI, useful commands:
@@ -219,6 +223,7 @@ Current setup keeps same model for all agents.
 - `orchestrator` → `openrouter/google/gemini-3.1-flash-lite-preview`
 - `code` → `openrouter/google/gemini-3.1-flash-lite-preview`
 - `math` → `openrouter/google/gemini-3.1-flash-lite-preview`
+- `explorer` → `openrouter/google/gemini-3.1-flash-lite-preview`
 
 ## Agent Builder Pattern
 

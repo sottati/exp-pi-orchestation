@@ -20,7 +20,7 @@ Necesito un snippet en C para imprimir del 1 al 10
 
 ## Qué incluye hoy
 
-- Orquestador + especialistas (`code`, `math`) en runtime único.
+- Orquestador + especialistas (`code`, `math`, `explorer`) en runtime único.
 - Toda delegación es async via chat (`delegate` tool). Sin sync path.
 - Per-agent concurrency: cada especialista tiene `maxConcurrency` slots de chat.
 - Chats con cola FIFO: si un agente está al máximo, los nuevos chats se encolan como `waiting`.
@@ -37,13 +37,14 @@ Necesito un snippet en C para imprimir del 1 al 10
 ## Configuración del modelo
 
 Agentes definidos via builder pattern en `packages/core/agents.ts` usando `defineAgent()`.
-Hoy, los tres agentes usan `openrouter/google/gemini-3.1-flash-lite-preview`.
+Hoy, los cuatro agentes usan `openrouter/google/gemini-3.1-flash-lite-preview`.
 
 | Agent ID | Provider | Model ID |
 |---|---|---|
 | `orchestrator` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
 | `code` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
 | `math` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
+| `explorer` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
 
 ## Requisitos
 
@@ -65,6 +66,7 @@ bun run typecheck
 bun run smoke:math
 bun run smoke:code
 bun run smoke:orchestrator
+bun run smoke:explorer
 bun run ui:gate
 ```
 
@@ -84,7 +86,7 @@ bun run ui -- --session demo-1
 
 Abre http://localhost:3000 para ver la interfaz web:
 
-- **Barra de agentes**: botones para cambiar entre `orchestrator`, `code`, `math`.
+- **Barra de agentes**: botones para cambiar entre `orchestrator`, `code`, `math`, `explorer`.
 - **Panel de mensajes**: conversación filtrada por agente activo, con streaming en tiempo real.
 - **Panel de trazas**: últimas 50 trazas en tiempo real vía WebSocket.
 - **WebSocket** en `/ws`: deltas de streaming, lifecycle de chats y push de trazas.
@@ -96,7 +98,7 @@ La CLI (`bun run start`) y el servidor UI son entradas independientes que compar
 
 - `/help`
 - `/agents`
-- `/use <agentId>` (`orchestrator|code|math`)
+- `/use <agentId>` (`orchestrator|code|math|explorer`)
 - `/chats` (alias: `/jobs`)
 - `/chat <chatId> [--json]` (aliases: `/job`, `/task`) — transcript live; con `--json` devuelve inspección raw
 - `/close <chatId>` (alias: `/cancel`)
@@ -105,7 +107,7 @@ La CLI (`bun run start`) y el servidor UI son entradas independientes que compar
 - `/threads`
 - `/thread <threadId>`
 - `/traces [n]`
-- `/smoke <math|code|orchestrator>`
+- `/smoke <math|code|orchestrator|explorer>`
 - `/exit`
 
 ## Modelo de delegación: Chats
@@ -212,6 +214,9 @@ Cada envelope de hilo incluye metadatos de relación:
 - `packages/core/scheduler.ts`: cron parser, timer basado en setTimeout, persistencia JSONL.
 - `packages/core/scheduler-tools.ts`: tools de scheduling (`schedule_task`, `list_scheduled_jobs`, `cancel_scheduled_job`).
 - `packages/core/mcp-client.ts`: interfaz `McpConnector` para servidores de tools externos.
+- `packages/core/browser.ts`: wrapper de Playwright para `browseUrl`, `searchWeb`, `interactWithPage`.
+- `packages/core/explorer-tools.ts`: tool entries del explorer (`browse_url`, `search_web`, `interact_page`).
+- `packages/core/credential-store.ts`: almacenamiento cifrado AES-256-GCM de credenciales.
 - `packages/core/chat-manager.ts`: gestión de chats con per-agent concurrency, cola FIFO, timeout/retry y persistencia a disco.
 - `packages/core/thread-store.ts`: persistencia JSONL de hilos, trazas y chat records.
 - `packages/core/errors.ts`: utilidades de error handling (`errorMessage`, `safeAsync`, `safeParseLine`).

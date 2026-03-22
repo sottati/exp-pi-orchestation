@@ -11,6 +11,7 @@
     "smoke:orchestrator": "bun run apps/cli/index.ts --smoke orchestrator",
     "smoke:math": "bun run apps/cli/index.ts --smoke math",
     "smoke:code": "bun run apps/cli/index.ts --smoke code",
+    "smoke:explorer": "bun run apps/cli/index.ts --smoke explorer",
     "ui:gate": "bun run apps/backend/ui-gate.ts"
   },
   "devDependencies": {
@@ -24,6 +25,7 @@
     "@mariozechner/pi-ai": "^0.57.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "playwright": "^1.58.2",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   }

@@ -1,4 +1,4 @@
-import type { Agent, AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
+import type { Agent, AgentEvent, AgentMessage, AgentTool } from "@mariozechner/pi-agent-core";
 import { createOrchestratorAgent, createSpecialistRegistry, createAgentDefinitions, ORCHESTRATOR_ID } from "./agents";
 import type { AgentChat, BaseAgentId, Initiator, RunContext, ThreadEnvelope, TraceEvent } from "./contracts";
 import { errorMessage } from "./errors";
@@ -11,6 +11,8 @@ import { type AgentDefinition } from "./agent-builder";
 import { type HITLHandler, wrapTool, resolvePermission } from "./tool-middleware";
 import { compileSystemPrompt } from "./prompt-compiler";
 import { Scheduler } from "./scheduler";
+import { createSchedulerToolEntries } from "./scheduler-tools";
+import { CredentialStore } from "./credential-store";
 
 interface RouteMessageInput {
     fromAgentId: BaseAgentId;
@@ -126,6 +128,7 @@ export class MultiAgentRuntime {
     readonly agentDefs: Map<string, AgentDefinition>;
     readonly hitlHandler: HITLHandler;
     readonly scheduler: Scheduler;
+    readonly credentialStore: CredentialStore;
 
     constructor(optionsOrSessionId?: RuntimeOptions | string) {
         const options: RuntimeOptions = typeof optionsOrSessionId === "string"
@@ -136,12 +139,20 @@ export class MultiAgentRuntime {
         this.store = new ThreadStore({ sessionId: this.sessionId });
         this.hitlHandler = options.hitlHandler ?? denyAllHandler;
 
+        // Credential store (shares base dir with thread store)
+        this.credentialStore = new CredentialStore({
+            dataDir: ".runtime-data",
+            masterPassword: process.env.MASTER_PASSWORD,
+        });
+
+        const credentialOpts = { credentialStore: this.credentialStore };
+
         // Agent definitions
-        const agentDefList = options.agents ?? createAgentDefinitions();
+        const agentDefList = options.agents ?? createAgentDefinitions(credentialOpts);
         this.agentDefs = new Map(agentDefList.map(d => [d.id, d]));
 
         // Backward-compatible specialist registry (used by orchestrator tools)
-        this.specialistRegistry = createSpecialistRegistry();
+        this.specialistRegistry = createSpecialistRegistry(credentialOpts);
 
         // Tool registry
         this.toolRegistry = new ToolRegistry();
@@ -150,8 +161,8 @@ export class MultiAgentRuntime {
             persistChat: (chat) => this.store.appendChatRecord(chat),
             restoreRecords: () => this.store.getChatRecords(),
             getMaxConcurrency: (agentId) => {
-                const specialist = this.specialistRegistry[agentId];
-                return specialist?.maxConcurrency ?? 1;
+                const def = this.agentDefs.get(agentId);
+                return def?.maxConcurrency ?? 1;
             },
             hooks: {
                 onCreated: async (chat) => {
@@ -248,10 +259,11 @@ export class MultiAgentRuntime {
             if (n > 0) console.error(`[runtime] restored ${n} interrupted chat(s) as closed`);
         });
 
-        const codeSpecialist = this.specialistRegistry.code;
-        const mathSpecialist = this.specialistRegistry.math;
-        if (!codeSpecialist || !mathSpecialist) {
-            throw new Error("Specialists 'code' and 'math' are required in registry.");
+        // Validate required agents exist
+        for (const required of ["code", "math"] as const) {
+            if (!this.agentDefs.has(required)) {
+                throw new Error(`Agent '${required}' is required but not defined.`);
+            }
         }
 
         // Scheduler
@@ -420,7 +432,7 @@ export class MultiAgentRuntime {
         }
     }
 
-    async runSmokeScenario(name: "math" | "code" | "orchestrator") {
+    async runSmokeScenario(name: "math" | "code" | "orchestrator" | "explorer") {
         if (name === "math") {
             return this.chat({ toAgentId: "math", content: "Compute (8 * 5) - (6 / 2). Return one short sentence." });
         }
@@ -428,6 +440,12 @@ export class MultiAgentRuntime {
             return this.chat({
                 toAgentId: "code",
                 content: "Create a tiny Bun TypeScript function to sum two numbers and show one usage example.",
+            });
+        }
+        if (name === "explorer") {
+            return this.chat({
+                toAgentId: "explorer",
+                content: "Search the web for 'Bun runtime latest version' and return the top 3 results as a short list.",
             });
         }
         return this.chat({
@@ -495,13 +513,70 @@ export class MultiAgentRuntime {
         });
     }
 
+    private createSchedulerToolsForRun(): AgentTool<any>[] {
+        const entries = createSchedulerToolEntries({
+            scheduler: this.scheduler,
+            sessionId: this.sessionId,
+            callerAgentId: ORCHESTRATOR_ID,
+            allowedTargets: null, // orchestrator can target any agent
+        });
+        return entries.map(entry => ({
+            name: entry.name,
+            label: entry.description,
+            description: entry.description,
+            parameters: entry.parameters,
+            execute: entry.execute,
+        } as AgentTool<any>));
+    }
+
     private createAgentForRoute(toAgentId: string, runContext: RunContext): Agent {
         if (toAgentId === ORCHESTRATOR_ID) {
-            return createOrchestratorAgent(this.createOrchestratorToolsForRun(runContext));
+            const orchTools = this.createOrchestratorToolsForRun(runContext);
+            const schedulerTools = this.createSchedulerToolsForRun();
+            return createOrchestratorAgent([...orchTools, ...schedulerTools], {
+                credentialStore: this.credentialStore,
+            });
         }
-        const specialist = this.specialistRegistry[toAgentId];
-        if (!specialist) throw new Error(`Agent '${toAgentId}' is not registered.`);
-        return specialist.createAgent();
+
+        const def = this.agentDefs.get(toAgentId);
+        if (!def) throw new Error(`Agent '${toAgentId}' is not registered.`);
+
+        // Resolve localTools → AgentTool[] with middleware (permissions, HITL)
+        const localTools: AgentTool<any>[] = (def.localTools ?? []).map(entry => {
+            const permission = resolvePermission(
+                undefined,
+                def.permissions,
+                entry.name,
+                entry.defaultPermission ?? "allow",
+            );
+            return wrapTool(
+                {
+                    name: entry.name,
+                    label: entry.description,
+                    description: entry.description,
+                    parameters: entry.parameters,
+                    execute: entry.execute,
+                } as AgentTool<any>,
+                {
+                    permission,
+                    hitlHandler: this.hitlHandler,
+                    agentId: toAgentId,
+                    tracePermission: async (info) => {
+                        await this.trace({
+                            type: "tool_start",
+                            status: "ok",
+                            runId: runContext.runId,
+                            turnId: runContext.turnId,
+                            toolName: info.toolName,
+                            details: { permission: info.permission, resolved: info.resolved },
+                        });
+                    },
+                },
+            );
+        });
+
+        const systemPrompt = compileSystemPrompt(def, localTools);
+        return def.createAgent(localTools, systemPrompt);
     }
 
     private async routeMessage(input: RouteMessageInput): Promise<RouteMessageOutput> {
