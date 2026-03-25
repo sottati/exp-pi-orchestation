@@ -12,6 +12,8 @@
     "smoke:math": "bun run apps/cli/index.ts --smoke math",
     "smoke:code": "bun run apps/cli/index.ts --smoke code",
     "smoke:explorer": "bun run apps/cli/index.ts --smoke explorer",
+    "smoke:writer": "bun run apps/cli/index.ts --smoke writer",
+    "smoke:debugger": "bun run apps/cli/index.ts --smoke debugger",
     "ui:gate": "bun run apps/backend/ui-gate.ts"
   },
   "devDependencies": {
@@ -25,6 +27,10 @@
     "@mariozechner/pi-ai": "^0.57.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "docx": "^9.6.1",
+    "exceljs": "^4.4.0",
+    "googleapis": "^171.4.0",
+    "mammoth": "^1.12.0",
     "playwright": "^1.58.2",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"

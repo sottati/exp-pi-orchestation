@@ -432,7 +432,7 @@ export class MultiAgentRuntime {
         }
     }
 
-    async runSmokeScenario(name: "math" | "code" | "orchestrator" | "explorer") {
+    async runSmokeScenario(name: "math" | "code" | "orchestrator" | "explorer" | "writer" | "debugger") {
         if (name === "math") {
             return this.chat({ toAgentId: "math", content: "Compute (8 * 5) - (6 / 2). Return one short sentence." });
         }
@@ -448,12 +448,24 @@ export class MultiAgentRuntime {
                 content: "Search the web for 'Bun runtime latest version' and return the top 3 results as a short list.",
             });
         }
+        if (name === "writer") {
+            return this.chat({
+                toAgentId: "writer",
+                content: "Write a 3-sentence changelog entry for adding a web explorer agent to a multi-agent runtime.",
+            });
+        }
+        if (name === "debugger") {
+            return this.chat({
+                toAgentId: "debugger",
+                content: "List the files in packages/core/ and read packages/core/errors.ts. Give a brief code review summary.",
+            });
+        }
         return this.chat({
             toAgentId: ORCHESTRATOR_ID,
             content: [
                 "Run a delegation demo.",
-                "Call list_agents.",
-                "Then solve (24 / 3) + (7 * 2) using delegate and then get_chat_result, and return one short sentence.",
+                "You will have to solve a mathematical problem.",
+                "Then solve (24 / 3) + (7 * 2) using delegate and then get the result, and return one short sentence.",
             ].join(" "),
         });
     }
@@ -532,8 +544,7 @@ export class MultiAgentRuntime {
     private createAgentForRoute(toAgentId: string, runContext: RunContext): Agent {
         if (toAgentId === ORCHESTRATOR_ID) {
             const orchTools = this.createOrchestratorToolsForRun(runContext);
-            const schedulerTools = this.createSchedulerToolsForRun();
-            return createOrchestratorAgent([...orchTools, ...schedulerTools], {
+            return createOrchestratorAgent([...orchTools], {
                 credentialStore: this.credentialStore,
             });
         }
@@ -574,6 +585,12 @@ export class MultiAgentRuntime {
                 },
             );
         });
+
+        // Inject scheduler tools into the secretary agent
+        if (toAgentId === "secretary") {
+            const schedulerTools = this.createSchedulerToolsForRun();
+            localTools.push(...schedulerTools);
+        }
 
         const systemPrompt = compileSystemPrompt(def, localTools);
         return def.createAgent(localTools, systemPrompt);
