@@ -131,6 +131,17 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Browser wrapper: `packages/core/browser.ts` (Playwright-based `browseUrl`, `searchWeb`, `interactWithPage`)
 - Explorer tools: `packages/core/explorer-tools.ts` (`browse_url`, `search_web`, `interact_page` tool entries)
 - Credential store: `packages/core/credential-store.ts` (AES-256-GCM encrypted credential storage)
+- Analyst tools: `packages/core/analyst-tools.ts` (`query_sqlite`, `query_supabase`, `parse_csv`, `analyze_data` tool entries)
+- Office tools: `packages/core/office-tools.ts` (`read_excel`, `write_excel` via exceljs; `read_docx`, `write_docx` via mammoth + docx)
+- Debugger tools: `packages/core/debugger-tools.ts` (`read_file`, `search_code`, `list_directory` tool entries)
+- Google auth: `packages/core/google-auth.ts` (OAuth2 helper — reads from CredentialStore domain `"google"` or env vars `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/`GOOGLE_REFRESH_TOKEN`)
+- Google Sheets tools: `packages/core/google-sheets-tools.ts` (`read_gsheet`, `write_gsheet`, `create_gsheet` — assigned to `math`)
+- Google Docs tools: `packages/core/google-docs-tools.ts` (`read_gdoc`, `write_gdoc`, `create_gdoc` — assigned to `writer`)
+- Google Drive tools: `packages/core/google-drive-tools.ts` (`drive_list`, `drive_search`, `drive_download` — assigned to `explorer`)
+- Google Mail tools: `packages/core/google-mail-tools.ts` (`gmail_search`, `gmail_read` assigned to `secretary`; `gmail_send`, `gmail_draft` assigned to `writer`)
+- Google Calendar tools: `packages/core/google-calendar-tools.ts` (`calendar_list`, `calendar_create`, `calendar_update`, `calendar_delete` — assigned to `secretary`)
+- Google Contacts tools: `packages/core/google-contacts-tools.ts` (`contacts_search`, `contacts_create` — assigned to `secretary`)
+- Google Tasks tools: `packages/core/google-tasks-tools.ts` (`tasks_list`, `tasks_create`, `tasks_complete` — assigned to `secretary`)
 - Chat orchestration: `packages/core/chat-manager.ts` (per-agent concurrency with FIFO queue, disk persistence and restore)
 - Persistence: `packages/core/thread-store.ts` (threads, traces, chat records — atomic append, fault-tolerant JSONL)
 - Error utilities: `packages/core/errors.ts` (`errorMessage`, `safeAsync`, `safeParseLine`)
@@ -157,6 +168,8 @@ Use these project scripts:
 - `bun run smoke:code`
 - `bun run smoke:orchestrator`
 - `bun run smoke:explorer`
+- `bun run smoke:writer`
+- `bun run smoke:debugger`
 - `bun run ui:gate`
 
 Inside the CLI, useful commands:
@@ -222,8 +235,11 @@ Current setup keeps same model for all agents.
 
 - `orchestrator` → `openrouter/google/gemini-3.1-flash-lite-preview`
 - `code` → `openrouter/google/gemini-3.1-flash-lite-preview`
-- `math` → `openrouter/google/gemini-3.1-flash-lite-preview`
-- `explorer` → `openrouter/google/gemini-3.1-flash-lite-preview`
+- `math` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: analyst tools + `read_excel`, `write_excel`, `read_gsheet`, `write_gsheet`, `create_gsheet`)
+- `explorer` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: browser + `drive_list`, `drive_search`, `drive_download`)
+- `writer` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: `read_docx`, `write_docx`, `read_gdoc`, `write_gdoc`, `create_gdoc`, `gmail_send`, `gmail_draft`)
+- `debugger` → `openrouter/google/gemini-3.1-flash-lite-preview`
+- `secretary` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: `gmail_search`, `gmail_read`, calendar, contacts, tasks + scheduler tools)
 
 ## Agent Builder Pattern
 
@@ -248,14 +264,30 @@ Tools have a `defaultPermission` of `"allow"`, `"deny"`, or `"hitl"`.
 Resolution order: runtime override → agent permissions → exact match → glob pattern → default.
 
 When permission resolves to `"hitl"`, the `HITLHandler` is called to prompt the user for approval.
+
 - CLI: readline prompt in terminal
 - Web: WebSocket request/response with configurable timeout
+
+## Google Workspace Integration
+
+Google API tools use OAuth2 via `googleapis`. Credential resolution order:
+
+1. CredentialStore domain `"google"` (fields: `clientId`, `clientSecret`, `refreshToken`)
+2. Env vars: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`
+
+Agent tool assignments:
+
+- `math`: `read_gsheet`, `write_gsheet`, `create_gsheet`
+- `writer`: `read_gdoc`, `write_gdoc`, `create_gdoc`, `gmail_send`, `gmail_draft`
+- `explorer`: `drive_list`, `drive_search`, `drive_download`
+- `secretary`: `gmail_search`, `gmail_read`, `calendar_list`, `calendar_create`, `calendar_update`, `calendar_delete`, `contacts_search`, `contacts_create`, `tasks_list`, `tasks_create`, `tasks_complete` + scheduler tools
 
 ## Scheduler
 
 The runtime includes a `Scheduler` for cron, one-time, and delayed task execution.
+
 - Jobs persist to JSONL and restore on restart.
-- Agent tools: `schedule_task` (hitl), `list_scheduled_jobs` (allow), `cancel_scheduled_job` (hitl).
+- Agent tools: `schedule_task` (hitl), `list_scheduled_jobs` (allow), `cancel_scheduled_job` (hitl) — assigned to `secretary` (migrated from `orchestrator`).
 - Config-driven schedules can be passed via `RuntimeOptions.schedules`.
 
 ## Debug Checklist
