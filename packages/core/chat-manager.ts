@@ -13,6 +13,10 @@ interface ChatRuntimeData {
     record: AgentChat;
     controller?: AbortController;
     runner?: ChatRunner;
+    timeoutHandle?: ReturnType<typeof setTimeout>;
+    timeoutReject?: (err: Error) => void;
+    timeoutRemainingMs?: number;
+    timeoutPausedAt?: number;
 }
 
 export interface CreateChatInput {
@@ -186,6 +190,29 @@ export class ChatManager {
         return index >= 0 ? index + 1 : undefined;
     }
 
+    pauseTimeout(chatId: string): void {
+        const runtime = this.chats.get(chatId);
+        if (!runtime || !runtime.timeoutHandle) return;
+        clearTimeout(runtime.timeoutHandle);
+        runtime.timeoutHandle = undefined;
+        const elapsed = Date.now() - (runtime.record.startedAt ?? Date.now());
+        runtime.timeoutRemainingMs = Math.max(0, runtime.record.timeoutMs - elapsed);
+        runtime.timeoutPausedAt = Date.now();
+    }
+
+    resumeTimeout(chatId: string): void {
+        const runtime = this.chats.get(chatId);
+        if (!runtime || runtime.timeoutHandle || !runtime.timeoutPausedAt) return;
+        const remainingMs = runtime.timeoutRemainingMs ?? runtime.record.timeoutMs;
+        runtime.timeoutPausedAt = undefined;
+        const reject = runtime.timeoutReject;
+        if (!reject) return;
+        runtime.timeoutHandle = setTimeout(() => {
+            runtime.controller?.abort();
+            reject(new Error(`Chat timeout after ${runtime.record.timeoutMs}ms`));
+        }, remainingMs);
+    }
+
     private dequeueNext(agentId: string) {
         const active = this.activeChats.get(agentId);
         if (!active) return;
@@ -227,13 +254,14 @@ export class ChatManager {
             await this.safePersist(runtime.record);
             await this.safeHook("onStarted", runtime.record);
 
-            let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
             try {
+                const timeoutMs = runtime.timeoutRemainingMs ?? runtime.record.timeoutMs;
                 const timeoutPromise = new Promise<string>((_, reject) => {
-                    timeoutHandle = setTimeout(() => {
+                    runtime.timeoutReject = reject;
+                    runtime.timeoutHandle = setTimeout(() => {
                         runtime.controller?.abort();
                         reject(new Error(`Chat timeout after ${runtime.record.timeoutMs}ms`));
-                    }, runtime.record.timeoutMs);
+                    }, timeoutMs);
                 });
 
                 const result = await Promise.race([
@@ -241,7 +269,10 @@ export class ChatManager {
                     timeoutPromise,
                 ]);
 
-                if (timeoutHandle) clearTimeout(timeoutHandle);
+                if (runtime.timeoutHandle) {
+                    clearTimeout(runtime.timeoutHandle);
+                    runtime.timeoutHandle = undefined;
+                }
 
                 runtime.record.result = result;
                 runtime.record.status = "closed";
@@ -253,7 +284,10 @@ export class ChatManager {
                 this.dequeueNext(runtime.record.agentId);
                 return;
             } catch (error) {
-                if (timeoutHandle) clearTimeout(timeoutHandle);
+                if (runtime.timeoutHandle) {
+                    clearTimeout(runtime.timeoutHandle);
+                    runtime.timeoutHandle = undefined;
+                }
 
                 if (runtime.controller.signal.aborted) {
                     const changed = this.markCancelled(runtime.record);

@@ -1,15 +1,22 @@
-import type { Agent, AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
-import { createOrchestratorAgent, createSpecialistRegistry, ORCHESTRATOR_ID } from "./agents";
+import type { Agent, AgentEvent, AgentMessage, AgentTool } from "@mariozechner/pi-agent-core";
+import { createOrchestratorAgent, createSpecialistRegistry, createAgentDefinitions, ORCHESTRATOR_ID } from "./agents";
 import type { AgentChat, BaseAgentId, Initiator, RunContext, ThreadEnvelope, TraceEvent } from "./contracts";
 import { errorMessage } from "./errors";
 import { createId, now } from "./ids";
 import { ChatManager } from "./chat-manager";
 import { ThreadStore } from "./thread-store";
-import { createOrchestratorTools, type SpecialistRegistry } from "./tools";
+import { createOrchestratorTools, createOrchestratorToolEntries, type SpecialistRegistry } from "./tools";
+import { ToolRegistry } from "./tool-registry";
+import { type AgentDefinition } from "./agent-builder";
+import { type HITLHandler, wrapTool, resolvePermission } from "./tool-middleware";
+import { compileSystemPrompt } from "./prompt-compiler";
+import { Scheduler } from "./scheduler";
+import { createSchedulerToolEntries } from "./scheduler-tools";
+import { CredentialStore } from "./credential-store";
 
 interface RouteMessageInput {
     fromAgentId: BaseAgentId;
-    toAgentId: Exclude<BaseAgentId, "user">;
+    toAgentId: string;
     content: string;
     initiator: Initiator;
     runContext: RunContext;
@@ -41,7 +48,7 @@ export interface ChatInspection {
 }
 
 export interface ChatInput {
-    toAgentId: Exclude<BaseAgentId, "user">;
+    toAgentId: string;
     content: string;
     fromAgentId?: BaseAgentId;
     onAgentEvent?: (event: AgentEvent) => void;
@@ -103,23 +110,59 @@ function createThreadId(sessionId: string, a: BaseAgentId, b: BaseAgentId): stri
     return `${sessionId}::${[a, b].sort().join("<->")}`;
 }
 
+export interface RuntimeOptions {
+    sessionId?: string;
+    agents?: AgentDefinition[];
+    hitlHandler?: HITLHandler;
+    schedules?: Array<{ id: string; cron: string; agentId: string; task: string }>;
+}
+
+const denyAllHandler: HITLHandler = async () => ({ approved: false });
+
 export class MultiAgentRuntime {
     readonly sessionId: string;
     readonly store: ThreadStore;
     readonly chatManager: ChatManager;
     readonly specialistRegistry: SpecialistRegistry;
+    readonly toolRegistry: ToolRegistry;
+    readonly agentDefs: Map<string, AgentDefinition>;
+    readonly hitlHandler: HITLHandler;
+    readonly scheduler: Scheduler;
+    readonly credentialStore: CredentialStore;
 
-    constructor(sessionId = "default") {
-        this.sessionId = sessionId;
-        this.store = new ThreadStore({ sessionId });
-        this.specialistRegistry = createSpecialistRegistry();
+    constructor(optionsOrSessionId?: RuntimeOptions | string) {
+        const options: RuntimeOptions = typeof optionsOrSessionId === "string"
+            ? { sessionId: optionsOrSessionId }
+            : optionsOrSessionId ?? {};
+
+        this.sessionId = options.sessionId ?? "default";
+        this.store = new ThreadStore({ sessionId: this.sessionId });
+        this.hitlHandler = options.hitlHandler ?? denyAllHandler;
+
+        // Credential store (shares base dir with thread store)
+        this.credentialStore = new CredentialStore({
+            dataDir: ".runtime-data",
+            masterPassword: process.env.MASTER_PASSWORD,
+        });
+
+        const credentialOpts = { credentialStore: this.credentialStore };
+
+        // Agent definitions
+        const agentDefList = options.agents ?? createAgentDefinitions(credentialOpts);
+        this.agentDefs = new Map(agentDefList.map(d => [d.id, d]));
+
+        // Backward-compatible specialist registry (used by orchestrator tools)
+        this.specialistRegistry = createSpecialistRegistry(credentialOpts);
+
+        // Tool registry
+        this.toolRegistry = new ToolRegistry();
 
         this.chatManager = new ChatManager({
             persistChat: (chat) => this.store.appendChatRecord(chat),
             restoreRecords: () => this.store.getChatRecords(),
             getMaxConcurrency: (agentId) => {
-                const specialist = this.specialistRegistry[agentId];
-                return specialist?.maxConcurrency ?? 1;
+                const def = this.agentDefs.get(agentId);
+                return def?.maxConcurrency ?? 1;
             },
             hooks: {
                 onCreated: async (chat) => {
@@ -216,25 +259,54 @@ export class MultiAgentRuntime {
             if (n > 0) console.error(`[runtime] restored ${n} interrupted chat(s) as closed`);
         });
 
-        const codeSpecialist = this.specialistRegistry.code;
-        const mathSpecialist = this.specialistRegistry.math;
-        if (!codeSpecialist || !mathSpecialist) {
-            throw new Error("Specialists 'code' and 'math' are required in registry.");
+        // Validate required agents exist
+        for (const required of ["code", "math"] as const) {
+            if (!this.agentDefs.has(required)) {
+                throw new Error(`Agent '${required}' is required but not defined.`);
+            }
         }
+
+        // Scheduler
+        this.scheduler = new Scheduler({
+            persistJob: (job) => this.store.appendJob(job),
+            restoreJobs: () => this.store.getJobRecords(),
+            executeTask: async (agentId, task) => {
+                const result = await this.chat({ toAgentId: agentId, content: task });
+                return result.answer;
+            },
+            trace: async (event) => {
+                await this.trace({
+                    ...event,
+                    sessionId: this.sessionId,
+                } as any);
+            },
+        });
+
+        // Config-driven schedules
+        if (options.schedules) {
+            for (const sched of options.schedules) {
+                this.scheduler.addJob({
+                    sessionId: this.sessionId,
+                    createdBy: "runtime",
+                    targetAgentId: sched.agentId,
+                    task: sched.task,
+                    schedule: { type: "cron", cron: sched.cron },
+                });
+            }
+        }
+
+        // Restore persisted jobs
+        void this.scheduler.restore();
     }
 
     listAgents() {
-        const specialists = Object.values(this.specialistRegistry).map((agent) => ({
-            id: agent.id as BaseAgentId,
-            name: agent.name,
-            role: agent.role,
-            capabilities: agent.capabilities,
-            maxConcurrency: agent.maxConcurrency,
+        return [...this.agentDefs.values()].map((def) => ({
+            id: def.id,
+            name: def.name,
+            role: def.role,
+            capabilities: def.capabilities,
+            maxConcurrency: def.maxConcurrency,
         }));
-        return [
-            { id: ORCHESTRATOR_ID, name: "Orchestrator", role: "Routes and delegates tasks.", capabilities: ["routing"], maxConcurrency: Infinity },
-            ...specialists,
-        ];
     }
 
     listChats(): AgentChat[] {
@@ -360,7 +432,7 @@ export class MultiAgentRuntime {
         }
     }
 
-    async runSmokeScenario(name: "math" | "code" | "orchestrator") {
+    async runSmokeScenario(name: "math" | "code" | "orchestrator" | "explorer" | "writer" | "debugger") {
         if (name === "math") {
             return this.chat({ toAgentId: "math", content: "Compute (8 * 5) - (6 / 2). Return one short sentence." });
         }
@@ -370,12 +442,30 @@ export class MultiAgentRuntime {
                 content: "Create a tiny Bun TypeScript function to sum two numbers and show one usage example.",
             });
         }
+        if (name === "explorer") {
+            return this.chat({
+                toAgentId: "explorer",
+                content: "Search the web for 'Bun runtime latest version' and return the top 3 results as a short list.",
+            });
+        }
+        if (name === "writer") {
+            return this.chat({
+                toAgentId: "writer",
+                content: "Write a 3-sentence changelog entry for adding a web explorer agent to a multi-agent runtime.",
+            });
+        }
+        if (name === "debugger") {
+            return this.chat({
+                toAgentId: "debugger",
+                content: "List the files in packages/core/ and read packages/core/errors.ts. Give a brief code review summary.",
+            });
+        }
         return this.chat({
             toAgentId: ORCHESTRATOR_ID,
             content: [
                 "Run a delegation demo.",
-                "Call list_agents.",
-                "Then solve (24 / 3) + (7 * 2) using delegate and then get_chat_result, and return one short sentence.",
+                "You will have to solve a mathematical problem.",
+                "Then solve (24 / 3) + (7 * 2) using delegate and then get the result, and return one short sentence.",
             ].join(" "),
         });
     }
@@ -408,7 +498,7 @@ export class MultiAgentRuntime {
                             : chat.task;
                         const output = await this.routeMessage({
                             fromAgentId: ORCHESTRATOR_ID,
-                            toAgentId: input.agentId as Exclude<BaseAgentId, "user">,
+                            toAgentId: input.agentId,
                             content,
                             initiator: "orchestrator",
                             runContext: input.runContext,
@@ -435,13 +525,75 @@ export class MultiAgentRuntime {
         });
     }
 
-    private createAgentForRoute(toAgentId: Exclude<BaseAgentId, "user">, runContext: RunContext): Agent {
+    private createSchedulerToolsForRun(): AgentTool<any>[] {
+        const entries = createSchedulerToolEntries({
+            scheduler: this.scheduler,
+            sessionId: this.sessionId,
+            callerAgentId: ORCHESTRATOR_ID,
+            allowedTargets: null, // orchestrator can target any agent
+        });
+        return entries.map(entry => ({
+            name: entry.name,
+            label: entry.description,
+            description: entry.description,
+            parameters: entry.parameters,
+            execute: entry.execute,
+        } as AgentTool<any>));
+    }
+
+    private createAgentForRoute(toAgentId: string, runContext: RunContext): Agent {
         if (toAgentId === ORCHESTRATOR_ID) {
-            return createOrchestratorAgent(this.createOrchestratorToolsForRun(runContext));
+            const orchTools = this.createOrchestratorToolsForRun(runContext);
+            return createOrchestratorAgent([...orchTools], {
+                credentialStore: this.credentialStore,
+            });
         }
-        const specialist = this.specialistRegistry[toAgentId];
-        if (!specialist) throw new Error(`Agent '${toAgentId}' is not registered.`);
-        return specialist.createAgent();
+
+        const def = this.agentDefs.get(toAgentId);
+        if (!def) throw new Error(`Agent '${toAgentId}' is not registered.`);
+
+        // Resolve localTools → AgentTool[] with middleware (permissions, HITL)
+        const localTools: AgentTool<any>[] = (def.localTools ?? []).map(entry => {
+            const permission = resolvePermission(
+                undefined,
+                def.permissions,
+                entry.name,
+                entry.defaultPermission ?? "allow",
+            );
+            return wrapTool(
+                {
+                    name: entry.name,
+                    label: entry.description,
+                    description: entry.description,
+                    parameters: entry.parameters,
+                    execute: entry.execute,
+                } as AgentTool<any>,
+                {
+                    permission,
+                    hitlHandler: this.hitlHandler,
+                    agentId: toAgentId,
+                    tracePermission: async (info) => {
+                        await this.trace({
+                            type: "tool_start",
+                            status: "ok",
+                            runId: runContext.runId,
+                            turnId: runContext.turnId,
+                            toolName: info.toolName,
+                            details: { permission: info.permission, resolved: info.resolved },
+                        });
+                    },
+                },
+            );
+        });
+
+        // Inject scheduler tools into the secretary agent
+        if (toAgentId === "secretary") {
+            const schedulerTools = this.createSchedulerToolsForRun();
+            localTools.push(...schedulerTools);
+        }
+
+        const systemPrompt = compileSystemPrompt(def, localTools);
+        return def.createAgent(localTools, systemPrompt);
     }
 
     private async routeMessage(input: RouteMessageInput): Promise<RouteMessageOutput> {

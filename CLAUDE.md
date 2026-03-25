@@ -119,7 +119,29 @@ This repository is a terminal-first multi-agent runtime prototype.
 - UI gate entry point: `apps/backend/ui-gate.ts`
 - Runtime: `packages/core/runtime.ts`
 - Tools: `packages/core/tools.ts`
-- Agents: `packages/core/agents.ts` (per-agent model config map)
+- Agents: `packages/core/agents.ts` (agent definitions via builder pattern)
+- Agent builder: `packages/core/agent-builder.ts` (`defineAgent().name().model().tools().build()`)
+- Tool registry: `packages/core/tool-registry.ts` (register/resolve tools with glob patterns, MCP lifecycle)
+- Tool middleware: `packages/core/tool-middleware.ts` (`wrapTool` with permission check, HITL approval, hooks)
+- Prompt compiler: `packages/core/prompt-compiler.ts` (5-layer system prompt assembly)
+- Delegation: `packages/core/delegation.ts` (restricted delegate tool with depth/whitelist/cycle checks)
+- Scheduler: `packages/core/scheduler.ts` (cron parser, setTimeout-based timer, JSONL persistence)
+- Scheduler tools: `packages/core/scheduler-tools.ts` (`schedule_task`, `list_scheduled_jobs`, `cancel_scheduled_job`)
+- MCP client: `packages/core/mcp-client.ts` (`McpConnector` interface for external tool servers)
+- Browser wrapper: `packages/core/browser.ts` (Playwright-based `browseUrl`, `searchWeb`, `interactWithPage`)
+- Explorer tools: `packages/core/explorer-tools.ts` (`browse_url`, `search_web`, `interact_page` tool entries)
+- Credential store: `packages/core/credential-store.ts` (AES-256-GCM encrypted credential storage)
+- Analyst tools: `packages/core/analyst-tools.ts` (`query_sqlite`, `query_supabase`, `parse_csv`, `analyze_data` tool entries)
+- Office tools: `packages/core/office-tools.ts` (`read_excel`, `write_excel` via exceljs; `read_docx`, `write_docx` via mammoth + docx)
+- Debugger tools: `packages/core/debugger-tools.ts` (`read_file`, `search_code`, `list_directory` tool entries)
+- Google auth: `packages/core/google-auth.ts` (OAuth2 helper — reads from CredentialStore domain `"google"` or env vars `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/`GOOGLE_REFRESH_TOKEN`)
+- Google Sheets tools: `packages/core/google-sheets-tools.ts` (`read_gsheet`, `write_gsheet`, `create_gsheet` — assigned to `math`)
+- Google Docs tools: `packages/core/google-docs-tools.ts` (`read_gdoc`, `write_gdoc`, `create_gdoc` — assigned to `writer`)
+- Google Drive tools: `packages/core/google-drive-tools.ts` (`drive_list`, `drive_search`, `drive_download` — assigned to `explorer`)
+- Google Mail tools: `packages/core/google-mail-tools.ts` (`gmail_search`, `gmail_read` assigned to `secretary`; `gmail_send`, `gmail_draft` assigned to `writer`)
+- Google Calendar tools: `packages/core/google-calendar-tools.ts` (`calendar_list`, `calendar_create`, `calendar_update`, `calendar_delete` — assigned to `secretary`)
+- Google Contacts tools: `packages/core/google-contacts-tools.ts` (`contacts_search`, `contacts_create` — assigned to `secretary`)
+- Google Tasks tools: `packages/core/google-tasks-tools.ts` (`tasks_list`, `tasks_create`, `tasks_complete` — assigned to `secretary`)
 - Chat orchestration: `packages/core/chat-manager.ts` (per-agent concurrency with FIFO queue, disk persistence and restore)
 - Persistence: `packages/core/thread-store.ts` (threads, traces, chat records — atomic append, fault-tolerant JSONL)
 - Error utilities: `packages/core/errors.ts` (`errorMessage`, `safeAsync`, `safeParseLine`)
@@ -145,6 +167,9 @@ Use these project scripts:
 - `bun run smoke:math`
 - `bun run smoke:code`
 - `bun run smoke:orchestrator`
+- `bun run smoke:explorer`
+- `bun run smoke:writer`
+- `bun run smoke:debugger`
 - `bun run ui:gate`
 
 Inside the CLI, useful commands:
@@ -153,6 +178,8 @@ Inside the CLI, useful commands:
 - `/traces [n]`
 - `/threads`, `/thread <threadId>`
 - `/chats`, `/chat <chatId> [--json]`, `/close <chatId>`
+- `/scheduled [jobId]` — list scheduled jobs or inspect one
+- `/cancel-job <jobId>` — cancel a scheduled job
 - Legacy aliases: `/jobs`=/chats, `/job`=`/task`=/chat, `/cancel`=/close
 
 ## Data and Trace Expectations
@@ -203,12 +230,63 @@ When adding or changing runtime behavior, preserve correlation IDs:
 
 ## Model Configuration
 
-Agents use lazy model initialization with explicit per-agent config in `AGENT_MODEL_CONFIG` inside `packages/core/agents.ts`.
+Agents are defined via the builder pattern in `packages/core/agents.ts` using `defineAgent()`.
 Current setup keeps same model for all agents.
 
 - `orchestrator` → `openrouter/google/gemini-3.1-flash-lite-preview`
 - `code` → `openrouter/google/gemini-3.1-flash-lite-preview`
-- `math` → `openrouter/google/gemini-3.1-flash-lite-preview`
+- `math` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: analyst tools + `read_excel`, `write_excel`, `read_gsheet`, `write_gsheet`, `create_gsheet`)
+- `explorer` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: browser + `drive_list`, `drive_search`, `drive_download`)
+- `writer` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: `read_docx`, `write_docx`, `read_gdoc`, `write_gdoc`, `create_gdoc`, `gmail_send`, `gmail_draft`)
+- `debugger` → `openrouter/google/gemini-3.1-flash-lite-preview`
+- `secretary` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: `gmail_search`, `gmail_read`, calendar, contacts, tasks + scheduler tools)
+
+## Agent Builder Pattern
+
+Define agents declaratively:
+
+```ts
+const agent = defineAgent("myAgent")
+  .name("My Agent")
+  .role("Does things")
+  .model("openrouter", "google/gemini-3.1-flash-lite-preview")
+  .systemPrompt("You are a helpful agent.")
+  .capabilities(["cap1", "cap2"])
+  .tools(["tool1", "tool2"])         // tool refs resolved from ToolRegistry
+  .permissions({ "tool1": "allow" }) // per-tool permission overrides
+  .maxConcurrency(1)
+  .build();
+```
+
+## Tool Permissions & HITL
+
+Tools have a `defaultPermission` of `"allow"`, `"deny"`, or `"hitl"`.
+Resolution order: runtime override → agent permissions → exact match → glob pattern → default.
+
+When permission resolves to `"hitl"`, the `HITLHandler` is called to prompt the user for approval.
+- CLI: readline prompt in terminal
+- Web: WebSocket request/response with configurable timeout
+
+## Google Workspace Integration
+
+Google API tools use OAuth2 via `googleapis`. Credential resolution order:
+
+1. CredentialStore domain `"google"` (fields: `clientId`, `clientSecret`, `refreshToken`)
+2. Env vars: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`
+
+Agent tool assignments:
+
+- `math`: `read_gsheet`, `write_gsheet`, `create_gsheet`
+- `writer`: `read_gdoc`, `write_gdoc`, `create_gdoc`, `gmail_send`, `gmail_draft`
+- `explorer`: `drive_list`, `drive_search`, `drive_download`
+- `secretary`: `gmail_search`, `gmail_read`, `calendar_list`, `calendar_create`, `calendar_update`, `calendar_delete`, `contacts_search`, `contacts_create`, `tasks_list`, `tasks_create`, `tasks_complete` + scheduler tools
+
+## Scheduler
+
+The runtime includes a `Scheduler` for cron, one-time, and delayed task execution.
+- Jobs persist to JSONL and restore on restart.
+- Agent tools: `schedule_task` (hitl), `list_scheduled_jobs` (allow), `cancel_scheduled_job` (hitl) — assigned to `secretary` (migrated from `orchestrator`).
+- Config-driven schedules can be passed via `RuntimeOptions.schedules`.
 
 ## Debug Checklist
 
@@ -221,7 +299,7 @@ If behavior is unexpected:
 5. Run `bun run typecheck`.
 6. If answer is empty, inspect `/thread <id>` for `Model error: ...` (often provider rate-limit/quota).
 
-## Web UI
+## Web UI — Dithie Dashboard
 
 Entry point: `apps/backend/server.ts` — independent from the CLI, shares `MultiAgentRuntime`.
 
@@ -231,25 +309,42 @@ bun run ui -- --session <id>
 ```
 Serves on http://localhost:3000.
 
+### Design
+- **B&W monochromatic palette**: `#000` bg, `#fff` text, grey surfaces/borders. No colors.
+- **Dithie**: pixel-art spider character as orchestrator identity. States: idle (breathing + blink), thinking (eye movement cycle), delegating (eyes shifted), error (X eyes).
+- **Unified chat**: all conversation goes through Dithie (orchestrator). No agent switching. Delegations shown as collapsible inline blocks.
+- **Split view**: Chat panel (flex:1) | Trace panel (280px fixed).
+- **Font**: JetBrains Mono via Google Fonts CDN.
+
 ### Files
-- `apps/backend/server.ts`: `Bun.serve()` with REST routes + WebSocket at `/ws`. Monkey-patches `store.appendTrace` and `store.appendChatRecord` for real-time push to all connected clients.
-- `apps/web/index.html`: HTML shell (Bun HTML import, auto-bundles TSX + CSS).
-- `apps/web/app.tsx`: Single-file React SPA (useReducer). AgentBar, MessageList, TracePanel, InputBar.
-- `apps/web/app.css`: Dark theme with concept-a CSS vars (orchestrator=purple, code=green, math=amber).
+- `apps/backend/server.ts`: `Bun.serve()` with REST routes + WebSocket at `/ws`. Monkey-patches `store.appendTrace` for real-time trace push + delegation event tracking (`delegation_start`/`delegation_end`). Also patches `store.appendChatRecord` and `store.appendJob`.
+- `apps/web/index.html`: HTML shell (title "dithie", JetBrains Mono font link).
+- `apps/web/app.tsx`: React SPA (useReducer). Header, ChatPanel, TracePanel, InputBar. Dithie state machine (idle/thinking/delegating/error). Delegation blocks and trace duration computed client-side.
+- `apps/web/app.css`: B&W palette, layout grid, all component styles, animations (blink-cursor, breathe, dot-pulse).
+- `apps/web/dithie-sprite.tsx`: `DithieSprite` component — CSS Grid for 16/32px, canvas for 64px. Animation cycling per state.
+- `apps/web/dithie-frames.ts`: Pixel grid data (`Frame = number[][]`) for all animation frames (idle, blink, thinking 1-4, delegating, error).
 
 ### WebSocket protocol
 **Client → Server:**
+
 - `{ type: "chat", toAgentId, content }` — send message to agent
 - `{ type: "close_chat", chatId }` — cancel a chat
+- `{ type: "hitl_response", reqId, approved, modifiedParams? }` — respond to HITL request
 
 **Server → Client:**
-- `{ type: "agents", agents }` — on connect
+
+- `{ type: "agents", agents, sessionId }` — on connect
 - `{ type: "chat_sending", runId, toAgentId }` — before chat starts
 - `{ type: "stream_delta", runId, delta }` — streaming text token
 - `{ type: "stream_end", runId, answer, durationMs }` — chat complete
 - `{ type: "stream_error", runId, error }` — chat failed
+- `{ type: "stream_status", runId, text }` — tool status label (ignored by Dithie UI)
 - `{ type: "trace", event }` — real-time trace push
 - `{ type: "chat_lifecycle", chat }` — chat state change
+- `{ type: "job_lifecycle", job }` — scheduled job state change
+- `{ type: "delegation_start", runId, delegationId, fromAgentId, toAgentId, task }` — delegation began
+- `{ type: "delegation_end", runId, delegationId, result, durationMs, status }` — delegation completed
+- `{ type: "hitl_request", reqId, agentId, toolName, params, timeout }` — HITL approval request
 
 ### REST API
 | Route | Method | Description |
@@ -260,11 +355,5 @@ Serves on http://localhost:3000.
 | `/api/threads` | GET | List thread IDs |
 | `/api/threads/:id` | GET | Get thread envelopes |
 | `/api/traces` | GET | Get all traces |
-
-## UI / Monorepo Decision Rule
-
-Stay terminal-first by default. Consider UI (and Turbo monorepo split) only when at least one is true:
-
-- parallel task pressure is recurrent,
-- HITL actions become frequent,
-- trace volume makes terminal-only debugging inefficient.
+| `/api/jobs` | GET | List scheduled jobs |
+| `/api/jobs/:id` | GET/DELETE | Inspect or cancel scheduled job |

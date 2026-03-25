@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bunx tsc:*)",
+      "WebFetch(domain:stitch.withgoogle.com)",
+      "WebFetch(domain:github.com)",
+      "Bash(bun run:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"docs: update README, CLAUDE.md, and AGENTS.md for Dithie frontend:*)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\gerog\\source\\exp-pi-orchestation\\.worktrees\\extensible-agents\\docs\\superpowers"
+    ]
+  }
+}

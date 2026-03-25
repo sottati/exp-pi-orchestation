@@ -20,31 +20,43 @@ Necesito un snippet en C para imprimir del 1 al 10
 
 ## Qué incluye hoy
 
-- Orquestador + especialistas (`code`, `math`) en runtime único.
+- Orquestador + especialistas (`code`, `math`, `explorer`, `writer`, `debugger`, `secretary`) en runtime único.
 - Toda delegación es async via chat (`delegate` tool). Sin sync path.
 - Per-agent concurrency: cada especialista tiene `maxConcurrency` slots de chat.
 - Chats con cola FIFO: si un agente está al máximo, los nuevos chats se encolan como `waiting`.
 - Persistencia local de conversaciones por hilo (`threadId`), trazas de ejecución y chat records.
 - Error handling robusto: JSONL fault-tolerant, hooks con `safeAsync`, guards en CLI/trace/persistence.
-- Configuración de modelo por agente (`orchestrator`, `code`, `math`) en `packages/core/agents.ts`.
-- Restauración automática de chats interrumpidos al reiniciar sesión.
-- CLI interactiva para operar y testear sin UI.
+- Configuración de modelo por agente (`orchestrator`, `code`, `math`) via builder pattern en `packages/core/agents.ts`.
+- Sistema extensible de agentes: agent builder, tool registry, tool middleware con permisos y HITL.
+- Office tools: `read_excel`/`write_excel` (exceljs) para el agente math/analyst; `read_docx`/`write_docx` (mammoth + docx) para el agente writer.
+- Google Workspace integration: Sheets, Docs, Drive, Gmail, Calendar, Contacts, Tasks — autenticación OAuth2 via `googleapis`.
+- Agente `secretary`: asistente personal para calendar, email, contactos, tareas y cron jobs.
+- Scheduler integrado: cron, one-time, delayed tasks con persistencia JSONL (scheduler tools migrados al agente `secretary`).
+- Prompt compiler: ensamblado de system prompt en 5 capas (base, tools, delegation, rules, examples).
+- Restauración automática de chats y scheduled jobs interrumpidos al reiniciar sesión.
+- CLI interactiva para operar y testear sin UI, con HITL approval prompts.
 - Gate de decisión para saber cuándo pasar a UI/monorepo.
 
 ## Configuración del modelo
 
-Configuración explícita por agente en `packages/core/agents.ts` (`AGENT_MODEL_CONFIG`).
-Hoy, los tres agentes usan `openrouter/google/gemini-3.1-flash-lite-preview`.
+Agentes definidos via builder pattern en `packages/core/agents.ts` usando `defineAgent()`.
+Hoy, los ocho agentes usan `openrouter/google/gemini-3.1-flash-lite-preview`.
 
 | Agent ID | Provider | Model ID |
 |---|---|---|
 | `orchestrator` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
 | `code` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
 | `math` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
+| `explorer` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
+| `writer` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
+| `debugger` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
+| `secretary` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
 
 ## Requisitos
 
 - [Bun](https://bun.com) 1.3+
+- Dependencias de Office tools: `exceljs`, `mammoth`, `docx` (instaladas via `bun install`)
+- Google Workspace: `googleapis` (instalada via `bun install`); requiere credenciales OAuth2 (ver sección Google Auth)
 
 ## Instalación
 
@@ -62,6 +74,9 @@ bun run typecheck
 bun run smoke:math
 bun run smoke:code
 bun run smoke:orchestrator
+bun run smoke:explorer
+bun run smoke:writer
+bun run smoke:debugger
 bun run ui:gate
 ```
 
@@ -73,19 +88,20 @@ bun run ui -- --session test01
 bun run ui:gate -- --session test01
 ```
 
-## UI web
+## UI web — Dithie Dashboard
 
 ```bash
 bun run ui -- --session demo-1
 ```
 
-Abre http://localhost:3000 para ver la interfaz web:
+Abre http://localhost:3000 para ver el dashboard de Dithie:
 
-- **Barra de agentes**: botones para cambiar entre `orchestrator`, `code`, `math`.
-- **Panel de mensajes**: conversación filtrada por agente activo, con streaming en tiempo real.
-- **Panel de trazas**: últimas 50 trazas en tiempo real vía WebSocket.
-- **WebSocket** en `/ws`: deltas de streaming, lifecycle de chats y push de trazas.
-- **REST API**: `/api/agents`, `/api/chats`, `/api/threads`, `/api/traces`.
+- **Estética B&W**: paleta monocromática negro/blanco/gris, fuente JetBrains Mono, estilo terminal moderno.
+- **Dithie**: pixel-art spider (16x16) como identidad del orchestrator, con estados animados (idle, thinking, delegating, error).
+- **Chat unificado**: toda la conversación pasa por Dithie (orchestrator). Las delegaciones se muestran como bloques colapsables inline.
+- **Panel de trazas**: trazas en tiempo real (newest-last) con items expandibles y duración calculada client-side.
+- **WebSocket** en `/ws`: deltas de streaming, delegation events (`delegation_start`/`delegation_end`), lifecycle de chats y push de trazas.
+- **REST API**: `/api/agents`, `/api/chats`, `/api/threads`, `/api/traces`, `/api/jobs`.
 
 La CLI (`bun run start`) y el servidor UI son entradas independientes que comparten `MultiAgentRuntime`.
 
@@ -93,14 +109,16 @@ La CLI (`bun run start`) y el servidor UI son entradas independientes que compar
 
 - `/help`
 - `/agents`
-- `/use <agentId>` (`orchestrator|code|math`)
+- `/use <agentId>` (`orchestrator|code|math|explorer|writer|debugger|secretary`)
 - `/chats` (alias: `/jobs`)
 - `/chat <chatId> [--json]` (aliases: `/job`, `/task`) — transcript live; con `--json` devuelve inspección raw
 - `/close <chatId>` (alias: `/cancel`)
+- `/scheduled [jobId]` — lista scheduled jobs o inspecciona uno
+- `/cancel-job <jobId>` — cancela un scheduled job
 - `/threads`
 - `/thread <threadId>`
 - `/traces [n]`
-- `/smoke <math|code|orchestrator>`
+- `/smoke <math|code|orchestrator|explorer>`
 - `/exit`
 
 ## Modelo de delegación: Chats
@@ -193,16 +211,111 @@ Cada envelope de hilo incluye metadatos de relación:
 - `apps/cli/index.ts`: CLI interactiva.
 - `apps/backend/server.ts`: servidor web con REST + WebSocket.
 - `apps/backend/ui-gate.ts`: evaluación de fricción para activar UI.
-- `apps/web/index.html`: shell HTML de la UI.
-- `apps/web/app.tsx`: SPA React (estado local + streaming).
-- `apps/web/app.css`: estilos de la UI.
+- `apps/web/index.html`: shell HTML de la UI (title "dithie", JetBrains Mono font).
+- `apps/web/app.tsx`: SPA React (useReducer, Dithie state machine, chat + trace panels).
+- `apps/web/app.css`: estilos B&W monocromáticos.
+- `apps/web/dithie-sprite.tsx`: componente DithieSprite (CSS Grid 16/32px, canvas 64px, animaciones).
+- `apps/web/dithie-frames.ts`: frame data del pixel-art spider (16x16 grids para cada estado).
 - `packages/core/runtime.ts`: runtime multiagente, enrutado de mensajes, correlación de IDs y trazas.
 - `packages/core/tools.ts`: tools del orquestador (`list_agents`, `delegate`, `delegate_task`, `get_chat_status`, `get_chat_result`, `close_chat`).
+- `packages/core/agents.ts`: definición de agentes via builder pattern (`defineAgent()`).
+- `packages/core/agent-builder.ts`: builder pattern para declarar agentes.
+- `packages/core/tool-registry.ts`: registro y resolución de tools con glob patterns, ciclo de vida MCP.
+- `packages/core/tool-middleware.ts`: `wrapTool` con permisos, HITL approval y hooks.
+- `packages/core/prompt-compiler.ts`: compilador de system prompt en 5 capas.
+- `packages/core/delegation.ts`: delegate tool con control de depth, whitelist y ciclos.
+- `packages/core/scheduler.ts`: cron parser, timer basado en setTimeout, persistencia JSONL.
+- `packages/core/scheduler-tools.ts`: tools de scheduling (`schedule_task`, `list_scheduled_jobs`, `cancel_scheduled_job`).
+- `packages/core/mcp-client.ts`: interfaz `McpConnector` para servidores de tools externos.
+- `packages/core/browser.ts`: wrapper de Playwright para `browseUrl`, `searchWeb`, `interactWithPage`.
+- `packages/core/explorer-tools.ts`: tool entries del explorer (`browse_url`, `search_web`, `interact_page`).
+- `packages/core/analyst-tools.ts`: tool entries del data analyst (`query_sqlite`, `query_supabase`, `parse_csv`, `analyze_data`).
+- `packages/core/office-tools.ts`: tool entries de Office — `read_excel`, `write_excel` (exceljs) para math/analyst; `read_docx`, `write_docx` (mammoth + docx) para writer.
+- `packages/core/debugger-tools.ts`: tool entries del debugger (`read_file`, `search_code`, `list_directory`).
+- `packages/core/credential-store.ts`: almacenamiento cifrado AES-256-GCM de credenciales.
+- `packages/core/google-auth.ts`: helper OAuth2 para Google APIs — lee credenciales del CredentialStore (dominio `"google"`) o env vars (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`).
+- `packages/core/google-sheets-tools.ts`: tool entries de Google Sheets — `read_gsheet`, `write_gsheet`, `create_gsheet` (asignados al agente `math`/analyst).
+- `packages/core/google-docs-tools.ts`: tool entries de Google Docs — `read_gdoc`, `write_gdoc`, `create_gdoc` (asignados al agente `writer`).
+- `packages/core/google-drive-tools.ts`: tool entries de Google Drive — `drive_list`, `drive_search`, `drive_download` (asignados al agente `explorer`).
+- `packages/core/google-mail-tools.ts`: tool entries de Gmail — `gmail_search`, `gmail_read` (read, asignados a `secretary`); `gmail_send`, `gmail_draft` (write, asignados a `writer`).
+- `packages/core/google-calendar-tools.ts`: tool entries de Google Calendar — `calendar_list`, `calendar_create`, `calendar_update`, `calendar_delete` (asignados a `secretary`).
+- `packages/core/google-contacts-tools.ts`: tool entries de Google Contacts — `contacts_search`, `contacts_create` (asignados a `secretary`).
+- `packages/core/google-tasks-tools.ts`: tool entries de Google Tasks — `tasks_list`, `tasks_create`, `tasks_complete` (asignados a `secretary`).
 - `packages/core/chat-manager.ts`: gestión de chats con per-agent concurrency, cola FIFO, timeout/retry y persistencia a disco.
 - `packages/core/thread-store.ts`: persistencia JSONL de hilos, trazas y chat records.
 - `packages/core/errors.ts`: utilidades de error handling (`errorMessage`, `safeAsync`, `safeParseLine`).
-- `packages/core/contracts.ts`: contratos de `ThreadEnvelope`, `AgentChat`, `TraceEvent`.
-- `packages/core/agents.ts`: definición de agentes con configuración de modelo por agente.
+- `packages/core/contracts.ts`: contratos de `ThreadEnvelope`, `AgentChat`, `TraceEvent`, `ScheduledJob`.
+
+## Agent Builder Pattern
+
+Los agentes se definen declarativamente:
+
+```ts
+import { defineAgent } from "./packages/core/agent-builder";
+
+const agent = defineAgent("myAgent")
+  .name("My Agent")
+  .role("Does things")
+  .model("openrouter", "google/gemini-3.1-flash-lite-preview")
+  .systemPrompt("You are a helpful agent.")
+  .capabilities(["cap1", "cap2"])
+  .tools(["tool1", "tool2"])
+  .permissions({ "tool1": "allow" })
+  .maxConcurrency(1)
+  .build();
+```
+
+## Tool Permissions & HITL
+
+Las tools tienen un `defaultPermission`: `"allow"`, `"deny"`, o `"hitl"`.
+Orden de resolución: runtime override → agent permissions → exact match → glob pattern → default.
+
+Cuando el permiso resuelve a `"hitl"`, se llama al `HITLHandler` para pedir aprobación:
+
+- **CLI**: prompt via readline en terminal
+- **Web**: request/response via WebSocket con timeout configurable
+
+## Google Workspace (Google Auth)
+
+Las tools de Google usan OAuth2 via `googleapis`. Las credenciales se resuelven en este orden:
+
+1. **CredentialStore**: dominio `"google"` con campos `clientId`, `clientSecret`, `refreshToken`.
+2. **Variables de entorno**: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`.
+
+Configura con CredentialStore:
+
+```ts
+await credentialStore.set("google", {
+  clientId: "...",
+  clientSecret: "...",
+  refreshToken: "...",
+});
+```
+
+O via `.env`:
+
+```env
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+GOOGLE_REFRESH_TOKEN=...
+```
+
+### Asignación de tools Google por agente
+
+| Agente | Tools Google |
+| --- | --- |
+| `math` (analyst) | `read_gsheet`, `write_gsheet`, `create_gsheet` |
+| `writer` | `read_gdoc`, `write_gdoc`, `create_gdoc`, `gmail_send`, `gmail_draft` |
+| `explorer` | `drive_list`, `drive_search`, `drive_download` |
+| `secretary` | `gmail_search`, `gmail_read`, `calendar_list`, `calendar_create`, `calendar_update`, `calendar_delete`, `contacts_search`, `contacts_create`, `tasks_list`, `tasks_create`, `tasks_complete`, `schedule_task`, `list_scheduled_jobs`, `cancel_scheduled_job` |
+
+## Scheduler
+
+El runtime incluye un `Scheduler` para ejecución cron, one-time y delayed:
+
+- Jobs persisten a JSONL y se restauran al reiniciar.
+- Tools de agente: `schedule_task` (hitl), `list_scheduled_jobs` (allow), `cancel_scheduled_job` (hitl).
+- Schedules configurables via `RuntimeOptions.schedules`.
 
 ## Comportamientos esperados
 
