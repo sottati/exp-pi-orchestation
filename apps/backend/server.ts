@@ -56,12 +56,64 @@ function broadcast(msg: object) {
     }
 }
 
+const delegationStarts = new Map<string, {
+    runId: string;
+    fromAgentId: string;
+    toAgentId: string;
+    task: string;
+    timestamp: number;
+}>();
+
 // Monkey-patch for real-time trace push
 const _appendTrace = runtime.store.appendTrace.bind(runtime.store);
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (runtime.store as any).appendTrace = async (event: TraceEvent) => {
     await _appendTrace(event);
     broadcast({ type: "trace", event });
+
+    // Delegation tracking: emit delegation_start on tool_start for delegate tools
+    if (
+        event.type === "tool_start" &&
+        event.toolCallId &&
+        (event.toolName === "delegate" || event.toolName === "delegate_task")
+    ) {
+        const details = event.details as Record<string, unknown> | undefined;
+        const info = {
+            runId: event.runId,
+            fromAgentId: event.agentId ?? "orchestrator",
+            toAgentId: String(details?.agentId ?? "unknown"),
+            task: String(details?.task ?? ""),
+            timestamp: event.timestamp,
+        };
+        delegationStarts.set(event.toolCallId, info);
+        broadcast({
+            type: "delegation_start",
+            runId: info.runId,
+            delegationId: event.toolCallId,
+            fromAgentId: info.fromAgentId,
+            toAgentId: info.toAgentId,
+            task: info.task,
+        });
+    }
+
+    // Delegation tracking: emit delegation_end on tool_end for matching toolCallId
+    if (
+        event.type === "tool_end" &&
+        event.toolCallId &&
+        delegationStarts.has(event.toolCallId)
+    ) {
+        const start = delegationStarts.get(event.toolCallId)!;
+        delegationStarts.delete(event.toolCallId);
+        const details = event.details as Record<string, unknown> | undefined;
+        broadcast({
+            type: "delegation_end",
+            runId: start.runId,
+            delegationId: event.toolCallId,
+            result: String(details?.result ?? ""),
+            durationMs: event.timestamp - start.timestamp,
+            status: event.status === "ok" ? "ok" : "error",
+        });
+    }
 };
 
 // Monkey-patch for chat lifecycle push
@@ -136,7 +188,7 @@ Bun.serve({
     websocket: {
         open(ws) {
             clients.add(ws);
-            ws.send(JSON.stringify({ type: "agents", agents: runtime.listAgents() }));
+            ws.send(JSON.stringify({ type: "agents", agents: runtime.listAgents(), sessionId }));
         },
         close(ws) {
             clients.delete(ws);
