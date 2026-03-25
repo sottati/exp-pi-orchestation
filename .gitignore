@@ -36,3 +36,5 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .runtime-data
 .ralph/
 .worktrees/
+# CocoIndex Code (ccc)
+/.cocoindex_code/
