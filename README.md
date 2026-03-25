@@ -99,6 +99,7 @@ Abre http://localhost:3000 para ver el dashboard de Dithie:
 - **Estética B&W**: paleta monocromática negro/blanco/gris, fuente JetBrains Mono, estilo terminal moderno.
 - **Dithie**: pixel-art spider (16x16) como identidad del orchestrator, con estados animados (idle, thinking, delegating, error).
 - **Chat unificado**: toda la conversación pasa por Dithie (orchestrator). Las delegaciones se muestran como bloques colapsables inline.
+- **Antes del primer token**: fila compacta con la mascota y la etiqueta «thinking» (sin burbuja vacía); al empezar el stream aparece la burbuja con el cursor.
 - **Panel de trazas**: trazas en tiempo real (newest-last) con items expandibles y duración calculada client-side.
 - **Reload seguro**: al refrescar con F5/Ctrl+R, la UI rehidrata chat, delegaciones y trazas persistidas de la sesión activa.
 - **WebSocket** en `/ws`: deltas de streaming, delegation events (`delegation_start`/`delegation_end`), lifecycle de chats y push de trazas.

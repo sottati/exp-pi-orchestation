@@ -264,6 +264,26 @@ html, body, #root {
   border-radius: 0;
 }
 
+/* ── Thinking (pre-stream) ───────────────────────────────────────────────── */
+
+.thinking-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  align-self: flex-start;
+  gap: 12px;
+  padding: 8px 4px 12px;
+  user-select: none;
+}
+
+.thinking-row-label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  animation: dot-pulse 1s ease-in-out infinite;
+}
+
 /* ── Streaming ───────────────────────────────────────────────────────────── */
 
 .streaming .message-content {

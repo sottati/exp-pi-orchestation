@@ -20,7 +20,7 @@ export function createAgentDefinitions(opts?: {
   const orchestrator = defineAgent(ORCHESTRATOR_ID)
     .name("Orchestrator")
     .role("Routes and delegates tasks to specialists.")
-    .model("openrouter", "google/gemini-3.1-flash-lite-preview")
+    .model("openrouter", "google/gemini-3-flash-preview")
     .systemPrompt([
       "You are an orchestrator agent.",
       "Use list_agents to discover available specialists.",

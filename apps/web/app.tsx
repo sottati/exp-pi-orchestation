@@ -365,6 +365,17 @@ function MessageBubble({ msg }: { msg: UIMessage }) {
   );
 }
 
+// ─── Thinking (no tokens yet — avoid empty message bubble) ─────────────────
+
+function ThinkingRow() {
+  return (
+    <div className="thinking-row" aria-live="polite" aria-busy="true">
+      <DithieSprite size={32} state="thinking" />
+      <span className="thinking-row-label">thinking</span>
+    </div>
+  );
+}
+
 // ─── StreamingBubble ─────────────────────────────────────────────────────────
 
 function StreamingBubble({ content }: { content: string }) {
@@ -374,7 +385,7 @@ function StreamingBubble({ content }: { content: string }) {
         <DithieSprite size={16} state="thinking" /> DITHIE
       </div>
       <pre className="message-content">
-        {content || "\u00a0"}
+        {content}
         <span className="streaming-cursor">{"\u2588"}</span>
       </pre>
     </div>
@@ -473,7 +484,13 @@ function ChatPanel({ state, dispatch }: { state: State; dispatch: React.Dispatch
             />
           );
         })}
-        {state.isStreaming && <StreamingBubble content={state.streamBuffer} />}
+        {state.isStreaming && (
+          state.streamBuffer === "" ? (
+            <ThinkingRow />
+          ) : (
+            <StreamingBubble content={state.streamBuffer} />
+          )
+        )}
       </div>
     </div>
   );

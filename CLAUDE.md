@@ -313,6 +313,7 @@ Serves on http://localhost:3000.
 - **B&W monochromatic palette**: `#000` bg, `#fff` text, grey surfaces/borders. No colors.
 - **Dithie**: pixel-art spider character as orchestrator identity. States: idle (breathing + blink), thinking (eye movement cycle), delegating (eyes shifted), error (X eyes).
 - **Unified chat**: all conversation goes through Dithie (orchestrator). No agent switching. Delegations shown as collapsible inline blocks.
+- **Pre-stream**: while waiting for the first token after `chat_sending`, the chat shows a compact `thinking-row` (mascot + label) instead of an empty message bubble; streaming text uses the usual bubble + cursor.
 - **Split view**: Chat panel (flex:1) | Trace panel (280px fixed).
 - **Refresh restore**: F5/Ctrl+R rehydrates persisted session chat, delegation blocks, and traces via REST before WS reconnect.
 - **Font**: JetBrains Mono via Google Fonts CDN.
