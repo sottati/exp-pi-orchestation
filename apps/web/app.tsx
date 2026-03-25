@@ -1,17 +1,10 @@
 import React, { useReducer, useEffect, useRef, useCallback, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { DithieSprite } from "./dithie-sprite";
+import type { AgentInfo, ChatItem, DelegationBlock, HydratedUiState, UIMessage } from "./ui-state";
 import "./app.css";
 
 // ─── Types & Interfaces ──────────────────────────────────────────────────────
-
-interface AgentInfo {
-  id: string;
-  name: string;
-  role: string;
-  capabilities: string[];
-  maxConcurrency: number;
-}
 
 interface TraceEvent {
   eventId: string;
@@ -25,30 +18,7 @@ interface TraceEvent {
   details?: Record<string, unknown>;
 }
 
-interface DelegationBlock {
-  delegationId: string;
-  fromAgentId: string;
-  toAgentId: string;
-  task: string;
-  result?: string;
-  status: "running" | "ok" | "error";
-  durationMs?: number;
-}
-
 type DithieState = "idle" | "thinking" | "delegating" | "error";
-
-interface UIMessage {
-  id: string;
-  role: "user" | "assistant" | "error";
-  content: string;
-  timestamp: number;
-  runId?: string;
-  durationMs?: number;
-}
-
-type ChatItem =
-  | { kind: "message"; message: UIMessage }
-  | { kind: "delegation"; delegationId: string };
 
 interface State {
   agents: AgentInfo[];
@@ -82,6 +52,7 @@ type ServerMsg =
   | { type: "delegation_end"; runId: string; delegationId: string; result: string; durationMs: number; status: "ok" | "error" };
 
 type LocalAction =
+  | { type: "hydrate"; snapshot: HydratedUiState }
   | { type: "send_user_message"; content: string; id: string }
   | { type: "toggle_trace"; eventId: string }
   | { type: "toggle_delegation"; delegationId: string }
@@ -113,6 +84,18 @@ const initialState: State = {
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
+    case "hydrate":
+      return {
+        ...state,
+        agents: action.snapshot.agents,
+        sessionId: action.snapshot.sessionId,
+        messages: action.snapshot.messages,
+        chatItems: action.snapshot.chatItems,
+        traces: action.snapshot.traces,
+        delegations: action.snapshot.delegations,
+        traceDurations: action.snapshot.traceDurations,
+      };
+
     case "agents":
       return {
         ...state,
@@ -594,17 +577,40 @@ function App() {
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    const ws = new WebSocket(`ws://${location.host}/ws`);
-    wsRef.current = ws;
-    ws.onopen = () => dispatch({ type: "ws_connected" });
-    ws.onclose = () => dispatch({ type: "ws_disconnected" });
-    ws.onmessage = (e) => {
+    let cancelled = false;
+    let ws: WebSocket | null = null;
+
+    const connect = async () => {
       try {
-        dispatch(JSON.parse(e.data as string));
-      } catch { /* ignore parse errors */ }
+        const response = await fetch("/api/ui-state");
+        if (response.ok) {
+          const snapshot = await response.json() as HydratedUiState;
+          if (!cancelled) dispatch({ type: "hydrate", snapshot });
+        }
+      } catch {
+        // ignore bootstrap errors; websocket still connects
+      }
+
+      if (cancelled) return;
+
+      ws = new WebSocket(`ws://${location.host}/ws`);
+      wsRef.current = ws;
+      ws.onopen = () => dispatch({ type: "ws_connected" });
+      ws.onclose = () => dispatch({ type: "ws_disconnected" });
+      ws.onmessage = (e) => {
+        try {
+          dispatch(JSON.parse(e.data as string));
+        } catch { /* ignore parse errors */ }
+      };
+      ws.onerror = () => dispatch({ type: "stream_error", runId: "", error: "WebSocket connection error" });
     };
-    ws.onerror = () => dispatch({ type: "stream_error", runId: "", error: "WebSocket connection error" });
-    return () => ws.close();
+
+    void connect();
+
+    return () => {
+      cancelled = true;
+      ws?.close();
+    };
   }, []);
 
   useEffect(() => {

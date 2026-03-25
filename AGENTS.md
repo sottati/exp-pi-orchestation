@@ -144,6 +144,7 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Google Tasks tools: `packages/core/google-tasks-tools.ts` (`tasks_list`, `tasks_create`, `tasks_complete` — assigned to `secretary`)
 - Chat orchestration: `packages/core/chat-manager.ts` (per-agent concurrency with FIFO queue, disk persistence and restore)
 - Persistence: `packages/core/thread-store.ts` (threads, traces, chat records — atomic append, fault-tolerant JSONL)
+- Web UI state hydration: `apps/web/ui-state.ts` (rebuilds persisted chat/delegation/trace view so F5/Ctrl+R keeps session context)
 - Error utilities: `packages/core/errors.ts` (`errorMessage`, `safeAsync`, `safeParseLine`)
 - Contracts: `packages/core/contracts.ts`
 

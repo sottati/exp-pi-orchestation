@@ -100,8 +100,9 @@ Abre http://localhost:3000 para ver el dashboard de Dithie:
 - **Dithie**: pixel-art spider (16x16) como identidad del orchestrator, con estados animados (idle, thinking, delegating, error).
 - **Chat unificado**: toda la conversación pasa por Dithie (orchestrator). Las delegaciones se muestran como bloques colapsables inline.
 - **Panel de trazas**: trazas en tiempo real (newest-last) con items expandibles y duración calculada client-side.
+- **Reload seguro**: al refrescar con F5/Ctrl+R, la UI rehidrata chat, delegaciones y trazas persistidas de la sesión activa.
 - **WebSocket** en `/ws`: deltas de streaming, delegation events (`delegation_start`/`delegation_end`), lifecycle de chats y push de trazas.
-- **REST API**: `/api/agents`, `/api/chats`, `/api/threads`, `/api/traces`, `/api/jobs`.
+- **REST API**: `/api/agents`, `/api/chats`, `/api/threads`, `/api/traces`, `/api/ui-state`, `/api/jobs`.
 
 La CLI (`bun run start`) y el servidor UI son entradas independientes que comparten `MultiAgentRuntime`.
 

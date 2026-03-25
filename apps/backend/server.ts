@@ -6,9 +6,10 @@ import type { TraceEvent, AgentChat, ScheduledJob, BaseAgentId } from "../../pac
 import { errorMessage } from "../../packages/core/errors";
 import type { HITLHandler } from "../../packages/core/tool-middleware";
 import { createAgentDefinitions } from "../../packages/core/agents";
+import { buildHydratedUiState, getPrimaryThreadId } from "../web/ui-state";
 
 const sessionIdx = process.argv.indexOf("--session");
-const sessionId = sessionIdx !== -1 ? process.argv[sessionIdx + 1] : "default";
+const sessionId = sessionIdx !== -1 ? (process.argv[sessionIdx + 1] ?? "default") : "default";
 
 type WsClient = import("bun").ServerWebSocket<unknown>;
 const clients = new Set<WsClient>();
@@ -78,11 +79,13 @@ const _appendTrace = runtime.store.appendTrace.bind(runtime.store);
         (event.toolName === "delegate" || event.toolName === "delegate_task")
     ) {
         const details = event.details as Record<string, unknown> | undefined;
+        const args = details?.args as Record<string, unknown> | undefined;
+        const taskFromTrace = details?.task ?? args?.task;
         const info = {
             runId: event.runId,
             fromAgentId: event.agentId ?? "orchestrator",
-            toAgentId: String(details?.agentId ?? "unknown"),
-            task: String(details?.task ?? ""),
+            toAgentId: String(details?.agentId ?? args?.agentId ?? "unknown"),
+            task: String(taskFromTrace ?? ""),
             timestamp: event.timestamp,
         };
         delegationStarts.set(event.toolCallId, info);
@@ -170,6 +173,18 @@ Bun.serve({
         },
         "/api/traces": {
             GET: async () => Response.json(await runtime.getTraces()),
+        },
+        "/api/ui-state": {
+            GET: async () => {
+                const traces = await runtime.getTraces();
+                const threadMessages = await runtime.getThread(getPrimaryThreadId(sessionId));
+                return Response.json(buildHydratedUiState({
+                    agents: runtime.listAgents(),
+                    sessionId,
+                    threadMessages,
+                    traces,
+                }));
+            },
         },
         "/api/jobs": {
             GET: () => Response.json(runtime.scheduler?.listJobs() ?? []),

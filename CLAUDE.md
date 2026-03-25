@@ -314,12 +314,14 @@ Serves on http://localhost:3000.
 - **Dithie**: pixel-art spider character as orchestrator identity. States: idle (breathing + blink), thinking (eye movement cycle), delegating (eyes shifted), error (X eyes).
 - **Unified chat**: all conversation goes through Dithie (orchestrator). No agent switching. Delegations shown as collapsible inline blocks.
 - **Split view**: Chat panel (flex:1) | Trace panel (280px fixed).
+- **Refresh restore**: F5/Ctrl+R rehydrates persisted session chat, delegation blocks, and traces via REST before WS reconnect.
 - **Font**: JetBrains Mono via Google Fonts CDN.
 
 ### Files
-- `apps/backend/server.ts`: `Bun.serve()` with REST routes + WebSocket at `/ws`. Monkey-patches `store.appendTrace` for real-time trace push + delegation event tracking (`delegation_start`/`delegation_end`). Also patches `store.appendChatRecord` and `store.appendJob`.
+- `apps/backend/server.ts`: `Bun.serve()` with REST routes + WebSocket at `/ws`. Monkey-patches `store.appendTrace` for real-time trace push + delegation event tracking (`delegation_start`/`delegation_end`). Also patches `store.appendChatRecord` and `store.appendJob`. Exposes `/api/ui-state` for reload hydration.
 - `apps/web/index.html`: HTML shell (title "dithie", JetBrains Mono font link).
-- `apps/web/app.tsx`: React SPA (useReducer). Header, ChatPanel, TracePanel, InputBar. Dithie state machine (idle/thinking/delegating/error). Delegation blocks and trace duration computed client-side.
+- `apps/web/app.tsx`: React SPA (useReducer). Header, ChatPanel, TracePanel, InputBar. Dithie state machine (idle/thinking/delegating/error). Bootstraps from `/api/ui-state`, then reconnects WS for live updates.
+- `apps/web/ui-state.ts`: shared snapshot builder for persisted UI hydration (messages, delegations, trace durations, primary thread lookup).
 - `apps/web/app.css`: B&W palette, layout grid, all component styles, animations (blink-cursor, breathe, dot-pulse).
 - `apps/web/dithie-sprite.tsx`: `DithieSprite` component — CSS Grid for 16/32px, canvas for 64px. Animation cycling per state.
 - `apps/web/dithie-frames.ts`: Pixel grid data (`Frame = number[][]`) for all animation frames (idle, blink, thinking 1-4, delegating, error).
