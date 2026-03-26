@@ -314,6 +314,7 @@ Serves on http://localhost:3000.
 - **Dithie**: pixel-art spider character as orchestrator identity. States: idle (breathing + blink), thinking (eye movement cycle), delegating (eyes shifted), error (X eyes).
 - **Unified chat**: all conversation goes through Dithie (orchestrator). No agent switching. Delegations shown as collapsible inline blocks.
 - **Pre-stream**: while waiting for the first token after `chat_sending`, the chat shows a compact `thinking-row` (mascot + label) instead of an empty message bubble; streaming text uses the usual bubble + cursor.
+- **Send anchor**: after each user send, the last user bubble is anchored at the top of the message list via programmatic container scroll (`scroll-margin` on `.message--user`); auto-scroll-to-bottom is skipped until the first `stream_delta`, then normal near-bottom following resumes. Optional `message-list-spacer` (`flex-grow` in `.message-list-inner`) during thinking-only fills short threads.
 - **Split view**: Chat panel (flex:1) | Trace panel (280px fixed).
 - **Refresh restore**: F5/Ctrl+R rehydrates persisted session chat, delegation blocks, and traces via REST before WS reconnect.
 - **Font**: JetBrains Mono via Google Fonts CDN.

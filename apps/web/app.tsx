@@ -1,4 +1,4 @@
-import React, { useReducer, useEffect, useRef, useCallback, useState } from "react";
+import React, { useReducer, useEffect, useLayoutEffect, useRef, useCallback, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { DithieSprite } from "./dithie-sprite";
 import type { AgentInfo, ChatItem, DelegationBlock, HydratedUiState, UIMessage } from "./ui-state";
@@ -345,7 +345,7 @@ function MessageBubble({ msg }: { msg: UIMessage }) {
   const classNames = `message message--${msg.role === "assistant" ? "dithie" : msg.role}`;
 
   return (
-    <div className={classNames}>
+    <div className={classNames} id={msg.role === "user" ? `msg-${msg.id}` : undefined}>
       <div className="message-meta">
         {msg.role === "user" ? (
           "YOU"
@@ -381,9 +381,7 @@ function ThinkingRow() {
 function StreamingBubble({ content }: { content: string }) {
   return (
     <div className="message message--dithie streaming">
-      <div className="message-meta">
-        <DithieSprite size={16} state="thinking" /> DITHIE
-      </div>
+      <div className="message-meta">DITHIE</div>
       <pre className="message-content">
         {content}
         <span className="streaming-cursor">{"\u2588"}</span>
@@ -428,8 +426,21 @@ function DelegationBlockComponent({ delegation, expanded, onToggle }: {
 
 // ─── ChatPanel ───────────────────────────────────────────────────────────────
 
-function ChatPanel({ state, dispatch }: { state: State; dispatch: React.Dispatch<Action> }) {
+function ChatPanel({
+  state,
+  dispatch,
+  pendingAnchorUserMessageId,
+  onAnchorComplete,
+}: {
+  state: State;
+  dispatch: React.Dispatch<Action>;
+  pendingAnchorUserMessageId: string | null;
+  onAnchorComplete: () => void;
+}) {
   const listRef = useRef<HTMLDivElement>(null);
+  const wasNearBottomRef = useRef(true);
+  const wasStreamingRef = useRef(false);
+  const justEndedStreamingRef = useRef(false);
 
   const isNearBottom = useCallback(() => {
     const el = listRef.current;
@@ -444,17 +455,47 @@ function ChatPanel({ state, dispatch }: { state: State; dispatch: React.Dispatch
     }
   }, []);
 
-  const wasNearBottomRef = useRef(true);
+  // Anchor: scroll user message to top when streaming starts
+  useLayoutEffect(() => {
+    if (!pendingAnchorUserMessageId || !state.isStreaming) return;
 
+    const container = listRef.current;
+    const target = document.getElementById(`msg-${pendingAnchorUserMessageId}`);
+    if (!container || !target) return;
+
+    const containerRect = container.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const top = Math.max(0, targetRect.top - containerRect.top + container.scrollTop - 12);
+    container.scrollTo({ top, behavior: "smooth" });
+    onAnchorComplete();
+  }, [pendingAnchorUserMessageId, state.isStreaming, onAnchorComplete]);
+
+  // Track end-of-streaming
   useEffect(() => {
-    wasNearBottomRef.current = isNearBottom();
+    if (wasStreamingRef.current && !state.isStreaming) {
+      justEndedStreamingRef.current = true;
+    }
+    wasStreamingRef.current = state.isStreaming;
+  }, [state.isStreaming]);
+
+  // Track scroll position (non-streaming only)
+  useEffect(() => {
+    if (!state.isStreaming) {
+      wasNearBottomRef.current = isNearBottom();
+    }
   });
 
+  // Auto-scroll for non-streaming message appends only
   useEffect(() => {
+    if (state.isStreaming || pendingAnchorUserMessageId) return;
+    if (justEndedStreamingRef.current) {
+      justEndedStreamingRef.current = false;
+      return;
+    }
     if (wasNearBottomRef.current) {
       scrollToBottom();
     }
-  }, [state.chatItems.length, state.streamBuffer, scrollToBottom]);
+  }, [state.chatItems.length, state.isStreaming, pendingAnchorUserMessageId, scrollToBottom]);
 
   const isEmpty = state.chatItems.length === 0 && !state.isStreaming;
 
@@ -466,31 +507,36 @@ function ChatPanel({ state, dispatch }: { state: State; dispatch: React.Dispatch
     );
   }
 
+  const showThinkingSpacer = state.isStreaming;
+
   return (
     <div className="chat-panel">
       <div className="message-list" ref={listRef}>
-        {state.chatItems.map((item, idx) => {
-          if (item.kind === "message") {
-            return <MessageBubble key={item.message.id} msg={item.message} />;
-          }
-          const delegation = state.delegations[item.delegationId];
-          if (!delegation) return null;
-          return (
-            <DelegationBlockComponent
-              key={item.delegationId}
-              delegation={delegation}
-              expanded={state.expandedDelegations.has(item.delegationId)}
-              onToggle={() => dispatch({ type: "toggle_delegation", delegationId: item.delegationId })}
-            />
-          );
-        })}
-        {state.isStreaming && (
-          state.streamBuffer === "" ? (
-            <ThinkingRow />
-          ) : (
-            <StreamingBubble content={state.streamBuffer} />
-          )
-        )}
+        <div className="message-list-inner">
+          {state.chatItems.map((item) => {
+            if (item.kind === "message") {
+              return <MessageBubble key={item.message.id} msg={item.message} />;
+            }
+            const delegation = state.delegations[item.delegationId];
+            if (!delegation) return null;
+            return (
+              <DelegationBlockComponent
+                key={item.delegationId}
+                delegation={delegation}
+                expanded={state.expandedDelegations.has(item.delegationId)}
+                onToggle={() => dispatch({ type: "toggle_delegation", delegationId: item.delegationId })}
+              />
+            );
+          })}
+          {state.isStreaming && (
+            state.streamBuffer === "" ? (
+              <ThinkingRow />
+            ) : (
+              <StreamingBubble content={state.streamBuffer} />
+            )
+          )}
+          {showThinkingSpacer && <div className="message-list-spacer" aria-hidden="true" />}
+        </div>
       </div>
     </div>
   );
@@ -591,7 +637,12 @@ function TracePanel({ traces, expandedTraces, traceDurations, onToggleTrace }: {
 
 function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
+  const [pendingAnchorUserMessageId, setPendingAnchorUserMessageId] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+
+  const onAnchorComplete = useCallback(() => {
+    setPendingAnchorUserMessageId(null);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -642,6 +693,7 @@ function App() {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     const id = `user-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     dispatch({ type: "send_user_message", content, id });
+    setPendingAnchorUserMessageId(id);
     ws.send(JSON.stringify({ type: "chat", toAgentId: "orchestrator", content }));
   }, []);
 
@@ -649,7 +701,12 @@ function App() {
     <div className="app">
       <Header dithieState={state.dithieState} sessionId={state.sessionId} wsConnected={state.wsConnected} />
       <div className="main">
-        <ChatPanel state={state} dispatch={dispatch} />
+        <ChatPanel
+          state={state}
+          dispatch={dispatch}
+          pendingAnchorUserMessageId={pendingAnchorUserMessageId}
+          onAnchorComplete={onAnchorComplete}
+        />
         <TracePanel
           traces={state.traces}
           expandedTraces={state.expandedTraces}

@@ -150,11 +150,21 @@ html, body, #root {
   flex: 1;
   overflow-y: auto;
   padding: 20px 20px 8px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.message-list-inner {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
+  min-height: 100%;
+  box-sizing: border-box;
+}
+
+.message-list-spacer {
+  flex: 1 1 auto;
+  min-height: calc(100vh - var(--header-h) - var(--input-h) - 80px);
 }
 
 .message-list::-webkit-scrollbar {
@@ -194,6 +204,8 @@ html, body, #root {
 
 .message--user {
   align-self: flex-end;
+  scroll-margin-top: 12px;
+  scroll-margin-bottom: 8px;
 }
 
 .message--dithie {
@@ -272,7 +284,12 @@ html, body, #root {
   align-items: center;
   align-self: flex-start;
   gap: 12px;
-  padding: 8px 4px 12px;
+  padding: 8px 12px;
+  max-width: 240px;
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--text);
+  background: var(--surface);
+  border-radius: 2px;
   user-select: none;
 }
 

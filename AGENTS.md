@@ -145,7 +145,7 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Chat orchestration: `packages/core/chat-manager.ts` (per-agent concurrency with FIFO queue, disk persistence and restore)
 - Persistence: `packages/core/thread-store.ts` (threads, traces, chat records — atomic append, fault-tolerant JSONL)
 - Web UI state hydration: `apps/web/ui-state.ts` (rebuilds persisted chat/delegation/trace view so F5/Ctrl+R keeps session context)
-- Web UI chat: `apps/web/app.tsx` shows a `thinking-row` (mascot + label) until the first stream token, then the streaming message bubble
+- Web UI chat: `apps/web/app.tsx` shows a `thinking-row` (mascot + label) until the first stream token, then the streaming message bubble; on send it anchors the user message to the top of the scroll area and skips bottom scroll until the first stream token
 - Error utilities: `packages/core/errors.ts` (`errorMessage`, `safeAsync`, `safeParseLine`)
 - Contracts: `packages/core/contracts.ts`
 
