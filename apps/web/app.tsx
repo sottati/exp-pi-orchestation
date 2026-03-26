@@ -1,54 +1,8 @@
 import React, { useReducer, useEffect, useRef, useCallback, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { DithieSprite } from "./dithie-sprite";
+import type { AgentInfo, TraceEvent, DelegationBlock, DithieState, UIMessage, ChatItem } from "./types";
 import "./app.css";
-
-// ─── Types & Interfaces ──────────────────────────────────────────────────────
-
-interface AgentInfo {
-  id: string;
-  name: string;
-  role: string;
-  capabilities: string[];
-  maxConcurrency: number;
-}
-
-interface TraceEvent {
-  eventId: string;
-  timestamp: number;
-  type: string;
-  status: string;
-  agentId?: string;
-  chatId?: string;
-  toolCallId?: string;
-  toolName?: string;
-  details?: Record<string, unknown>;
-}
-
-interface DelegationBlock {
-  delegationId: string;
-  fromAgentId: string;
-  toAgentId: string;
-  task: string;
-  result?: string;
-  status: "running" | "ok" | "error";
-  durationMs?: number;
-}
-
-type DithieState = "idle" | "thinking" | "delegating" | "error";
-
-interface UIMessage {
-  id: string;
-  role: "user" | "assistant" | "error";
-  content: string;
-  timestamp: number;
-  runId?: string;
-  durationMs?: number;
-}
-
-type ChatItem =
-  | { kind: "message"; message: UIMessage }
-  | { kind: "delegation"; delegationId: string };
 
 interface State {
   agents: AgentInfo[];
