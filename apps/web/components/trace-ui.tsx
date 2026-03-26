@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
-import type { CSSProperties } from "react";
 import type { TraceEvent } from "../../../packages/core/contracts";
+import { cn } from "../lib/utils";
 
 function TraceItem({
   trace,
@@ -14,14 +14,14 @@ function TraceItem({
   onToggle: () => void;
 }) {
   let statusPrefix = "";
-  let statusStyle: CSSProperties = {};
+  let statusClassName = "";
 
   if (trace.status === "ok" || trace.status === "completed") {
     statusPrefix = "\u2713 ";
   } else if (trace.status === "error") {
     statusPrefix = "\u2717 ";
   } else if (trace.status === "cancelled") {
-    statusStyle = { textDecoration: "line-through" };
+    statusClassName = "line-through";
   }
 
   const durationLabel = duration !== undefined ? `${(duration / 1000).toFixed(1)}s` : "";
@@ -29,17 +29,26 @@ function TraceItem({
   return (
     <>
       <div
-        className={`trace-item${expanded ? " expanded" : ""}`}
+        className={cn(
+          "flex cursor-pointer flex-row items-baseline gap-1.5 border-l-2 border-transparent px-2.5 py-1 text-[11px] leading-[1.4] transition-colors hover:bg-[var(--theme-background-input)]",
+          expanded && "border-l-[var(--theme-text)]",
+          statusClassName,
+        )}
         onClick={onToggle}
-        style={statusStyle}
       >
-        <span className="trace-type">{statusPrefix}{trace.type}</span>
-        {trace.agentId && <span className="trace-agent">{trace.agentId}</span>}
-        <span className="trace-status">{trace.status}</span>
-        {durationLabel && <span className="trace-duration">{durationLabel}</span>}
+        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[var(--theme-text)]">
+          {statusPrefix}{trace.type}
+        </span>
+        {trace.agentId && (
+          <span className="max-w-[70px] shrink-0 overflow-hidden text-ellipsis whitespace-nowrap text-[10px] text-[var(--theme-border-subdued)]">
+            {trace.agentId}
+          </span>
+        )}
+        <span className="shrink-0 text-[10px] text-[var(--theme-border-subdued)]">{trace.status}</span>
+        {durationLabel && <span className="shrink-0 text-[10px] text-[var(--theme-border-subdued)]">{durationLabel}</span>}
       </div>
       {expanded && trace.details && (
-        <div className="trace-details">
+        <div className="break-all border-l-2 border-[var(--theme-border-subdued)] px-2.5 py-1.5 pl-5 text-[10px] text-[var(--theme-border-subdued)]">
           {Object.entries(trace.details).map(([key, value]) => (
             <div key={key}>{key}: {typeof value === "object" ? JSON.stringify(value) : String(value)}</div>
           ))}
@@ -86,10 +95,18 @@ export function TracePanel({
   }, [traces.length]);
 
   return (
-    <div className={`trace-panel${variant === "page" ? " trace-panel--page" : ""}`}>
-      <div className="trace-panel-title">{title}</div>
-      <div className="trace-list" ref={listRef}>
-        {traces.length === 0 && <div className="trace-empty">no traces yet</div>}
+    <div className={cn(
+      "flex min-h-0 flex-col overflow-hidden border-l border-[var(--theme-border)]",
+      variant === "sidebar" ? "w-[var(--trace-w)] shrink-0" : "w-full border-l-0",
+    )}>
+      <div className="shrink-0 border-b border-[var(--theme-border)] px-3 py-2.5 text-[10px] uppercase tracking-[0.12em] text-[var(--theme-border-subdued)]">
+        {title}
+      </div>
+      <div
+        className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-0 py-1.5 [scrollbar-color:var(--theme-border)_transparent]"
+        ref={listRef}
+      >
+        {traces.length === 0 && <div className="px-3 py-3 text-[11px] text-[var(--theme-border-subdued)]">no traces yet</div>}
         {traces.map((trace) => (
           <TraceItem
             key={trace.eventId}

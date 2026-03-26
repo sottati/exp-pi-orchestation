@@ -3,10 +3,11 @@ import type { KeyboardEvent } from "react";
 import { DithieSprite } from "../dithie-sprite";
 import { useRuntime, type RuntimeState } from "../runtime-context";
 import type { DelegationBlock, UIMessage } from "../ui-state";
+import { cn } from "../lib/utils";
 
 function EmptyState() {
   return (
-    <div className="empty-state">
+    <div className="flex flex-1 select-none flex-col items-center justify-center gap-4 text-center text-[12px] text-[var(--theme-border-subdued)]">
       <DithieSprite size={64} state="idle" />
       <span>send a message to start</span>
     </div>
@@ -14,11 +15,26 @@ function EmptyState() {
 }
 
 function MessageBubble({ msg }: { msg: UIMessage }) {
-  const classNames = `message message--${msg.role === "assistant" ? "dithie" : msg.role}`;
+  const containerClassName = cn(
+    "flex max-w-[85%] flex-col gap-1",
+    msg.role === "user" ? "self-end" : "self-start",
+  );
+
+  const contentClassName = cn(
+    "rounded-[2px] border border-[var(--theme-border)] bg-[var(--theme-background-modal)] px-[14px] py-[10px] font-mono text-[13px] leading-[1.65] whitespace-pre-wrap break-words",
+    msg.role === "user" && "border-r-2 border-l border-r-[var(--theme-text)] text-right",
+    msg.role === "assistant" && "border-l-2 border-r border-l-[var(--theme-text)]",
+    msg.role === "error" && "border-l-2 border-r border-l-[var(--theme-border-subdued)] text-[var(--theme-button-foreground)]",
+  );
 
   return (
-    <div className={classNames}>
-      <div className="message-meta">
+    <div className={containerClassName}>
+      <div
+        className={cn(
+          "px-[2px] text-[10px] uppercase tracking-[0.06em] text-[var(--theme-border-subdued)]",
+          msg.role === "user" && "text-right",
+        )}
+      >
         {msg.role === "user" ? (
           "YOU"
         ) : msg.role === "assistant" ? (
@@ -29,32 +45,40 @@ function MessageBubble({ msg }: { msg: UIMessage }) {
           "ERROR"
         )}
         {msg.durationMs !== undefined && (
-          <span className="message-duration">{(msg.durationMs / 1000).toFixed(1)}s</span>
+          <span className="ml-1 text-[9px] text-[var(--theme-border-subdued)]">
+            {(msg.durationMs / 1000).toFixed(1)}s
+          </span>
         )}
       </div>
-      <pre className="message-content">{msg.content}</pre>
+      <pre className={contentClassName}>{msg.content}</pre>
     </div>
   );
 }
 
 function ThinkingRow() {
   return (
-    <div className="thinking-row" aria-live="polite" aria-busy="true">
+    <div
+      className="flex select-none flex-row items-center gap-3 self-start px-1 pt-2 pb-3"
+      aria-live="polite"
+      aria-busy="true"
+    >
       <DithieSprite size={32} state="thinking" />
-      <span className="thinking-row-label">thinking</span>
+      <span className="animate-[dot-pulse_1s_ease-in-out_infinite] text-[11px] uppercase tracking-[0.08em] text-[var(--theme-border-subdued)]">
+        thinking
+      </span>
     </div>
   );
 }
 
 function StreamingBubble({ content }: { content: string }) {
   return (
-    <div className="message message--dithie streaming">
-      <div className="message-meta">
+    <div className="flex max-w-[85%] flex-col gap-1 self-start">
+      <div className="px-[2px] text-[10px] uppercase tracking-[0.06em] text-[var(--theme-border-subdued)]">
         <DithieSprite size={16} state="thinking" /> DITHIE
       </div>
-      <pre className="message-content">
+      <pre className="rounded-[2px] border border-r border-l-2 border-[var(--theme-border)] border-l-[var(--theme-text)] bg-[var(--theme-background-modal)] px-[14px] py-[10px] font-mono text-[13px] leading-[1.65] whitespace-pre-wrap break-words opacity-90">
         {content}
-        <span className="streaming-cursor">{"\u2588"}</span>
+        <span className="inline-block animate-[blink-cursor_0.6s_step-end_infinite]">{"\u2588"}</span>
       </pre>
     </div>
   );
@@ -78,15 +102,25 @@ function DelegationBlockComponent({
     : "";
 
   return (
-    <div className={`delegation-block delegation-status--${delegation.status}`}>
-      <div className="delegation-header" onClick={onToggle}>
-        <span className={`delegation-arrow${expanded ? " expanded" : ""}`}>{"\u25B8"}</span>
-        <span className="delegation-label">
+    <div className="my-1 rounded-[2px] border border-dashed border-[var(--theme-border)] text-[11px]">
+      <div
+        className="flex cursor-pointer flex-row items-center gap-[6px] px-[10px] py-[6px] select-none hover:bg-[var(--theme-background-input)]"
+        onClick={onToggle}
+      >
+        <span
+          className={cn(
+            "inline-block text-[10px] text-[var(--theme-border-subdued)] transition-transform duration-150 ease-in-out",
+            expanded && "rotate-90",
+          )}
+        >
+          {"\u25B8"}
+        </span>
+        <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-[var(--theme-border-subdued)]">
           dithie &rarr; {delegation.toAgentId}: &quot;{taskPreview}&quot;{durationLabel}
         </span>
       </div>
       {expanded && (
-        <div className="delegation-body">
+        <div className="border-t border-dashed border-[var(--theme-border)] px-[10px] py-2 text-[11px] text-[var(--theme-border-subdued)]">
           <div><strong>Task:</strong> {delegation.task}</div>
           {delegation.result && <div><strong>Result:</strong> {delegation.result}</div>}
           <div><strong>Status:</strong> {delegation.status}</div>
@@ -133,15 +167,18 @@ export function ChatPanel({
 
   if (isEmpty) {
     return (
-      <div className="chat-panel">
+      <div className="flex flex-1 flex-col overflow-hidden">
         <EmptyState />
       </div>
     );
   }
 
   return (
-    <div className="chat-panel">
-      <div className="message-list" ref={listRef}>
+    <div className="flex flex-1 flex-col overflow-hidden">
+      <div
+        className="flex flex-1 flex-col gap-3 overflow-y-auto px-5 pt-5 pb-2 scrollbar-thin"
+        ref={listRef}
+      >
         {state.chatItems.map((item) => {
           if (item.kind === "message") {
             return <MessageBubble key={item.message.id} msg={item.message} />;
@@ -194,11 +231,18 @@ export function InputBar() {
   };
 
   return (
-    <div className={`input-bar${state.isStreaming ? " input-bar--disabled" : ""}`}>
-      <span className="input-prompt">{">_"}</span>
+    <div className="flex h-[var(--input-h)] shrink-0 items-center gap-2 border-t border-[var(--theme-border)] bg-[var(--theme-background-modal)] px-4 py-3">
+      <span
+        className={cn(
+          "shrink-0 self-center font-mono text-[13px] text-[var(--theme-border-subdued)]",
+          state.isStreaming && "animate-[dot-pulse_1s_ease-in-out_infinite]",
+        )}
+      >
+        {">_"}
+      </span>
       <input
         ref={inputRef}
-        className="input-field"
+        className="min-w-0 flex-1 bg-transparent font-mono text-[13px] text-[var(--theme-text)] outline-none placeholder:text-[var(--theme-border-subdued)] disabled:cursor-not-allowed disabled:text-[var(--theme-border-subdued)]"
         value={value}
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={handleKeyDown}

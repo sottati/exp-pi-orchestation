@@ -1,4 +1,5 @@
 import { NavLink } from "react-router-dom";
+import { cn } from "../lib/utils";
 
 const NAV_ITEMS = [
   { to: "/", label: "chat", end: true },
@@ -10,13 +11,21 @@ const NAV_ITEMS = [
 
 export function AppNav() {
   return (
-    <nav className="top-nav" aria-label="Primary">
+    <nav
+      className="flex items-center gap-2 overflow-x-auto border-b border-theme-border bg-theme-panel px-4 py-2.5"
+      aria-label="Primary"
+    >
       {NAV_ITEMS.map((item) => (
         <NavLink
           key={item.to}
           to={item.to}
           end={item.end}
-          className={({ isActive }) => `top-nav-link${isActive ? " top-nav-link--active" : ""}`}
+          className={({ isActive }) =>
+            cn(
+              "inline-flex min-h-7 items-center whitespace-nowrap border border-theme-border px-2.5 text-[10px] uppercase tracking-[0.08em] text-theme-muted transition-colors hover:bg-theme-hover hover:text-theme-secondary",
+              isActive && "border-theme-text text-theme-text",
+            )
+          }
         >
           {item.label}
         </NavLink>

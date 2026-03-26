@@ -96,13 +96,15 @@ bun run ui -- --session demo-1
 
 Abre http://localhost:3000 para ver el dashboard de Dithie:
 
-- **Estética B&W**: paleta monocromática negro/blanco/gris, fuente JetBrains Mono, estilo terminal moderno.
+- **Estética Sacred-inspired**: paleta derivada del sistema de tokens de `sacred.computer`, con tema claro por defecto, superficies/contrastes terminales y fuente JetBrains Mono.
 - **Dithie**: pixel-art spider (16x16) como identidad del orchestrator, con estados animados (idle, thinking, delegating, error).
 - **Chat unificado**: toda la conversación pasa por Dithie (orchestrator). Las delegaciones se muestran como bloques colapsables inline.
 - **React Router**: la UI ya no vive en un `App.tsx` monolítico; usa layout persistente + rutas para `/`, `/traces`, `/agents`, `/chats` y `/jobs`.
+- **Tailwind UI**: el layout y los componentes usan utilidades Tailwind; `app.css` quedó como capa global de tokens, tema y animaciones, y se compila a `apps/web/app.generated.css`.
 - **Antes del primer token**: fila compacta con la mascota y la etiqueta «thinking» (sin burbuja vacía); al empezar el stream aparece la burbuja con el cursor.
 - **Panel de trazas**: trazas en tiempo real (newest-last) con items expandibles y duración calculada client-side.
 - **Reload seguro**: al refrescar con F5/Ctrl+R, la UI rehidrata chat, delegaciones, trazas, chats internos y jobs persistidos de la sesión activa.
+- **Color por agente**: la vista `/agents` asigna un tinte específico a cada agente usando una paleta compatible con Sacred.
 - **WebSocket** en `/ws`: deltas de streaming, delegation events (`delegation_start`/`delegation_end`), lifecycle de chats y push de trazas.
 - **REST API**: `/api/agents`, `/api/chats`, `/api/threads`, `/api/traces`, `/api/ui-state`, `/api/jobs`.
 - **Fallback SPA**: el servidor web sirve el HTML base en las rutas cliente (`/chat`, `/traces`, `/agents`, `/chats`, `/jobs`) para soportar deep-linking y refresh.
@@ -221,7 +223,10 @@ Cada envelope de hilo incluye metadatos de relación:
 - `apps/web/layouts/dashboard-layout.tsx`: shell persistente con header, navegación y barra de entrada.
 - `apps/web/pages/*.tsx`: páginas de router para chat, trazas, agentes, chats y jobs.
 - `apps/web/components/*.tsx`: componentes presentacionales reutilizables para chat, navegación y trazas.
-- `apps/web/app.css`: estilos B&W monocromáticos.
+- `apps/web/app.css`: capa global de Tailwind + tokens/tema inspirados en Sacred.
+- `apps/web/app.generated.css`: CSS compilado de Tailwind que consume la HTML servida por Bun.
+- `apps/web/lib/agent-colors.ts`: mapeo de tintes por agente y badges de estado.
+- `apps/web/lib/utils.ts`: helper `cn()` para composición de clases.
 - `apps/web/dithie-sprite.tsx`: componente DithieSprite (CSS Grid 16/32px, canvas 64px, animaciones).
 - `apps/web/dithie-frames.ts`: frame data del pixel-art spider (16x16 grids para cada estado).
 - `packages/core/runtime.ts`: runtime multiagente, enrutado de mensajes, correlación de IDs y trazas.

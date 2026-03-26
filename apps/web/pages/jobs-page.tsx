@@ -1,4 +1,5 @@
 import type { ScheduledJob } from "../../../packages/core/contracts";
+import { statusBadgeClassName } from "../lib/agent-colors";
 import { useRuntime } from "../runtime-context";
 
 function formatDate(timestamp?: number) {
@@ -20,51 +21,64 @@ export function JobsPage() {
   const { state } = useRuntime();
 
   return (
-    <section className="page stack-page">
-      <div className="page-header">
-        <div>
-          <div className="page-title">scheduled jobs</div>
-          <div className="page-subtitle">Estado del scheduler con refresco en vivo desde el runtime.</div>
+    <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex shrink-0 flex-col gap-1 border-b border-[var(--theme-border)] bg-[var(--theme-background-modal)] px-5 py-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-[12px] uppercase tracking-[0.14em] text-[var(--theme-text)]">scheduled jobs</div>
+            <div className="text-[11px] text-[var(--theme-border-subdued)]">Estado del scheduler con refresco en vivo desde el runtime.</div>
+          </div>
+          <span className="inline-flex items-center border border-[var(--theme-border-subdued)] px-2 py-[2px] text-[10px] uppercase tracking-[0.06em] text-[var(--theme-text)]">
+            {state.jobs.length} jobs
+          </span>
         </div>
-        <span className="resource-pill">{state.jobs.length} jobs</span>
       </div>
 
-      <div className="page-body">
+      <div className="min-h-0 flex-1 overflow-auto">
         {state.jobs.length === 0 ? (
-          <div className="empty-block">No hay jobs programados en esta sesión.</div>
+          <div className="px-5 py-[18px] text-[12px] text-[var(--theme-border-subdued)]">No hay jobs programados en esta sesión.</div>
         ) : (
-          <div className="table-view">
-            <div className="resource-list">
+          <div className="flex flex-col gap-2.5 px-5 py-4">
+            <div className="flex flex-col gap-2.5">
               {state.jobs.map((job) => (
-                <article key={job.jobId} className="resource-card">
-                  <div className="resource-card-header">
+                <article
+                  key={job.jobId}
+                  className="flex flex-col gap-2.5 border border-[var(--theme-border)] bg-[var(--theme-background-input)] px-[14px] py-3"
+                >
+                  <div className="flex items-start justify-between gap-3">
                     <div>
-                      <div className="resource-card-title">{job.jobId}</div>
-                      <div className="resource-card-subtitle">{job.task}</div>
+                      <div className="text-[11px] uppercase tracking-[0.08em] text-[var(--theme-text)]">{job.jobId}</div>
+                      <div className="break-words text-[11px] text-[var(--theme-border-subdued)]">{job.task}</div>
                     </div>
-                    <span className="resource-pill" data-status={job.status}>{job.status}</span>
+                    <span className={statusBadgeClassName(job.status)} data-status={job.status}>
+                      {job.status}
+                    </span>
                   </div>
 
-                  <div className="resource-grid">
-                    <div className="resource-field">
-                      <span className="resource-field-label">target</span>
-                      <span className="resource-field-value">{job.targetAgentId}</span>
+                  <div className="grid grid-cols-[repeat(auto-fit,minmax(140px,1fr))] gap-x-3 gap-y-2">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[10px] uppercase tracking-[0.06em] text-[var(--theme-border-subdued)]">target</span>
+                      <span className="break-words text-[12px] text-[var(--theme-text)]">{job.targetAgentId}</span>
                     </div>
-                    <div className="resource-field">
-                      <span className="resource-field-label">schedule</span>
-                      <span className="resource-field-value">{describeSchedule(job)}</span>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[10px] uppercase tracking-[0.06em] text-[var(--theme-border-subdued)]">schedule</span>
+                      <span className="break-words text-[12px] text-[var(--theme-text)]">{describeSchedule(job)}</span>
                     </div>
-                    <div className="resource-field">
-                      <span className="resource-field-label">next run</span>
-                      <span className="resource-field-value">{formatDate(job.nextRunAt)}</span>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[10px] uppercase tracking-[0.06em] text-[var(--theme-border-subdued)]">next run</span>
+                      <span className="break-words text-[12px] text-[var(--theme-text)]">{formatDate(job.nextRunAt)}</span>
                     </div>
-                    <div className="resource-field">
-                      <span className="resource-field-label">last run</span>
-                      <span className="resource-field-value">{formatDate(job.lastRunAt)}</span>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[10px] uppercase tracking-[0.06em] text-[var(--theme-border-subdued)]">last run</span>
+                      <span className="break-words text-[12px] text-[var(--theme-text)]">{formatDate(job.lastRunAt)}</span>
                     </div>
                   </div>
 
-                  {job.error && <pre className="resource-pre">{job.error}</pre>}
+                  {job.error && (
+                    <pre className="border-t border-dashed border-[var(--theme-border)] pt-2.5 text-[12px] break-words whitespace-pre-wrap text-[var(--theme-button-foreground)]">
+                      {job.error}
+                    </pre>
+                  )}
                 </article>
               ))}
             </div>

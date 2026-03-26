@@ -1,4 +1,5 @@
 import type { AgentChat } from "../../../packages/core/contracts";
+import { statusBadgeClassName } from "../lib/agent-colors";
 import { useRuntime } from "../runtime-context";
 
 function formatTimestamp(value?: number): string {
@@ -17,61 +18,73 @@ export function ChatsPage() {
   const { state } = useRuntime();
 
   return (
-    <section className="page">
-      <div className="page-header">
+    <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex shrink-0 flex-col gap-1 border-b border-[var(--theme-border)] bg-[var(--theme-background-modal-footer)] px-5 pt-4 pb-3">
         <div>
-          <div className="page-title">delegations</div>
-          <div className="page-subtitle">Estado de chats internos entre el orquestador y especialistas.</div>
+          <div className="text-[12px] uppercase tracking-[0.14em] text-[var(--theme-text)]">delegations</div>
+          <div className="text-[11px] text-[var(--theme-border-subdued)]">
+            Estado de chats internos entre el orquestador y especialistas.
+          </div>
         </div>
-        <div className="resource-pill" data-status={state.chats.length > 0 ? "active" : "closed"}>
+        <div
+          className={statusBadgeClassName(state.chats.length > 0 ? "active" : "closed")}
+          data-status={state.chats.length > 0 ? "active" : "closed"}
+        >
           {state.chats.length} total
         </div>
       </div>
 
-      <div className="page-body">
-        <div className="table-view">
+      <div className="min-h-0 flex-1 overflow-auto">
+        <div className="flex flex-col gap-2.5 p-4 pt-4 pr-5 pb-5 pl-5">
         {state.chats.length === 0 && (
-          <div className="empty-block">No hay chats delegados registrados todavia.</div>
+          <div className="px-5 py-[18px] text-[12px] text-[var(--theme-border-subdued)]">
+            No hay chats delegados registrados todavia.
+          </div>
         )}
 
         {state.chats.map((chat) => (
-          <article key={chat.chatId} className="resource-card">
-            <div className="resource-card-header">
+          <article
+            key={chat.chatId}
+            className="flex flex-col gap-2.5 border border-[var(--theme-border)] bg-[var(--theme-background-modal)] px-3.5 py-3"
+          >
+            <div className="flex items-start justify-between gap-3">
               <div>
-                <div className="resource-card-title">{chat.agentId}</div>
-                <div className="resource-card-subtitle">{chat.chatId}</div>
+                <div className="text-[11px] uppercase tracking-[0.08em] text-[var(--theme-text)]">{chat.agentId}</div>
+                <div className="break-words text-[11px] text-[var(--theme-border-subdued)]">{chat.chatId}</div>
               </div>
-              <div className="resource-pill" data-status={chat.status}>
+              <div className={statusBadgeClassName(chat.status)} data-status={chat.status}>
                 {chatSubtitle(chat)}
               </div>
             </div>
 
-            <div className="resource-field">
-              <span className="resource-field-label">Task</span>
-              <span className="resource-field-value">{chat.task}</span>
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[10px] uppercase tracking-[0.06em] text-[var(--theme-border-subdued)]">Task</span>
+              <span className="break-words text-[12px] text-[var(--theme-text)]">{chat.task}</span>
             </div>
 
-            <dl className="resource-grid">
+            <dl className="grid grid-cols-[repeat(auto-fit,minmax(140px,1fr))] gap-x-3 gap-y-2">
               <div>
-                <dt className="resource-field-label">Intentos</dt>
-                <dd className="resource-field-value">{chat.attempts}/{chat.maxRetries}</dd>
+                <dt className="text-[10px] uppercase tracking-[0.06em] text-[var(--theme-border-subdued)]">Intentos</dt>
+                <dd className="break-words text-[12px] text-[var(--theme-text)]">{chat.attempts}/{chat.maxRetries}</dd>
               </div>
               <div>
-                <dt className="resource-field-label">Actualizado</dt>
-                <dd className="resource-field-value">{formatTimestamp(chat.updatedAt)}</dd>
+                <dt className="text-[10px] uppercase tracking-[0.06em] text-[var(--theme-border-subdued)]">Actualizado</dt>
+                <dd className="break-words text-[12px] text-[var(--theme-text)]">{formatTimestamp(chat.updatedAt)}</dd>
               </div>
               <div>
-                <dt className="resource-field-label">Creado</dt>
-                <dd className="resource-field-value">{formatTimestamp(chat.createdAt)}</dd>
+                <dt className="text-[10px] uppercase tracking-[0.06em] text-[var(--theme-border-subdued)]">Creado</dt>
+                <dd className="break-words text-[12px] text-[var(--theme-text)]">{formatTimestamp(chat.createdAt)}</dd>
               </div>
               <div>
-                <dt className="resource-field-label">Resultado</dt>
-                <dd className="resource-field-value">{chat.result ? "Disponible" : chat.error ? "Error" : "Pendiente"}</dd>
+                <dt className="text-[10px] uppercase tracking-[0.06em] text-[var(--theme-border-subdued)]">Resultado</dt>
+                <dd className="break-words text-[12px] text-[var(--theme-text)]">
+                  {chat.result ? "Disponible" : chat.error ? "Error" : "Pendiente"}
+                </dd>
               </div>
             </dl>
 
             {(chat.result || chat.error || chat.context) && (
-              <div className="resource-pre">
+              <div className="break-words border-t border-dashed border-[var(--theme-border)] pt-2.5 font-mono text-[12px] whitespace-pre-wrap text-[var(--theme-button-foreground)]">
                 {chat.context && <div><strong>Contexto:</strong> {chat.context}</div>}
                 {chat.result && <div><strong>Resultado:</strong> {chat.result}</div>}
                 {chat.error && <div><strong>Error:</strong> {chat.error}</div>}

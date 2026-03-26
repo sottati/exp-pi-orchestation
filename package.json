@@ -5,7 +5,8 @@
   "private": true,
   "scripts": {
     "start": "bun run apps/cli/index.ts",
-    "ui": "bun --hot run apps/backend/server.ts",
+    "ui:styles": "bunx @tailwindcss/cli -i apps/web/app.css -o apps/web/app.generated.css",
+    "ui": "bun run ui:styles && bun --hot run apps/backend/server.ts",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit",
     "smoke:orchestrator": "bun run apps/cli/index.ts --smoke orchestrator",
@@ -17,7 +18,9 @@
     "ui:gate": "bun run apps/backend/ui-gate.ts"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@tailwindcss/cli": "^4.2.2",
+    "@types/bun": "latest",
+    "tailwindcss": "^4.2.2"
   },
   "peerDependencies": {
     "typescript": "^5"
@@ -27,13 +30,18 @@
     "@mariozechner/pi-ai": "^0.57.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "docx": "^9.6.1",
     "exceljs": "^4.4.0",
     "googleapis": "^171.4.0",
+    "lucide-react": "^1.7.0",
     "mammoth": "^1.12.0",
     "playwright": "^1.58.2",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "react-router-dom": "^7.13.2"
+    "react-router-dom": "^7.13.2",
+    "shadcn": "^4.1.0",
+    "tailwind-merge": "^3.5.0"
   }
 }

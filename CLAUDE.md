@@ -310,7 +310,7 @@ bun run ui -- --session <id>
 Serves on http://localhost:3000.
 
 ### Design
-- **B&W monochromatic palette**: `#000` bg, `#fff` text, grey surfaces/borders. No colors.
+- **Sacred-inspired palette**: esquema basado en los tokens de `sacred.computer`/SRCL (`--theme-*`, tintes OKLCH y grises neutrales), manteniendo la UI existente pero con un sistema de color más rico.
 - **Dithie**: pixel-art spider character as orchestrator identity. States: idle (breathing + blink), thinking (eye movement cycle), delegating (eyes shifted), error (X eyes).
 - **Unified chat**: all conversation goes through Dithie (orchestrator). No agent switching. Delegations shown as collapsible inline blocks.
 - **Pre-stream**: while waiting for the first token after `chat_sending`, the chat shows a compact `thinking-row` (mascot + label) instead of an empty message bubble; streaming text uses the usual bubble + cursor.
@@ -318,6 +318,8 @@ Serves on http://localhost:3000.
 - **Chat route**: mantiene el split principal Chat panel (flex:1) | Trace panel (280px fixed).
 - **Refresh restore**: F5/Ctrl+R rehydrates persisted session chat, delegation blocks, and traces via REST before WS reconnect.
 - **Ops snapshots**: `/api/ui-state` hidrata también `chats` y `jobs` para que las vistas operativas arranquen sin loaders extra.
+- **Tailwind UI**: el layout y los componentes usan utilidades Tailwind; `apps/web/app.css` queda como capa global de tokens/animaciones y `apps/web/app.generated.css` es el artefacto compilado servido por la SPA.
+- **Agent colors**: la vista `/agents` asigna un tinte Sacred por agente para distinguirlos visualmente.
 - **Font**: JetBrains Mono via Google Fonts CDN.
 
 ### Files
@@ -328,8 +330,11 @@ Serves on http://localhost:3000.
 - `apps/web/layouts/dashboard-layout.tsx`: shell persistente (header, nav, `Outlet`, input bar).
 - `apps/web/pages/*.tsx`: páginas separadas para chat, traces, agents, chats y jobs.
 - `apps/web/components/chat-ui.tsx` / `trace-ui.tsx` / `nav.tsx`: componentes presentacionales reutilizables.
+- `apps/web/lib/utils.ts`: helper `cn()` para composición de clases Tailwind.
+- `apps/web/lib/agent-colors.ts`: asignación de tintes Sacred y badges/colores por agente/estado.
 - `apps/web/ui-state.ts`: shared snapshot builder for persisted UI hydration (messages, delegations, trace durations, primary thread lookup).
-- `apps/web/app.css`: B&W palette, layout grid, all component styles, animations (blink-cursor, breathe, dot-pulse).
+- `apps/web/app.css`: tokens globales, aliases de tema, animaciones y entrada de Tailwind.
+- `apps/web/app.generated.css`: CSS compilado por Tailwind servido por `index.html`.
 - `apps/web/dithie-sprite.tsx`: `DithieSprite` component — CSS Grid for 16/32px, canvas for 64px. Animation cycling per state.
 - `apps/web/dithie-frames.ts`: Pixel grid data (`Frame = number[][]`) for all animation frames (idle, blink, thinking 1-4, delegating, error).
 
