@@ -334,6 +334,7 @@ Serves on http://localhost:3000.
 - `apps/web/components/chat-ui.tsx` / `trace-ui.tsx` / `nav.tsx`: componentes presentacionales reutilizables.
 - `apps/web/lib/utils.ts`: helper `cn()` para composición de clases Tailwind.
 - `apps/web/lib/agent-colors.ts`: asignación de tintes Sacred y badges/colores por agente/estado.
+- `components.json`: configuración manual de shadcn adaptada a esta codebase (root package + frontend en `apps/web`) para futuras altas de componentes vía CLI.
 - `apps/web/ui-state.ts`: shared snapshot builder for persisted UI hydration (messages, delegations, trace durations, primary thread lookup).
 - `apps/web/app.css`: tokens globales, aliases de tema, animaciones y entrada de Tailwind.
 - `apps/web/app.generated.css`: CSS compilado por Tailwind servido por `index.html`.

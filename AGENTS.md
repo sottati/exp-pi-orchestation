@@ -147,8 +147,9 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Web UI state hydration: `apps/web/ui-state.ts` (rebuilds persisted chat/delegation/trace view, plus chats/jobs, so F5/Ctrl+R keeps session context)
 - Web UI runtime state: `apps/web/runtime-context.tsx` (shared reducer + REST hydration + WebSocket lifecycle, kept stable across route changes)
 - Web UI router shell: `apps/web/app.tsx` mounts `react-router-dom`; `apps/web/layouts/dashboard-layout.tsx` keeps the persistent header/nav/input shell around routed pages
-- Web UI styling: `apps/web/app.css` now defines Sacred-inspired theme tokens + Tailwind entrypoint; dark theme is the default and a nav switcher persists the user's preference; `apps/web/app.generated.css` is the compiled stylesheet served by `index.html`
-- Web UI utilities: `apps/web/lib/utils.ts` (`cn`) and `apps/web/lib/agent-colors.ts` (per-agent Sacred tint mapping + shared status badge styles)
+ - Web UI styling: `apps/web/app.css` now defines Sacred-inspired theme tokens + Tailwind entrypoint; dark theme is the default and a nav switcher persists the user's preference; `apps/web/app.generated.css` is the compiled stylesheet served by `index.html`
+ - Web UI utilities: `apps/web/lib/utils.ts` (`cn`) and `apps/web/lib/agent-colors.ts` (per-agent Sacred tint mapping + shared status badge styles)
+ - shadcn/ui config: root `components.json` + TS path aliases are configured so the CLI can target `apps/web`; in this cloud environment, `shadcn add` still fails unless `bun` is available in PATH because the CLI shells out to `bun add`
 - Error utilities: `packages/core/errors.ts` (`errorMessage`, `safeAsync`, `safeParseLine`)
 - Contracts: `packages/core/contracts.ts`
 

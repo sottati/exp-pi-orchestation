@@ -226,6 +226,7 @@ Cada envelope de hilo incluye metadatos de relación:
 - `apps/web/components/*.tsx`: componentes presentacionales reutilizables para chat, navegación y trazas.
 - `apps/web/app.css`: capa global de Tailwind + tokens/tema inspirados en Sacred.
 - `apps/web/app.generated.css`: CSS compilado de Tailwind que consume la HTML servida por Bun.
+- `components.json`: configuración de shadcn/ui adaptada a esta estructura para que futuras altas de componentes apunten a `apps/web`.
 - `apps/web/lib/agent-colors.ts`: mapeo de tintes por agente y badges de estado.
 - `apps/web/lib/utils.ts`: helper `cn()` para composición de clases.
 - `apps/web/dithie-sprite.tsx`: componente DithieSprite (CSS Grid 16/32px, canvas 64px, animaciones).
