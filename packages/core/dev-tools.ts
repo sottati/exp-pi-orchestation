@@ -2,7 +2,7 @@ import { Type } from "@sinclair/typebox";
 import type { ToolEntry } from "./tool-registry";
 import { errorMessage } from "./errors";
 import { readdirSync, readFileSync, statSync, mkdirSync, existsSync } from "fs";
-import { join, resolve, dirname } from "path";
+import { join, resolve, dirname, sep } from "path";
 
 export interface DevToolOptions {
   maxFileSize?: number;
@@ -25,7 +25,8 @@ function textResult(text: string, details?: Record<string, unknown>) {
 function isPathSafe(filePath: string, basePath?: string): boolean {
   if (!basePath) return true;
   const resolved = resolve(filePath);
-  return resolved.startsWith(resolve(basePath));
+  const base = resolve(basePath);
+  return resolved === base || resolved.startsWith(base + sep);
 }
 
 function isCommandAllowed(command: string, whitelist?: string[]): boolean {
