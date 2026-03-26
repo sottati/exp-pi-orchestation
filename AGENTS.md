@@ -144,8 +144,9 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Google Tasks tools: `packages/core/google-tasks-tools.ts` (`tasks_list`, `tasks_create`, `tasks_complete` — assigned to `secretary`)
 - Chat orchestration: `packages/core/chat-manager.ts` (per-agent concurrency with FIFO queue, disk persistence and restore)
 - Persistence: `packages/core/thread-store.ts` (threads, traces, chat records — atomic append, fault-tolerant JSONL)
-- Web UI state hydration: `apps/web/ui-state.ts` (rebuilds persisted chat/delegation/trace view so F5/Ctrl+R keeps session context)
-- Web UI chat: `apps/web/app.tsx` shows a `thinking-row` (mascot + label) until the first stream token, then the streaming message bubble
+- Web UI state hydration: `apps/web/ui-state.ts` (rebuilds persisted chat/delegation/trace view, plus chats/jobs, so F5/Ctrl+R keeps session context)
+- Web UI runtime state: `apps/web/runtime-context.tsx` (shared reducer + REST hydration + WebSocket lifecycle, kept stable across route changes)
+- Web UI router shell: `apps/web/app.tsx` mounts `react-router-dom`; `apps/web/layouts/dashboard-layout.tsx` keeps the persistent header/nav/input shell around routed pages
 - Error utilities: `packages/core/errors.ts` (`errorMessage`, `safeAsync`, `safeParseLine`)
 - Contracts: `packages/core/contracts.ts`
 
@@ -302,6 +303,38 @@ If behavior is unexpected:
 4. Inspect chat view (`/chat <chatId>`), or raw inspection (`/chat <chatId> --json`).
 5. Run `bun run typecheck`.
 6. If answer is empty, inspect `/thread <id>` for `Model error: ...` (often provider rate-limit/quota).
+
+## Web UI — Dithie Dashboard
+
+Entry point: `apps/backend/server.ts` — independent from the CLI, shares `MultiAgentRuntime`.
+
+Run with:
+```bash
+bun run ui -- --session <id>
+```
+Serves on http://localhost:3000.
+
+### Design
+- **B&W monochromatic palette**: `#000` bg, `#fff` text, grey surfaces/borders. No colors.
+- **Dithie**: pixel-art spider character as orchestrator identity. States: idle (breathing + blink), thinking (eye movement cycle), delegating (eyes shifted), error (X eyes).
+- **Persistent shell + router**: header, top nav and input bar stay mounted while React Router swaps pages inside the main content area.
+- **Routes**: `/` (chat), `/traces`, `/agents`, `/chats`, `/jobs`.
+- **Refresh restore**: F5/Ctrl+R rehydrates persisted chat, delegations, traces, chats and jobs via REST before WS reconnect.
+- **SPA fallback**: `apps/backend/server.ts` serves the HTML shell for all client routes above, so direct navigation and reloads work outside `/`.
+
+### Files
+- `apps/backend/server.ts`: `Bun.serve()` with REST routes + WebSocket at `/ws`. Also serves the SPA shell for `/`, `/chat`, `/traces`, `/agents`, `/chats`, `/jobs`.
+- `apps/web/app.tsx`: React Router bootstrap with `createBrowserRouter`.
+- `apps/web/runtime-context.tsx`: shared reducer, `/api/ui-state` hydration, WebSocket lifecycle, live updates for traces/chats/jobs.
+- `apps/web/layouts/dashboard-layout.tsx`: persistent shell with header, nav and input bar.
+- `apps/web/pages/chat-page.tsx`: conversation view + trace sidebar.
+- `apps/web/pages/traces-page.tsx`: full trace explorer page.
+- `apps/web/pages/agents-page.tsx`: runtime agent catalog.
+- `apps/web/pages/chats-page.tsx`: delegated chat inspector.
+- `apps/web/pages/jobs-page.tsx`: scheduler job overview.
+- `apps/web/components/chat-ui.tsx`: input + message/delegation feed components.
+- `apps/web/components/trace-ui.tsx`: reusable trace list/panel.
+- `apps/web/components/nav.tsx`: top-level route navigation.
 
 ## UI / Monorepo Decision Rule
 

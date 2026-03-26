@@ -314,14 +314,20 @@ Serves on http://localhost:3000.
 - **Dithie**: pixel-art spider character as orchestrator identity. States: idle (breathing + blink), thinking (eye movement cycle), delegating (eyes shifted), error (X eyes).
 - **Unified chat**: all conversation goes through Dithie (orchestrator). No agent switching. Delegations shown as collapsible inline blocks.
 - **Pre-stream**: while waiting for the first token after `chat_sending`, the chat shows a compact `thinking-row` (mascot + label) instead of an empty message bubble; streaming text uses the usual bubble + cursor.
-- **Split view**: Chat panel (flex:1) | Trace panel (280px fixed).
+- **React Router UI**: shell persistente con rutas para `chat`, `traces`, `agents`, `chats` y `jobs`.
+- **Chat route**: mantiene el split principal Chat panel (flex:1) | Trace panel (280px fixed).
 - **Refresh restore**: F5/Ctrl+R rehydrates persisted session chat, delegation blocks, and traces via REST before WS reconnect.
+- **Ops snapshots**: `/api/ui-state` hidrata también `chats` y `jobs` para que las vistas operativas arranquen sin loaders extra.
 - **Font**: JetBrains Mono via Google Fonts CDN.
 
 ### Files
 - `apps/backend/server.ts`: `Bun.serve()` with REST routes + WebSocket at `/ws`. Monkey-patches `store.appendTrace` for real-time trace push + delegation event tracking (`delegation_start`/`delegation_end`). Also patches `store.appendChatRecord` and `store.appendJob`. Exposes `/api/ui-state` for reload hydration.
 - `apps/web/index.html`: HTML shell (title "dithie", JetBrains Mono font link).
-- `apps/web/app.tsx`: React SPA (useReducer). Header, ChatPanel, TracePanel, InputBar. Dithie state machine (idle/thinking/delegating/error). Bootstraps from `/api/ui-state`, then reconnects WS for live updates.
+- `apps/web/app.tsx`: entrypoint React + `createBrowserRouter()` con rutas anidadas.
+- `apps/web/runtime-context.tsx`: estado global de la UI, reducer, bootstrap desde `/api/ui-state` y WebSocket persistente.
+- `apps/web/layouts/dashboard-layout.tsx`: shell persistente (header, nav, `Outlet`, input bar).
+- `apps/web/pages/*.tsx`: páginas separadas para chat, traces, agents, chats y jobs.
+- `apps/web/components/chat-ui.tsx` / `trace-ui.tsx` / `nav.tsx`: componentes presentacionales reutilizables.
 - `apps/web/ui-state.ts`: shared snapshot builder for persisted UI hydration (messages, delegations, trace durations, primary thread lookup).
 - `apps/web/app.css`: B&W palette, layout grid, all component styles, animations (blink-cursor, breathe, dot-pulse).
 - `apps/web/dithie-sprite.tsx`: `DithieSprite` component — CSS Grid for 16/32px, canvas for 64px. Animation cycling per state.
@@ -358,5 +364,6 @@ Serves on http://localhost:3000.
 | `/api/threads` | GET | List thread IDs |
 | `/api/threads/:id` | GET | Get thread envelopes |
 | `/api/traces` | GET | Get all traces |
+| `/chat`, `/traces`, `/agents`, `/chats`, `/jobs` | GET | SPA fallback routes served with the web shell |
 | `/api/jobs` | GET | List scheduled jobs |
 | `/api/jobs/:id` | GET/DELETE | Inspect or cancel scheduled job |

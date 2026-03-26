@@ -1,4 +1,4 @@
-import type { ThreadEnvelope, TraceEvent } from "../../packages/core/contracts";
+import type { AgentChat, ScheduledJob, ThreadEnvelope, TraceEvent } from "../../packages/core/contracts";
 
 export interface AgentInfo {
   id: string;
@@ -39,6 +39,8 @@ export interface HydratedUiState {
   traces: TraceEvent[];
   delegations: Record<string, DelegationBlock>;
   traceDurations: Record<string, number>;
+  chats: AgentChat[];
+  jobs: ScheduledJob[];
 }
 
 interface BuildUiStateInput {
@@ -46,6 +48,8 @@ interface BuildUiStateInput {
   sessionId: string;
   threadMessages: ThreadEnvelope[];
   traces: TraceEvent[];
+  chats: AgentChat[];
+  jobs: ScheduledJob[];
 }
 
 function contentToText(content: unknown): string {
@@ -102,6 +106,8 @@ export function buildHydratedUiState(input: BuildUiStateInput): HydratedUiState 
   const traces = allTraces.slice(-200);
   const runDurations = getRunDurationMap(allTraces);
   const traceDurations = buildTraceDurations(traces);
+  const chats = [...input.chats].sort((a, b) => b.updatedAt - a.updatedAt);
+  const jobs = [...input.jobs].sort((a, b) => b.updatedAt - a.updatedAt);
 
   const messages: UIMessage[] = input.threadMessages
     .filter((envelope) => {
@@ -187,6 +193,8 @@ export function buildHydratedUiState(input: BuildUiStateInput): HydratedUiState 
     traces,
     delegations,
     traceDurations,
+    chats,
+    jobs,
   };
 }
 
