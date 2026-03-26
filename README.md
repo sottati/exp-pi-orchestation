@@ -99,11 +99,13 @@ Abre http://localhost:3000 para ver el dashboard de Dithie:
 - **Estética B&W**: paleta monocromática negro/blanco/gris, fuente JetBrains Mono, estilo terminal moderno.
 - **Dithie**: pixel-art spider (16x16) como identidad del orchestrator, con estados animados (idle, thinking, delegating, error).
 - **Chat unificado**: toda la conversación pasa por Dithie (orchestrator). Las delegaciones se muestran como bloques colapsables inline.
+- **React Router**: la UI ya no vive en un `App.tsx` monolítico; usa layout persistente + rutas para `/`, `/traces`, `/agents`, `/chats` y `/jobs`.
 - **Antes del primer token**: fila compacta con la mascota y la etiqueta «thinking» (sin burbuja vacía); al empezar el stream aparece la burbuja con el cursor.
 - **Panel de trazas**: trazas en tiempo real (newest-last) con items expandibles y duración calculada client-side.
-- **Reload seguro**: al refrescar con F5/Ctrl+R, la UI rehidrata chat, delegaciones y trazas persistidas de la sesión activa.
+- **Reload seguro**: al refrescar con F5/Ctrl+R, la UI rehidrata chat, delegaciones, trazas, chats internos y jobs persistidos de la sesión activa.
 - **WebSocket** en `/ws`: deltas de streaming, delegation events (`delegation_start`/`delegation_end`), lifecycle de chats y push de trazas.
 - **REST API**: `/api/agents`, `/api/chats`, `/api/threads`, `/api/traces`, `/api/ui-state`, `/api/jobs`.
+- **Fallback SPA**: el servidor web sirve el HTML base en las rutas cliente (`/chat`, `/traces`, `/agents`, `/chats`, `/jobs`) para soportar deep-linking y refresh.
 
 La CLI (`bun run start`) y el servidor UI son entradas independientes que comparten `MultiAgentRuntime`.
 
@@ -214,7 +216,11 @@ Cada envelope de hilo incluye metadatos de relación:
 - `apps/backend/server.ts`: servidor web con REST + WebSocket.
 - `apps/backend/ui-gate.ts`: evaluación de fricción para activar UI.
 - `apps/web/index.html`: shell HTML de la UI (title "dithie", JetBrains Mono font).
-- `apps/web/app.tsx`: SPA React (useReducer, Dithie state machine, chat + trace panels).
+- `apps/web/app.tsx`: entrypoint React que monta `RouterProvider` + `RuntimeProvider`.
+- `apps/web/runtime-context.tsx`: estado global de la UI, hidratación desde `/api/ui-state`, conexión WebSocket y acciones compartidas.
+- `apps/web/layouts/dashboard-layout.tsx`: shell persistente con header, navegación y barra de entrada.
+- `apps/web/pages/*.tsx`: páginas de router para chat, trazas, agentes, chats y jobs.
+- `apps/web/components/*.tsx`: componentes presentacionales reutilizables para chat, navegación y trazas.
 - `apps/web/app.css`: estilos B&W monocromáticos.
 - `apps/web/dithie-sprite.tsx`: componente DithieSprite (CSS Grid 16/32px, canvas 64px, animaciones).
 - `apps/web/dithie-frames.ts`: frame data del pixel-art spider (16x16 grids para cada estado).

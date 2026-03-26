@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ThreadEnvelope, TraceEvent } from "../../packages/core/contracts";
+import type { AgentChat, ScheduledJob, ThreadEnvelope, TraceEvent } from "../../packages/core/contracts";
 import { buildHydratedUiState, getPrimaryThreadId } from "./ui-state";
 
 describe("buildHydratedUiState", () => {
@@ -73,11 +73,48 @@ describe("buildHydratedUiState", () => {
       },
     ];
 
+    const chats: AgentChat[] = [
+      {
+        chatId: "chat-1",
+        sessionId,
+        parentRunId: "run-1",
+        parentTurnId: "turn-1",
+        agentId: "math",
+        task: "resolver 2+2",
+        status: "closed",
+        closeReason: "completed",
+        createdAt: 120,
+        updatedAt: 220,
+        attempts: 1,
+        maxRetries: 1,
+        timeoutMs: 30_000,
+        result: "4",
+      },
+    ];
+
+    const jobs: ScheduledJob[] = [
+      {
+        jobId: "job-1",
+        sessionId,
+        createdBy: "secretary",
+        targetAgentId: "writer",
+        task: "enviar resumen",
+        schedule: { type: "delay", delayMs: 5_000 },
+        status: "active",
+        runCount: 0,
+        createdAt: 130,
+        updatedAt: 230,
+        nextRunAt: 5_130,
+      },
+    ];
+
     const state = buildHydratedUiState({
       agents: [],
       sessionId,
       threadMessages,
       traces,
+      chats,
+      jobs,
     });
     const firstMessage = state.messages[0]!;
     const secondMessage = state.messages[1]!;
@@ -97,5 +134,7 @@ describe("buildHydratedUiState", () => {
       durationMs: 100,
     });
     expect(state.traceDurations["evt-2"]).toBe(100);
+    expect(state.chats).toEqual(chats);
+    expect(state.jobs).toEqual(jobs);
   });
 });

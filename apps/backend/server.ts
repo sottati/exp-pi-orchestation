@@ -183,6 +183,8 @@ Bun.serve({
                     sessionId,
                     threadMessages,
                     traces,
+                    chats: runtime.listChats(),
+                    jobs: runtime.scheduler?.listJobs() ?? [],
                 }));
             },
         },
@@ -199,6 +201,11 @@ Bun.serve({
                 return removed ? Response.json({ ok: true }) : Response.json({ error: "not found" }, { status: 404 });
             },
         },
+        "/chat": index,
+        "/traces": index,
+        "/agents": index,
+        "/chats": index,
+        "/jobs": index,
     },
     websocket: {
         open(ws) {

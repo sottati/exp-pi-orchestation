@@ -4,6 +4,7 @@
   --bg: #000000;
   --surface: #0a0a0a;
   --surface-hover: #141414;
+  --surface-panel: #050505;
   --border: #1f1f1f;
   --border-strong: #333333;
   --text: #ffffff;
@@ -58,6 +59,13 @@ html, body, #root {
   height: 100%;
 }
 
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
 /* ── Header ─────────────────────────────────────────────────────────────── */
 
 .header {
@@ -77,6 +85,14 @@ html, body, #root {
   flex-direction: row;
   align-items: center;
   gap: 10px;
+}
+
+.header-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: inherit;
+  text-decoration: none;
 }
 
 .header-label {
@@ -128,6 +144,17 @@ html, body, #root {
   min-height: 0;
 }
 
+.main--stack {
+  flex-direction: column;
+}
+
+.route-content {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .chat-panel {
   flex: 1;
   display: flex;
@@ -142,6 +169,11 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.trace-panel--page {
+  width: 100%;
+  border-left: none;
 }
 
 /* ── Message List ────────────────────────────────────────────────────────── */
@@ -181,6 +213,42 @@ html, body, #root {
   text-align: center;
   user-select: none;
   gap: 16px;
+}
+
+.page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.page-header {
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.page-title {
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.page-subtitle {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.page-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 
 /* ── Messages ────────────────────────────────────────────────────────────── */
@@ -370,6 +438,188 @@ html, body, #root {
   user-select: none;
 }
 
+.top-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-panel);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.top-nav-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  text-decoration: none;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.top-nav-link:hover {
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+}
+
+.top-nav-link--active {
+  border-color: var(--text);
+  color: var(--text);
+}
+
+.split-page {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+}
+
+.split-page-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.stack-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.table-view {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 20px 20px;
+}
+
+.resource-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.resource-card {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.resource-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.resource-card-title {
+  font-size: 11px;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.resource-card-subtitle {
+  font-size: 11px;
+  color: var(--text-muted);
+  word-break: break-word;
+}
+
+.resource-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.resource-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.resource-pill[data-status="active"],
+.resource-pill[data-status="ok"],
+.resource-pill[data-status="connected"] {
+  border-color: var(--text);
+  color: var(--text);
+}
+
+.resource-pill[data-status="waiting"],
+.resource-pill[data-status="running"] {
+  border-color: var(--text-secondary);
+  color: var(--text-secondary);
+}
+
+.resource-pill[data-status="closed"],
+.resource-pill[data-status="completed"] {
+  border-color: var(--text-muted);
+  color: var(--text-muted);
+}
+
+.resource-pill[data-status="failed"],
+.resource-pill[data-status="error"],
+.resource-pill[data-status="disconnected"] {
+  border-color: var(--border-strong);
+  color: var(--text-secondary);
+}
+
+.resource-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px 12px;
+}
+
+.resource-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.resource-field-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.resource-field-value {
+  font-size: 12px;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.resource-pre {
+  border-top: 1px dashed var(--border);
+  padding-top: 10px;
+  color: var(--text-secondary);
+  font-family: var(--font);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.empty-block {
+  padding: 18px 20px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .trace-list {
   overflow-y: auto;
   flex: 1;
@@ -471,6 +721,14 @@ html, body, #root {
   align-items: center;
 }
 
+.input-bar-status {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  flex-shrink: 0;
+}
+
 .input-prompt {
   color: var(--text-muted);
   font-size: 13px;
@@ -530,6 +788,19 @@ html, body, #root {
   color: var(--text-muted);
   font-size: 12px;
   user-select: none;
+}
+
+@media (max-width: 980px) {
+  .split-page {
+    flex-direction: column;
+  }
+
+  .trace-panel {
+    width: 100%;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    min-height: 220px;
+  }
 }
 
 /* ── Scrollbar (webkit) ──────────────────────────────────────────────────── */
