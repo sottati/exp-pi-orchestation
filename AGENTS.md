@@ -116,7 +116,16 @@ This repository is a terminal-first multi-agent runtime prototype.
 
 - CLI entry point: `apps/cli/index.ts`
 - Web backend entry point: `apps/backend/server.ts`
+- Agent activity endpoint: `/api/agents/:id/activity` (traces/chats/jobs filtered by agent)
 - UI gate entry point: `apps/backend/ui-gate.ts`
+- Web UI shell: `apps/web/index.html`
+- Web UI app: `apps/web/app.tsx` (sidebar navigation, home + per-agent views, direct messaging, thread sync)
+- Web UI shared types: `apps/web/types.ts`
+- Web UI sidebar: `apps/web/sidebar.tsx` (Dithie icon + per-agent spider avatars)
+- Web UI specialist spider avatars: `apps/web/sidebar-spider.tsx` (16x16 pixel-art sprites)
+- Web UI agent view: `apps/web/agent-view.tsx` (activity + chat tabs with inter-agent messages)
+- Web UI styles: `apps/web/app.css`
+- Web UI Dithie sprite: `apps/web/dithie-sprite.tsx` (idle/thinking/walking/error; walks when replying to user, thinks while coordinating specialists)
 - Runtime: `packages/core/runtime.ts`
 - Tools: `packages/core/tools.ts`
 - Agents: `packages/core/agents.ts` (agent definitions via builder pattern)
@@ -128,7 +137,7 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Scheduler: `packages/core/scheduler.ts` (cron parser, setTimeout-based timer, JSONL persistence)
 - Scheduler tools: `packages/core/scheduler-tools.ts` (`schedule_task`, `list_scheduled_jobs`, `cancel_scheduled_job`)
 - MCP client: `packages/core/mcp-client.ts` (`McpConnector` interface for external tool servers)
-- Browser wrapper: `packages/core/browser.ts` (Playwright-based `browseUrl`, `searchWeb`, `interactWithPage`)
+- Browser wrapper: `packages/core/browser.ts` (`browseUrl`/`interactWithPage` use Playwright; `searchWeb` uses DuckDuckGo HTML fetch+parse; includes launch/operation timeouts and temporary failure cooldown)
 - Explorer tools: `packages/core/explorer-tools.ts` (`browse_url`, `search_web`, `interact_page` tool entries)
 - Credential store: `packages/core/credential-store.ts` (AES-256-GCM encrypted credential storage)
 - Analyst tools: `packages/core/analyst-tools.ts` (`query_sqlite`, `query_supabase`, `parse_csv`, `analyze_data` tool entries)
@@ -140,7 +149,7 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Google Drive tools: `packages/core/google-drive-tools.ts` (`drive_list`, `drive_search`, `drive_download` — assigned to `explorer`)
 - Google Mail tools: `packages/core/google-mail-tools.ts` (`gmail_search`, `gmail_read` assigned to `secretary`; `gmail_send`, `gmail_draft` assigned to `writer`)
 - Google Calendar tools: `packages/core/google-calendar-tools.ts` (`calendar_list`, `calendar_create`, `calendar_update`, `calendar_delete` — assigned to `secretary`)
-- Google Contacts tools: `packages/core/google-contacts-tools.ts` (`contacts_search`, `contacts_create` — assigned to `secretary`)
+- Local contacts tools: `packages/core/local-contacts-tools.ts` (`contacts_list`, `contacts_read`, `contacts_search`, `contacts_create`, `contacts_delete` — assigned to `secretary`)
 - Google Tasks tools: `packages/core/google-tasks-tools.ts` (`tasks_list`, `tasks_create`, `tasks_complete` — assigned to `secretary`)
 - Chat orchestration: `packages/core/chat-manager.ts` (per-agent concurrency with FIFO queue, disk persistence and restore)
 - Persistence: `packages/core/thread-store.ts` (threads, traces, chat records — atomic append, fault-tolerant JSONL)
@@ -176,7 +185,13 @@ Use these project scripts:
 - `bun run smoke:explorer`
 - `bun run smoke:writer`
 - `bun run smoke:debugger`
+- `bun run ui` (Dithie web dashboard with per-agent views)
 - `bun run ui:gate`
+
+Explorer prerequisite:
+- Install Playwright browser binary once: `bunx playwright install chromium`
+- Ensure outbound internet access (DNS + HTTPS) is available for web tools
+- Browser launch timeout is set to 30s for slower environments
 
 Inside the CLI, useful commands:
 
@@ -226,6 +241,7 @@ When adding or changing runtime behavior, preserve correlation IDs:
 - Guard `trace()` and persistence calls with try-catch so trace failures don't shadow original errors.
 - CLI commands must be wrapped in try-catch — use `cliError(err)` helper in `apps/cli/index.ts`.
 - Task input validation: `MAX_TASK_LENGTH = 10_000` in `packages/core/tools.ts`.
+- Runtime response extraction ignores intermediate `toolUse` assistant turns, strips leaked `thought:` prefixes, and falls back to completed `get_chat_result` output when the final assistant message is empty.
 
 ## Chat Persistence
 
@@ -240,12 +256,13 @@ Agents are defined via the builder pattern in `packages/core/agents.ts` using `d
 Current setup keeps same model for all agents.
 
 - `orchestrator` → `openrouter/google/gemini-3.1-flash-lite-preview`
-- `code` → `openrouter/google/gemini-3.1-flash-lite-preview`
+- `code` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: dev tools; delegates frontend to `web-designer`)
+- `web-designer` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: dev tools + frontend tools + `browse_url`; delegates backend to `code`)
 - `math` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: analyst tools + `read_excel`, `write_excel`, `read_gsheet`, `write_gsheet`, `create_gsheet`)
 - `explorer` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: browser + `drive_list`, `drive_search`, `drive_download`)
 - `writer` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: `read_docx`, `write_docx`, `read_gdoc`, `write_gdoc`, `create_gdoc`, `gmail_send`, `gmail_draft`)
 - `debugger` → `openrouter/google/gemini-3.1-flash-lite-preview`
-- `secretary` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: `gmail_search`, `gmail_read`, calendar, contacts, tasks + scheduler tools)
+- `secretary` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: `gmail_search`, `gmail_read`, calendar, internal contacts, tasks + scheduler tools)
 
 ## Agent Builder Pattern
 
@@ -273,6 +290,7 @@ When permission resolves to `"hitl"`, the `HITLHandler` is called to prompt the 
 
 - CLI: readline prompt in terminal
 - Web: WebSocket request/response with configurable timeout
+- Web UI: modal with `Allow` / `Don't Allow` buttons and keyboard shortcuts `y` / `n`
 
 ## Google Workspace Integration
 
@@ -286,7 +304,10 @@ Agent tool assignments:
 - `math`: `read_gsheet`, `write_gsheet`, `create_gsheet`
 - `writer`: `read_gdoc`, `write_gdoc`, `create_gdoc`, `gmail_send`, `gmail_draft`
 - `explorer`: `drive_list`, `drive_search`, `drive_download`
-- `secretary`: `gmail_search`, `gmail_read`, `calendar_list`, `calendar_create`, `calendar_update`, `calendar_delete`, `contacts_search`, `contacts_create`, `tasks_list`, `tasks_create`, `tasks_complete` + scheduler tools
+- `secretary`: `gmail_search`, `gmail_read`, `calendar_list`, `calendar_create`, `calendar_update`, `calendar_delete`, `tasks_list`, `tasks_create`, `tasks_complete` + scheduler tools
+
+Secretary also includes internal contacts tools:
+- `contacts_list`, `contacts_read`, `contacts_search`, `contacts_create`, `contacts_delete`
 
 ## Scheduler
 

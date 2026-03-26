@@ -20,6 +20,13 @@ export interface SearchResult {
 
 const MAX_CONTENT_LENGTH = 8000;
 const NAV_TIMEOUT = 30_000;
+const LAUNCH_TIMEOUT = 30_000;
+const OPERATION_TIMEOUT = 60_000;
+const BROWSER_UNAVAILABLE_MS = 5 * 60_000;
+const SEARCH_TIMEOUT = 20_000;
+
+let browserUnavailableUntil = 0;
+let browserUnavailableReason = "";
 
 export function truncateContent(text: string, limit: number = MAX_CONTENT_LENGTH): string {
   if (text.length <= limit) return text;
@@ -35,21 +42,202 @@ async function getPlaywright() {
   }
 }
 
-export async function launchAndRun<T>(fn: (page: import("playwright").Page) => Promise<T>): Promise<T> {
-  const pw = await getPlaywright();
-  const browser = await pw.chromium.launch({ headless: true });
+function validateHttpUrl(input: string): string {
+  let parsed: URL;
   try {
+    parsed = new URL(input);
+  } catch {
+    throw new Error(`Invalid URL: ${input}`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`Unsupported protocol: ${parsed.protocol}`);
+  }
+  return parsed.toString();
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms}ms`));
+    }, ms);
+
+    promise
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+}
+
+export async function launchAndRun<T>(fn: (page: import("playwright").Page) => Promise<T>): Promise<T> {
+  if (Date.now() < browserUnavailableUntil) {
+    throw new Error(`Browser engine temporarily unavailable: ${browserUnavailableReason}`);
+  }
+
+  const pw = await getPlaywright();
+  try {
+    const browser = await withTimeout(
+      pw.chromium.launch({ headless: true, timeout: LAUNCH_TIMEOUT }),
+      OPERATION_TIMEOUT,
+      "chromium.launch",
+    );
     const page = await browser.newPage();
-    return await fn(page);
+    try {
+      return await withTimeout(fn(page), OPERATION_TIMEOUT, "browser operation");
+    } finally {
+      await withTimeout(browser.close(), 10_000, "browser.close").catch(() => {});
+    }
   } finally {
-    await browser.close();
+    // no-op
+  }
+}
+
+function markBrowserUnavailable(msg: string): void {
+  browserUnavailableReason = msg;
+  browserUnavailableUntil = Date.now() + BROWSER_UNAVAILABLE_MS;
+}
+
+function isLaunchFailureMessage(msg: string): boolean {
+  return (
+    msg.includes("Executable doesn't exist") ||
+    msg.includes("Timeout") ||
+    msg.includes("browserType.launch") ||
+    msg.includes("chrome-headless-shell")
+  );
+}
+
+export async function safeLaunchAndRun<T>(fn: (page: import("playwright").Page) => Promise<T>): Promise<T> {
+  try {
+    return await launchAndRun(fn);
+  } catch (err) {
+    const msg = errorMessage(err);
+    if (isLaunchFailureMessage(msg)) {
+      markBrowserUnavailable(msg);
+    }
+    throw err;
+  }
+}
+
+function stripHtml(input: string): string {
+  return input
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ");
+}
+
+function decodeHtmlEntities(input: string): string {
+  const named: Record<string, string> = {
+    "&amp;": "&",
+    "&lt;": "<",
+    "&gt;": ">",
+    "&quot;": "\"",
+    "&#39;": "'",
+    "&nbsp;": " ",
+  };
+  return input
+    .replace(/&(amp|lt|gt|quot|nbsp);|&#39;/g, (m) => named[m] ?? m)
+    .replace(/&#(\d+);/g, (_m, code) => String.fromCharCode(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_m, hex) => String.fromCharCode(parseInt(hex, 16)));
+}
+
+function normalizeSearchResultUrl(rawHref: string): string {
+  const decoded = decodeHtmlEntities(rawHref).trim();
+  const withProtocol = decoded.startsWith("//") ? `https:${decoded}` : decoded;
+  try {
+    const parsed = new URL(withProtocol, "https://duckduckgo.com");
+    if (parsed.hostname.endsWith("duckduckgo.com") && parsed.pathname.startsWith("/l/")) {
+      const uddg = parsed.searchParams.get("uddg");
+      if (uddg) {
+        try {
+          return decodeURIComponent(uddg);
+        } catch {
+          return uddg;
+        }
+      }
+    }
+    return parsed.toString();
+  } catch {
+    return withProtocol;
+  }
+}
+
+export function parseDuckDuckGoHtml(html: string, maxResults: number): SearchResult[] {
+  const capped = Math.min(Math.max(maxResults, 1), 10);
+  const linkRe = /<a[^>]*class="[^"]*\bresult__a\b[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+  const links: Array<{ href: string; titleRaw: string; start: number; end: number }> = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = linkRe.exec(html)) !== null) {
+    links.push({
+      href: match[1] ?? "",
+      titleRaw: match[2] ?? "",
+      start: match.index,
+      end: linkRe.lastIndex,
+    });
+    if (links.length >= capped * 3) {
+      break;
+    }
+  }
+
+  const results: SearchResult[] = [];
+  for (let i = 0; i < links.length; i++) {
+    const current = links[i]!;
+    const nextStart = links[i + 1]?.start ?? Math.min(html.length, current.end + 4000);
+    const segment = html.slice(current.end, nextStart);
+    const snippetMatch = segment.match(
+      /<a[^>]*class="[^"]*\bresult__snippet\b[^"]*"[^>]*>([\s\S]*?)<\/a>|<div[^>]*class="[^"]*\bresult__snippet\b[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
+    );
+    const snippetRaw = snippetMatch?.[1] ?? snippetMatch?.[2] ?? "";
+
+    const title = decodeHtmlEntities(stripHtml(current.titleRaw))
+      .replace(/\s+/g, " ")
+      .trim();
+    const url = normalizeSearchResultUrl(current.href);
+    const snippet = decodeHtmlEntities(stripHtml(snippetRaw))
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (!title || !url) continue;
+    results.push({ title, url, snippet });
+    if (results.length >= capped) break;
+  }
+
+  return results;
+}
+
+async function searchWebViaHttp(query: string, maxResults: number): Promise<SearchResult[]> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SEARCH_TIMEOUT);
+
+  try {
+    const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}&kl=us-en`;
+    const response = await fetch(searchUrl, {
+      signal: controller.signal,
+      headers: {
+        "accept": "text/html,application/xhtml+xml",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const html = await response.text();
+    return parseDuckDuckGoHtml(html, maxResults);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 export async function browseUrl(url: string, waitFor?: string): Promise<BrowseResult> {
   try {
-    return await launchAndRun(async (page) => {
-      await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
+    const targetUrl = validateHttpUrl(url);
+    return await safeLaunchAndRun(async (page) => {
+      await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
       if (waitFor) {
         await page.waitForSelector(waitFor, { timeout: 10_000 }).catch(() => {});
       }
@@ -71,27 +259,13 @@ export async function browseUrl(url: string, waitFor?: string): Promise<BrowseRe
 export async function searchWeb(query: string, maxResults: number = 5): Promise<SearchResult[]> {
   const capped = Math.min(Math.max(maxResults, 1), 10);
   try {
-    return await launchAndRun(async (page) => {
-      const searchUrl = `https://duckduckgo.com/?q=${encodeURIComponent(query)}`;
-      await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
-      await page.waitForSelector("[data-result]", { timeout: 10_000 }).catch(() => {});
-      const results = await page.evaluate((max: number) => {
-        const items: Array<{ title: string; url: string; snippet: string }> = [];
-        const resultElements = document.querySelectorAll("[data-result]");
-        for (let i = 0; i < Math.min(resultElements.length, max); i++) {
-          const el = resultElements[i]!;
-          const a = el.querySelector("a[href]");
-          const snippetEl = el.querySelector("[data-result] .result__snippet, .result__body");
-          items.push({
-            title: a?.textContent?.trim() ?? "",
-            url: a?.getAttribute("href") ?? "",
-            snippet: snippetEl?.textContent?.trim() ?? el.textContent?.trim()?.slice(0, 200) ?? "",
-          });
-        }
-        return items;
-      }, capped);
-      return results;
-    });
+    const results = await searchWebViaHttp(query, capped);
+    if (results.length > 0) return results;
+    return [{
+      title: "Search Error",
+      url: "",
+      snippet: `Error searching "${query}": no parseable results returned by DuckDuckGo HTML`,
+    }];
   } catch (err) {
     return [{ title: "Search Error", url: "", snippet: `Error searching "${query}": ${errorMessage(err)}` }];
   }
@@ -103,8 +277,9 @@ export async function interactWithPage(
   followUpUrls?: string[],
 ): Promise<BrowseResult> {
   try {
-    return await launchAndRun(async (page) => {
-      await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
+    const targetUrl = validateHttpUrl(url);
+    return await safeLaunchAndRun(async (page) => {
+      await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
       for (const action of actions) {
         switch (action.type) {
           case "click":
@@ -131,9 +306,10 @@ export async function interactWithPage(
       if (followUpUrls) {
         for (const followUrl of followUpUrls) {
           try {
-            await page.goto(followUrl, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
+            const nextUrl = validateHttpUrl(followUrl);
+            await page.goto(nextUrl, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
             const followContent = await page.evaluate(() => document.body?.innerText ?? "");
-            parts.push(`\n--- ${followUrl} ---\n${truncateContent(followContent, 4000)}`);
+            parts.push(`\n--- ${nextUrl} ---\n${truncateContent(followContent, 4000)}`);
           } catch (err) {
             parts.push(`\n--- ${followUrl} ---\nError: ${errorMessage(err)}`);
           }

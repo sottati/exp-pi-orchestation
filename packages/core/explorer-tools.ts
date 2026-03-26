@@ -57,6 +57,9 @@ export function createExplorerToolEntries(opts: ExplorerToolOptions): ToolEntry[
     execute: async (_toolCallId, params) => {
       const { browseUrl: browse } = await import("./browser");
       const result = await browse(params.url as string, params.waitFor as string | undefined);
+      if (result.title === "Error" || result.content.startsWith("Error browsing ")) {
+        throw new Error(result.content);
+      }
       return {
         content: [{ type: "text" as const, text: `# ${result.title}\nURL: ${result.url}\n\n${result.content}` }],
         details: { title: result.title, url: result.url },
@@ -77,6 +80,10 @@ export function createExplorerToolEntries(opts: ExplorerToolOptions): ToolEntry[
     execute: async (_toolCallId, params) => {
       const { searchWeb: search } = await import("./browser");
       const results = await search(params.query as string, params.maxResults as number | undefined);
+      const first = results[0];
+      if (first && first.title === "Search Error") {
+        throw new Error(first.snippet || `Search failed for query: ${String(params.query)}`);
+      }
       const text = results.map((r, i) => `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.snippet}`).join("\n\n");
       return {
         content: [{ type: "text" as const, text: text || "No results found." }],
@@ -118,6 +125,9 @@ export function createExplorerToolEntries(opts: ExplorerToolOptions): ToolEntry[
       const followUpUrls = params.followUpUrls as string[] | undefined;
       actions = await resolveCredentialPlaceholders(actions, url, credentialStore);
       const result = await interactWithPage(url, actions, followUpUrls);
+      if (result.title === "Error" || result.content.startsWith("Error interacting with ")) {
+        throw new Error(result.content);
+      }
       return {
         content: [{ type: "text" as const, text: `# ${result.title}\nURL: ${result.url}\n\n${result.content}` }],
         details: {

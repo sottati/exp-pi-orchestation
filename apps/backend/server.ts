@@ -50,6 +50,16 @@ const runtime = new MultiAgentRuntime({
     hitlHandler: createWebHitlHandler(clients),
 });
 
+function sanitizeThoughtPrefix(text: string): string {
+    let next = text;
+    while (true) {
+        const replaced = next.replace(/^\s*(?:\.\s*)?thought:\s*/i, "");
+        if (replaced === next) break;
+        next = replaced;
+    }
+    return next;
+}
+
 function broadcast(msg: object) {
     const text = JSON.stringify(msg);
     for (const ws of clients) {
@@ -148,6 +158,24 @@ Bun.serve({
         "/api/agents": {
             GET: () => Response.json(runtime.listAgents()),
         },
+        "/api/agents/:id/activity": {
+            GET: async (req) => {
+                const agentId = req.params.id;
+                const allTraces = await runtime.getTraces();
+                const agentTraces = allTraces.filter(
+                    (t: TraceEvent) => t.agentId === agentId
+                ).slice(-100);
+                const allChats = runtime.listChats();
+                const agentChats = allChats.filter(
+                    (c: AgentChat) => c.agentId === agentId
+                );
+                const allJobs = runtime.scheduler?.listJobs() ?? [];
+                const agentJobs = allJobs.filter(
+                    (j: ScheduledJob) => j.targetAgentId === agentId || j.createdBy === agentId
+                );
+                return Response.json({ traces: agentTraces, chats: agentChats, jobs: agentJobs });
+            },
+        },
         "/api/chats": {
             GET: () => Response.json(runtime.listChats()),
         },
@@ -239,10 +267,12 @@ Bun.serve({
                             event.type === "message_update" &&
                             event.assistantMessageEvent.type === "text_delta"
                         ) {
+                            const delta = sanitizeThoughtPrefix(event.assistantMessageEvent.delta);
+                            if (!delta) return;
                             ws.send(JSON.stringify({
                                 type: "stream_delta",
                                 runId,
-                                delta: event.assistantMessageEvent.delta,
+                                delta,
                             }));
                         } else if (event.type === "tool_execution_start") {
                             const args = event.args as Record<string, unknown>;
@@ -260,7 +290,7 @@ Bun.serve({
                         ws.send(JSON.stringify({
                             type: "stream_end",
                             runId,
-                            answer: output.answer,
+                            answer: sanitizeThoughtPrefix(output.answer),
                             durationMs: output.durationMs,
                         }));
                     })

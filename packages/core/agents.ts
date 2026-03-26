@@ -9,8 +9,10 @@ import { createGoogleDocsToolEntries } from "./google-docs-tools";
 import { createGoogleDriveToolEntries } from "./google-drive-tools";
 import { createGmailReadToolEntries, createGmailWriteToolEntries } from "./google-mail-tools";
 import { createGoogleCalendarToolEntries } from "./google-calendar-tools";
-import { createGoogleContactsToolEntries } from "./google-contacts-tools";
 import { createGoogleTasksToolEntries } from "./google-tasks-tools";
+import { createLocalContactsToolEntries } from "./local-contacts-tools";
+import { createDevToolEntries } from "./dev-tools";
+import { createFrontendToolEntries } from "./frontend-tools";
 
 export const ORCHESTRATOR_ID = "orchestrator" as const;
 
@@ -30,7 +32,8 @@ export function createAgentDefinitions(opts?: {
       "The math specialist handles data analysis (CSV, Excel, Google Sheets, SQLite, Supabase/PostgreSQL, statistics).",
       "The writer specialist drafts documents, summaries, translations, Word (.docx) files, Google Docs, and sends/drafts emails via Gmail.",
       "The debugger specialist reviews code, debugs errors, and identifies security issues. It can read files, search code, and list directories.",
-      "The secretary specialist manages the user's personal organization: Google Calendar, Gmail reading/summaries, Google Contacts, Google Tasks, and scheduling (cron jobs, recurring tasks, reminders). Delegate scheduling and agenda tasks to her.",
+      "The secretary specialist manages the user's personal organization: Google Calendar, Gmail reading/summaries, an internal contact list, Google Tasks, and scheduling (cron jobs, recurring tasks, reminders). Delegate scheduling and agenda tasks to her.",
+      "The web-designer specialist builds frontend interfaces (HTML, CSS, React, Tailwind), previews pages, and validates accessibility.",
       "After tool results, produce a direct final answer for the user.",
       "Be concise by default.",
     ].join(" "))
@@ -41,12 +44,27 @@ export function createAgentDefinitions(opts?: {
 
   const code = defineAgent("code")
     .name("Code Specialist")
-    .role("Creates focused code snippets.")
+    .role("Creates, edits, and debugs backend code.")
     .model("openrouter", "google/gemini-3.1-flash-lite-preview")
     .systemPrompt(
-      "You are a coding specialist. Return concise, practical answers. Prefer short code snippets and include only essential explanation."
+      "You are a coding specialist. Return concise, practical answers. "
+      + "You can read, write, and edit files in the project. You can run build and "
+      + "test commands. When you need frontend work, delegate to the web-designer."
     )
     .capabilities(["code-snippet", "small-refactor", "bug-fix-hint"])
+    .localToolEntries([
+      ...createDevToolEntries({
+        commandWhitelist: ["bun build", "bun test", "bun run", "bunx tsc"],
+      }),
+    ])
+    .permissions({
+      "read_file": "hitl",
+      "write_file": "hitl",
+      "edit_file": "hitl",
+      "run_command": "hitl",
+      "search_code": "hitl",
+    })
+    .canDelegateTo(["web-designer"], { maxDepth: 2 })
     .maxConcurrency(1)
     .build();
 
@@ -217,7 +235,7 @@ export function createAgentDefinitions(opts?: {
   // Secretary agent — personal assistant: calendar, email reading, contacts, tasks, scheduling
   const gmailReadTools = createGmailReadToolEntries({ credentialStore: opts?.credentialStore });
   const calendarTools = createGoogleCalendarToolEntries({ credentialStore: opts?.credentialStore });
-  const contactsTools = createGoogleContactsToolEntries({ credentialStore: opts?.credentialStore });
+  const contactsTools = createLocalContactsToolEntries();
   const tasksTools = createGoogleTasksToolEntries({ credentialStore: opts?.credentialStore });
 
   const secretary = defineAgent("secretary")
@@ -230,7 +248,7 @@ export function createAgentDefinitions(opts?: {
       "Your responsibilities:",
       "1. Email management: search, read, and summarize emails from Gmail.",
       "2. Calendar management: list, create, update, and delete Google Calendar events.",
-      "3. Contact management: search and create Google Contacts.",
+      "3. Contact management: manage the internal contact list (list, read, search, create, delete).",
       "4. Task management: list, create, and complete Google Tasks.",
       "5. Scheduling: manage cron jobs, recurring tasks, and reminders using schedule_task.",
       "",
@@ -245,8 +263,11 @@ export function createAgentDefinitions(opts?: {
       "- calendar_delete: Delete an event.",
       "",
       "Contacts tools:",
-      "- contacts_search: Search contacts by name, email, or phone.",
-      "- contacts_create: Create a new contact.",
+      "- contacts_list: List all saved contacts from the internal contact list.",
+      "- contacts_read: Read one contact by contactId.",
+      "- contacts_search: Search contacts by name, email, phone, tags, or notes.",
+      "- contacts_create: Save a new contact in the internal contact list.",
+      "- contacts_delete: Delete a contact by contactId.",
       "",
       "Tasks tools:",
       "- tasks_list: List pending tasks.",
@@ -269,25 +290,67 @@ export function createAgentDefinitions(opts?: {
       "- Be proactive: suggest scheduling reminders, flag conflicts in calendar.",
       "- For email summaries, group by importance/topic, extract key action items.",
       "- Check availability before creating events (list events in the same time range).",
+      "- When asked to show all contacts, use contacts_list.",
       "- Be concise. Present information in structured format (lists, tables).",
     ].join("\n"))
     .capabilities([
       "gmail-search", "gmail-read", "email-summary",
       "calendar-list", "calendar-create", "calendar-update", "calendar-delete",
-      "contacts-search", "contacts-create",
+      "contacts-list", "contacts-read", "contacts-search", "contacts-create", "contacts-delete",
       "tasks-list", "tasks-create", "tasks-complete",
       "schedule", "cron", "reminders", "briefing",
     ])
     .localToolEntries([...gmailReadTools, ...calendarTools, ...contactsTools, ...tasksTools])
     .permissions({
       "calendar_create": "hitl", "calendar_update": "hitl", "calendar_delete": "hitl",
-      "contacts_create": "hitl",
+      "contacts_create": "hitl", "contacts_delete": "hitl",
       "tasks_create": "hitl", "tasks_complete": "hitl",
     })
     .maxConcurrency(1)
     .build();
 
-  return [orchestrator, code, math, explorer, writer, debugger_, secretary];
+  const explorerToolsForDesigner = createExplorerToolEntries({
+    credentialStore: opts?.credentialStore,
+  });
+  const browseUrlEntry = explorerToolsForDesigner.filter(t => t.name === "browse_url");
+
+  const webDesigner = defineAgent("web-designer")
+    .name("Web Designer & Frontend Dev")
+    .role("Designs and builds frontend interfaces — HTML, CSS, React/TSX, Tailwind. "
+      + "Reads/writes project files, previews in browser, validates accessibility. "
+      + "Knows React, Next.js, Astro, shadcn, design systems.")
+    .model("openrouter", "google/gemini-3.1-flash-lite-preview")
+    .systemPrompt("You are a frontend specialist. You build UI components, pages, "
+      + "and layouts. You write clean, accessible, responsive code. You read existing "
+      + "code to understand patterns before making changes. You preview your work in "
+      + "the browser and validate accessibility. When you need backend endpoints, "
+      + "delegate to the code specialist.")
+    .capabilities([
+      "html", "css", "tailwind", "react", "tsx",
+      "responsive-design", "accessibility", "design-systems",
+      "component-architecture", "preview", "prototyping",
+      "nextjs", "astro", "shadcn",
+    ])
+    .localToolEntries([
+      ...createDevToolEntries({
+        commandWhitelist: ["bun build", "bun test", "bunx tailwindcss",
+          "bunx eslint", "bunx prettier", "bun run"],
+      }),
+      ...createFrontendToolEntries(),
+      ...browseUrlEntry,
+    ])
+    .permissions({
+      "read_file": "hitl",
+      "write_file": "hitl",
+      "edit_file": "hitl",
+      "run_command": "hitl",
+      "search_code": "hitl",
+    })
+    .canDelegateTo(["code"], { maxDepth: 2 })
+    .maxConcurrency(1)
+    .build();
+
+  return [orchestrator, code, math, explorer, writer, debugger_, secretary, webDesigner];
 }
 
 // Deprecated — kept for backward compatibility until runtime migration (Task 15)

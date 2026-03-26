@@ -42,7 +42,9 @@ function Header() {
 
 export function DashboardLayout() {
   const location = useLocation();
+  const { state, respondToHitl } = useRuntime();
   const showChatInput = location.pathname === "/";
+  const activeHitlRequest = state.hitlQueue[0];
 
   return (
     <div className="flex h-full flex-col">
@@ -52,6 +54,43 @@ export function DashboardLayout() {
         <Outlet />
       </div>
       {showChatInput && <InputBar />}
+      {activeHitlRequest && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div className="flex w-full max-w-2xl flex-col gap-3 border border-theme-border bg-theme-surface p-4 shadow-2xl">
+            <div className="text-[12px] uppercase tracking-[0.14em] text-theme-text">approval required</div>
+            <div className="text-[12px] text-theme-text-soft">
+              {activeHitlRequest.agentId} wants to run <code>{activeHitlRequest.toolName}</code>.
+            </div>
+            {activeHitlRequest.reason && (
+              <div className="text-[12px] text-theme-text-soft">{activeHitlRequest.reason}</div>
+            )}
+            <div className="flex gap-3 text-[10px] uppercase tracking-[0.08em] text-theme-text-muted">
+              <span>timeout: {Math.max(1, Math.floor(activeHitlRequest.timeout / 1000))}s</span>
+              {state.hitlQueue.length > 1 && <span>pending: {state.hitlQueue.length}</span>}
+            </div>
+            <div className="text-[10px] uppercase tracking-[0.08em] text-theme-text-muted">params</div>
+            <pre className="max-h-72 overflow-auto border border-theme-border bg-theme-input p-3 text-[12px] whitespace-pre-wrap break-words text-theme-text">
+              {JSON.stringify(activeHitlRequest.params, null, 2)}
+            </pre>
+            <div className="flex justify-end gap-2 max-sm:flex-col">
+              <button
+                type="button"
+                className="border border-theme-text px-3 py-2 text-[12px] text-theme-text hover:bg-theme-surface-hover"
+                onClick={() => respondToHitl(activeHitlRequest.reqId, true)}
+              >
+                Allow (y)
+              </button>
+              <button
+                type="button"
+                className="border border-theme-border-subdued px-3 py-2 text-[12px] text-theme-text-soft hover:bg-theme-surface-hover"
+                onClick={() => respondToHitl(activeHitlRequest.reqId, false)}
+              >
+                Don&apos;t Allow (n)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

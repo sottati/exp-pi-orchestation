@@ -6,6 +6,15 @@ import type { AgentInfo, ChatItem, DelegationBlock, HydratedUiState, UIMessage }
 export type DithieState = "idle" | "thinking" | "delegating" | "error";
 export type ThemeMode = "light" | "dark";
 
+export interface HitlRequestItem {
+  reqId: string;
+  agentId: string;
+  toolName: string;
+  params: Record<string, unknown>;
+  timeout: number;
+  reason?: string;
+}
+
 export interface RuntimeState {
   agents: AgentInfo[];
   sessionId: string;
@@ -24,6 +33,7 @@ export interface RuntimeState {
   wsConnected: boolean;
   chats: AgentChat[];
   jobs: ScheduledJob[];
+  hitlQueue: HitlRequestItem[];
 }
 
 type ServerMsg =
@@ -38,13 +48,22 @@ type ServerMsg =
   | { type: "job_lifecycle"; job: ScheduledJob }
   | { type: "delegation_start"; runId: string; delegationId: string; fromAgentId: string; toAgentId: string; task: string }
   | { type: "delegation_end"; runId: string; delegationId: string; result: string; durationMs: number; status: "ok" | "error" }
-  | { type: "hitl_request"; reqId: string; agentId: string; toolName: string; params: Record<string, unknown>; timeout: number };
+  | {
+    type: "hitl_request";
+    reqId: string;
+    agentId: string;
+    toolName: string;
+    params: Record<string, unknown>;
+    timeout: number;
+    reason?: string;
+  };
 
 type LocalAction =
   | { type: "hydrate"; snapshot: HydratedUiState }
   | { type: "send_user_message"; content: string; id: string }
   | { type: "toggle_trace"; eventId: string }
   | { type: "toggle_delegation"; delegationId: string }
+  | { type: "resolve_hitl_request"; reqId: string }
   | { type: "reset_dithie_state" }
   | { type: "ws_connected" }
   | { type: "ws_disconnected" };
@@ -69,6 +88,7 @@ const initialState: RuntimeState = {
   wsConnected: false,
   chats: [],
   jobs: [],
+  hitlQueue: [],
 };
 
 function deriveTraceStartTimes(traces: TraceEvent[]): Record<string, number> {
@@ -285,6 +305,12 @@ function reducer(state: RuntimeState, action: Action): RuntimeState {
       return { ...state, expandedDelegations: next };
     }
 
+    case "resolve_hitl_request":
+      return {
+        ...state,
+        hitlQueue: state.hitlQueue.filter((request) => request.reqId !== action.reqId),
+      };
+
     case "reset_dithie_state":
       return { ...state, dithieState: "idle" };
 
@@ -292,10 +318,27 @@ function reducer(state: RuntimeState, action: Action): RuntimeState {
       return { ...state, wsConnected: true };
 
     case "ws_disconnected":
-      return { ...state, wsConnected: false };
+      return { ...state, wsConnected: false, hitlQueue: [] };
 
-    case "hitl_request":
-      return state;
+    case "hitl_request": {
+      if (state.hitlQueue.some((request) => request.reqId === action.reqId)) {
+        return state;
+      }
+      return {
+        ...state,
+        hitlQueue: [
+          ...state.hitlQueue,
+          {
+            reqId: action.reqId,
+            agentId: action.agentId,
+            toolName: action.toolName,
+            params: action.params,
+            timeout: action.timeout,
+            reason: action.reason,
+          },
+        ],
+      };
+    }
 
     default:
       return state;
@@ -308,6 +351,7 @@ interface RuntimeContextValue {
   setThemeMode: (mode: ThemeMode) => void;
   toggleThemeMode: () => void;
   sendMessage: (content: string) => boolean;
+  respondToHitl: (reqId: string, approved: boolean) => void;
   toggleTrace: (eventId: string) => void;
   toggleDelegation: (delegationId: string) => void;
 }
@@ -393,6 +437,14 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
     return true;
   }, []);
 
+  const respondToHitl = useCallback((reqId: string, approved: boolean) => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "hitl_response", reqId, approved }));
+    }
+    dispatch({ type: "resolve_hitl_request", reqId });
+  }, []);
+
   const toggleTrace = useCallback((eventId: string) => {
     dispatch({ type: "toggle_trace", eventId });
   }, []);
@@ -409,15 +461,36 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
     setThemeModeState((current) => (current === "dark" ? "light" : "dark"));
   }, []);
 
+  useEffect(() => {
+    const activeRequest = state.hitlQueue[0];
+    if (!activeRequest) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.repeat) return;
+      const key = event.key.toLowerCase();
+      if (key === "y") {
+        event.preventDefault();
+        respondToHitl(activeRequest.reqId, true);
+      } else if (key === "n") {
+        event.preventDefault();
+        respondToHitl(activeRequest.reqId, false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [respondToHitl, state.hitlQueue]);
+
   const value = useMemo<RuntimeContextValue>(() => ({
     state,
     themeMode,
     setThemeMode,
     toggleThemeMode,
     sendMessage,
+    respondToHitl,
     toggleTrace,
     toggleDelegation,
-  }), [state, themeMode, setThemeMode, toggleThemeMode, sendMessage, toggleTrace, toggleDelegation]);
+  }), [state, themeMode, setThemeMode, toggleThemeMode, sendMessage, respondToHitl, toggleTrace, toggleDelegation]);
 
   return (
     <RuntimeContext.Provider value={value}>

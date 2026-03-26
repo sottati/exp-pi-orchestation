@@ -20,7 +20,7 @@ Necesito un snippet en C para imprimir del 1 al 10
 
 ## Qué incluye hoy
 
-- Orquestador + especialistas (`code`, `math`, `explorer`, `writer`, `debugger`, `secretary`) en runtime único.
+- Orquestador + especialistas (`code`, `math`, `explorer`, `writer`, `debugger`, `secretary`, `web-designer`) en runtime único.
 - Toda delegación es async via chat (`delegate` tool). Sin sync path.
 - Per-agent concurrency: cada especialista tiene `maxConcurrency` slots de chat.
 - Chats con cola FIFO: si un agente está al máximo, los nuevos chats se encolan como `waiting`.
@@ -29,8 +29,9 @@ Necesito un snippet en C para imprimir del 1 al 10
 - Configuración de modelo por agente (`orchestrator`, `code`, `math`) via builder pattern en `packages/core/agents.ts`.
 - Sistema extensible de agentes: agent builder, tool registry, tool middleware con permisos y HITL.
 - Office tools: `read_excel`/`write_excel` (exceljs) para el agente math/analyst; `read_docx`/`write_docx` (mammoth + docx) para el agente writer.
-- Google Workspace integration: Sheets, Docs, Drive, Gmail, Calendar, Contacts, Tasks — autenticación OAuth2 via `googleapis`.
-- Agente `secretary`: asistente personal para calendar, email, contactos, tareas y cron jobs.
+- Google Workspace integration: Sheets, Docs, Drive, Gmail, Calendar, Tasks — autenticación OAuth2 via `googleapis`.
+- Agente `secretary`: asistente personal para calendar, email, contactos internos, tareas y cron jobs.
+- Contactos internos del `secretary`: libreta local persistida en `.runtime-data/secretary-contacts.json` (listar, leer, buscar, crear, eliminar).
 - Scheduler integrado: cron, one-time, delayed tasks con persistencia JSONL (scheduler tools migrados al agente `secretary`).
 - Prompt compiler: ensamblado de system prompt en 5 capas (base, tools, delegation, rules, examples).
 - Restauración automática de chats y scheduled jobs interrumpidos al reiniciar sesión.
@@ -40,7 +41,7 @@ Necesito un snippet en C para imprimir del 1 al 10
 ## Configuración del modelo
 
 Agentes definidos via builder pattern en `packages/core/agents.ts` usando `defineAgent()`.
-Hoy, los ocho agentes usan `openrouter/google/gemini-3.1-flash-lite-preview`.
+Hoy, los nueve agentes usan `openrouter/google/gemini-3.1-flash-lite-preview`.
 
 | Agent ID | Provider | Model ID |
 |---|---|---|
@@ -51,12 +52,16 @@ Hoy, los ocho agentes usan `openrouter/google/gemini-3.1-flash-lite-preview`.
 | `writer` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
 | `debugger` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
 | `secretary` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
+| `web-designer` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
 
 ## Requisitos
 
 - [Bun](https://bun.com) 1.3+
 - Dependencias de Office tools: `exceljs`, `mammoth`, `docx` (instaladas via `bun install`)
 - Google Workspace: `googleapis` (instalada via `bun install`); requiere credenciales OAuth2 (ver sección Google Auth)
+- Explorer web: instalar browser de Playwright con `bunx playwright install chromium`
+- Explorer web: requiere salida a internet (DNS + HTTPS) desde el host
+- Explorer web: `chromium.launch` usa timeout de 30s para entornos lentos
 
 ## Instalación
 
@@ -77,6 +82,7 @@ bun run smoke:orchestrator
 bun run smoke:explorer
 bun run smoke:writer
 bun run smoke:debugger
+bun run smoke:web-designer
 bun run ui:gate
 ```
 
@@ -99,15 +105,16 @@ Abre http://localhost:3000 para ver el dashboard de Dithie:
 - **Estética Sacred-inspired**: paleta derivada del sistema de tokens de `sacred.computer`, con tema dark por defecto, superficies/contrastes terminales y fuente JetBrains Mono.
 - **Dithie**: pixel-art spider (16x16) como identidad del orchestrator, con estados animados (idle, thinking, delegating, error).
 - **Chat unificado**: toda la conversación pasa por Dithie (orchestrator). Las delegaciones se muestran como bloques colapsables inline.
-- **React Router**: la UI ya no vive en un `App.tsx` monolítico; usa layout persistente + rutas para `/`, `/traces`, `/agents`, `/chats` y `/jobs`.
+- **React Router**: la UI usa layout persistente + rutas para `/`, `/traces`, `/agents`, `/chats` y `/jobs`.
 - **Tailwind UI**: el layout y los componentes usan utilidades Tailwind; `app.css` quedó como capa global de tokens, tema y animaciones, y se compila a `apps/web/app.generated.css`.
-- **Antes del primer token**: fila compacta con la mascota y la etiqueta «thinking» (sin burbuja vacía); al empezar el stream aparece la burbuja con el cursor.
+- **Antes del primer token**: fila compacta con la mascota y la etiqueta `thinking` (sin burbuja vacía); al empezar el stream aparece la burbuja con el cursor.
+- **HITL en UI**: cuando una tool requiere aprobación, aparece un modal con `Allow` / `Don't Allow` y atajos `y` / `n`.
 - **Panel de trazas**: trazas en tiempo real (newest-last) con items expandibles y duración calculada client-side.
 - **Reload seguro**: al refrescar con F5/Ctrl+R, la UI rehidrata chat, delegaciones, trazas, chats internos y jobs persistidos de la sesión activa.
 - **Color por agente**: la vista `/agents` asigna un tinte específico a cada agente usando una paleta compatible con Sacred.
 - **Theme switcher**: la barra de navegación permite alternar entre dark/light y persiste la preferencia en `localStorage`.
 - **WebSocket** en `/ws`: deltas de streaming, delegation events (`delegation_start`/`delegation_end`), lifecycle de chats y push de trazas.
-- **REST API**: `/api/agents`, `/api/chats`, `/api/threads`, `/api/traces`, `/api/ui-state`, `/api/jobs`.
+- **REST API**: `/api/agents`, `/api/agents/:id/activity`, `/api/chats`, `/api/threads`, `/api/traces`, `/api/ui-state`, `/api/jobs`.
 - **Fallback SPA**: el servidor web sirve el HTML base en las rutas cliente (`/chat`, `/traces`, `/agents`, `/chats`, `/jobs`) para soportar deep-linking y refresh.
 
 La CLI (`bun run start`) y el servidor UI son entradas independientes que comparten `MultiAgentRuntime`.
@@ -125,7 +132,7 @@ La CLI (`bun run start`) y el servidor UI son entradas independientes que compar
 - `/threads`
 - `/thread <threadId>`
 - `/traces [n]`
-- `/smoke <math|code|orchestrator|explorer>`
+- `/smoke <math|code|orchestrator|explorer|writer|debugger>`
 - `/exit`
 
 ## Modelo de delegación: Chats
@@ -220,8 +227,8 @@ Cada envelope de hilo incluye metadatos de relación:
 - `apps/backend/ui-gate.ts`: evaluación de fricción para activar UI.
 - `apps/web/index.html`: shell HTML de la UI (title "dithie", JetBrains Mono font).
 - `apps/web/app.tsx`: entrypoint React que monta `RouterProvider` + `RuntimeProvider`.
-- `apps/web/runtime-context.tsx`: estado global de la UI, hidratación desde `/api/ui-state`, conexión WebSocket y acciones compartidas.
-- `apps/web/layouts/dashboard-layout.tsx`: shell persistente con header y navegación; la barra de entrada de chat solo en `/` (ruta de conversación).
+- `apps/web/runtime-context.tsx`: estado global de la UI, hidratación desde `/api/ui-state`, conexión WebSocket, acciones compartidas y cola HITL.
+- `apps/web/layouts/dashboard-layout.tsx`: shell persistente con header y navegación; la barra de entrada de chat solo en `/` (ruta de conversación) y modal global de aprobaciones.
 - `apps/web/pages/*.tsx`: páginas de router para chat, trazas, agentes, chats y jobs.
 - `apps/web/components/*.tsx`: componentes presentacionales reutilizables para chat, navegación y trazas.
 - `apps/web/app.css`: capa global de Tailwind + tokens/tema inspirados en Sacred.
@@ -229,6 +236,7 @@ Cada envelope de hilo incluye metadatos de relación:
 - `components.json`: configuración de shadcn/ui adaptada a esta estructura para que futuras altas de componentes apunten a `apps/web`.
 - `apps/web/lib/agent-colors.ts`: mapeo de tintes por agente y badges de estado.
 - `apps/web/lib/utils.ts`: helper `cn()` para composición de clases.
+- `apps/web/types.ts`, `apps/web/sidebar.tsx`, `apps/web/sidebar-spider.tsx`, `apps/web/agent-view.tsx`: trabajo previo de vistas por agente conservado en la branch para iteraciones futuras.
 - `apps/web/dithie-sprite.tsx`: componente DithieSprite (CSS Grid 16/32px, canvas 64px, animaciones).
 - `apps/web/dithie-frames.ts`: frame data del pixel-art spider (16x16 grids para cada estado).
 - `packages/core/runtime.ts`: runtime multiagente, enrutado de mensajes, correlación de IDs y trazas.
@@ -242,7 +250,7 @@ Cada envelope de hilo incluye metadatos de relación:
 - `packages/core/scheduler.ts`: cron parser, timer basado en setTimeout, persistencia JSONL.
 - `packages/core/scheduler-tools.ts`: tools de scheduling (`schedule_task`, `list_scheduled_jobs`, `cancel_scheduled_job`).
 - `packages/core/mcp-client.ts`: interfaz `McpConnector` para servidores de tools externos.
-- `packages/core/browser.ts`: wrapper de Playwright para `browseUrl`, `searchWeb`, `interactWithPage`.
+- `packages/core/browser.ts`: `browseUrl`/`interactWithPage` con Playwright y `searchWeb` con fetch+parse de DuckDuckGo HTML.
 - `packages/core/explorer-tools.ts`: tool entries del explorer (`browse_url`, `search_web`, `interact_page`).
 - `packages/core/analyst-tools.ts`: tool entries del data analyst (`query_sqlite`, `query_supabase`, `parse_csv`, `analyze_data`).
 - `packages/core/office-tools.ts`: tool entries de Office — `read_excel`, `write_excel` (exceljs) para math/analyst; `read_docx`, `write_docx` (mammoth + docx) para writer.
@@ -254,7 +262,7 @@ Cada envelope de hilo incluye metadatos de relación:
 - `packages/core/google-drive-tools.ts`: tool entries de Google Drive — `drive_list`, `drive_search`, `drive_download` (asignados al agente `explorer`).
 - `packages/core/google-mail-tools.ts`: tool entries de Gmail — `gmail_search`, `gmail_read` (read, asignados a `secretary`); `gmail_send`, `gmail_draft` (write, asignados a `writer`).
 - `packages/core/google-calendar-tools.ts`: tool entries de Google Calendar — `calendar_list`, `calendar_create`, `calendar_update`, `calendar_delete` (asignados a `secretary`).
-- `packages/core/google-contacts-tools.ts`: tool entries de Google Contacts — `contacts_search`, `contacts_create` (asignados a `secretary`).
+- `packages/core/local-contacts-tools.ts`: tool entries de contactos internos — `contacts_list`, `contacts_read`, `contacts_search`, `contacts_create`, `contacts_delete` (asignados a `secretary`).
 - `packages/core/google-tasks-tools.ts`: tool entries de Google Tasks — `tasks_list`, `tasks_create`, `tasks_complete` (asignados a `secretary`).
 - `packages/core/chat-manager.ts`: gestión de chats con per-agent concurrency, cola FIFO, timeout/retry y persistencia a disco.
 - `packages/core/thread-store.ts`: persistencia JSONL de hilos, trazas y chat records.
@@ -288,7 +296,7 @@ Orden de resolución: runtime override → agent permissions → exact match →
 Cuando el permiso resuelve a `"hitl"`, se llama al `HITLHandler` para pedir aprobación:
 
 - **CLI**: prompt via readline en terminal
-- **Web**: request/response via WebSocket con timeout configurable
+- **Web**: request/response via WebSocket con timeout configurable + modal de aprobación (`Allow` / `Don't Allow`, `y` / `n`)
 
 ## Google Workspace (Google Auth)
 
@@ -322,7 +330,12 @@ GOOGLE_REFRESH_TOKEN=...
 | `math` (analyst) | `read_gsheet`, `write_gsheet`, `create_gsheet` |
 | `writer` | `read_gdoc`, `write_gdoc`, `create_gdoc`, `gmail_send`, `gmail_draft` |
 | `explorer` | `drive_list`, `drive_search`, `drive_download` |
-| `secretary` | `gmail_search`, `gmail_read`, `calendar_list`, `calendar_create`, `calendar_update`, `calendar_delete`, `contacts_search`, `contacts_create`, `tasks_list`, `tasks_create`, `tasks_complete`, `schedule_task`, `list_scheduled_jobs`, `cancel_scheduled_job` |
+| `secretary` | `gmail_search`, `gmail_read`, `calendar_list`, `calendar_create`, `calendar_update`, `calendar_delete`, `tasks_list`, `tasks_create`, `tasks_complete`, `schedule_task`, `list_scheduled_jobs`, `cancel_scheduled_job` |
+
+### Contactos internos (secretary)
+
+- `contacts_list`, `contacts_read`, `contacts_search`, `contacts_create`, `contacts_delete`
+- Persistencia local en `.runtime-data/secretary-contacts.json`
 
 ## Scheduler
 
@@ -346,7 +359,10 @@ El runtime incluye un `Scheduler` para ejecución cron, one-time y delayed:
 - **Quiero ver conversación interna entre agentes**: `/threads` y luego `/thread <id>`.
 - **Quiero estado completo raw de un chat**: `/chat <chatId> --json`.
 - **Veo `(sin texto)` o respuesta vacía**: revisa `/thread <id>`; si hay `Model error: ...` suele ser rate-limit/cuota del proveedor.
+- **Veo `thought:` o falta respuesta final tras delegar**: el runtime ahora ignora turns intermedios de tool-use, limpia prefijos `thought:` y puede usar fallback desde `get_chat_result` completado cuando el último assistant llega vacío.
 
 ## Nota
 
 Este repo está en modo MPV terminal-first. La UI se activa cuando el gate indique fricción operativa real (concurrencia, HITL frecuente o volumen alto de trazas).
+
+

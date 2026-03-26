@@ -15,6 +15,7 @@
     "smoke:explorer": "bun run apps/cli/index.ts --smoke explorer",
     "smoke:writer": "bun run apps/cli/index.ts --smoke writer",
     "smoke:debugger": "bun run apps/cli/index.ts --smoke debugger",
+    "smoke:web-designer": "bun run apps/cli/index.ts --smoke web-designer",
     "ui:gate": "bun run apps/backend/ui-gate.ts"
   },
   "devDependencies": {
@@ -30,6 +31,7 @@
     "@mariozechner/pi-ai": "^0.57.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "axe-core": "^4.11.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "docx": "^9.6.1",
