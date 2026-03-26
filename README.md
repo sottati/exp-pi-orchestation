@@ -20,7 +20,7 @@ Necesito un snippet en C para imprimir del 1 al 10
 
 ## Qué incluye hoy
 
-- Orquestador + especialistas (`code`, `math`, `explorer`, `writer`, `debugger`, `secretary`) en runtime único.
+- Orquestador + especialistas (`code`, `math`, `explorer`, `writer`, `debugger`, `secretary`, `web-designer`) en runtime único.
 - Toda delegación es async via chat (`delegate` tool). Sin sync path.
 - Per-agent concurrency: cada especialista tiene `maxConcurrency` slots de chat.
 - Chats con cola FIFO: si un agente está al máximo, los nuevos chats se encolan como `waiting`.
@@ -41,7 +41,7 @@ Necesito un snippet en C para imprimir del 1 al 10
 ## Configuración del modelo
 
 Agentes definidos via builder pattern en `packages/core/agents.ts` usando `defineAgent()`.
-Hoy, los ocho agentes usan `openrouter/google/gemini-3.1-flash-lite-preview`.
+Hoy, los nueve agentes usan `openrouter/google/gemini-3.1-flash-lite-preview`.
 
 | Agent ID | Provider | Model ID |
 |---|---|---|
@@ -52,6 +52,7 @@ Hoy, los ocho agentes usan `openrouter/google/gemini-3.1-flash-lite-preview`.
 | `writer` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
 | `debugger` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
 | `secretary` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
+| `web-designer` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
 
 ## Requisitos
 
@@ -81,6 +82,7 @@ bun run smoke:orchestrator
 bun run smoke:explorer
 bun run smoke:writer
 bun run smoke:debugger
+bun run smoke:web-designer
 bun run ui:gate
 ```
 

@@ -249,7 +249,8 @@ Agents are defined via the builder pattern in `packages/core/agents.ts` using `d
 Current setup keeps same model for all agents.
 
 - `orchestrator` → `openrouter/google/gemini-3.1-flash-lite-preview`
-- `code` → `openrouter/google/gemini-3.1-flash-lite-preview`
+- `code` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: dev tools; delegates frontend to `web-designer`)
+- `web-designer` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: dev tools + frontend tools + `browse_url`; delegates backend to `code`)
 - `math` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: analyst tools + `read_excel`, `write_excel`, `read_gsheet`, `write_gsheet`, `create_gsheet`)
 - `explorer` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: browser + `drive_list`, `drive_search`, `drive_download`)
 - `writer` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: `read_docx`, `write_docx`, `read_gdoc`, `write_gdoc`, `create_gdoc`, `gmail_send`, `gmail_draft`)

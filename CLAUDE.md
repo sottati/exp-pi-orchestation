@@ -133,6 +133,8 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Credential store: `packages/core/credential-store.ts` (AES-256-GCM encrypted credential storage)
 - Analyst tools: `packages/core/analyst-tools.ts` (`query_sqlite`, `query_supabase`, `parse_csv`, `analyze_data` tool entries)
 - Office tools: `packages/core/office-tools.ts` (`read_excel`, `write_excel` via exceljs; `read_docx`, `write_docx` via mammoth + docx)
+- Dev tools: `packages/core/dev-tools.ts` (`read_file`, `write_file`, `edit_file`, `search_code`, `list_directory`, `run_command` — shared by `code` and `web-designer`)
+- Frontend tools: `packages/core/frontend-tools.ts` (`preview_page`, `check_responsive`, `validate_accessibility` — assigned to `web-designer`)
 - Debugger tools: `packages/core/debugger-tools.ts` (`read_file`, `search_code`, `list_directory` tool entries)
 - Google auth: `packages/core/google-auth.ts` (OAuth2 helper — reads from CredentialStore domain `"google"` or env vars `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/`GOOGLE_REFRESH_TOKEN`)
 - Google Sheets tools: `packages/core/google-sheets-tools.ts` (`read_gsheet`, `write_gsheet`, `create_gsheet` — assigned to `math`)
@@ -170,6 +172,7 @@ Use these project scripts:
 - `bun run smoke:explorer`
 - `bun run smoke:writer`
 - `bun run smoke:debugger`
+- `bun run smoke:web-designer`
 - `bun run ui:gate`
 
 Explorer prerequisite:
@@ -240,10 +243,11 @@ Agents are defined via the builder pattern in `packages/core/agents.ts` using `d
 Current setup keeps same model for all agents.
 
 - `orchestrator` → `openrouter/google/gemini-3.1-flash-lite-preview`
-- `code` → `openrouter/google/gemini-3.1-flash-lite-preview`
+- `code` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: dev tools; delegates frontend to `web-designer`)
 - `math` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: analyst tools + `read_excel`, `write_excel`, `read_gsheet`, `write_gsheet`, `create_gsheet`)
 - `explorer` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: browser + `drive_list`, `drive_search`, `drive_download`)
 - `writer` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: `read_docx`, `write_docx`, `read_gdoc`, `write_gdoc`, `create_gdoc`, `gmail_send`, `gmail_draft`)
+- `web-designer` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: dev tools + frontend tools + `browse_url`; delegates backend to `code`)
 - `debugger` → `openrouter/google/gemini-3.1-flash-lite-preview`
 - `secretary` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: `gmail_search`, `gmail_read`, calendar, internal contacts, tasks + scheduler tools)
 
