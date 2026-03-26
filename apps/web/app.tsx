@@ -37,6 +37,16 @@ interface State {
   expandedTraces: Set<string>;
   expandedDelegations: Set<string>;
   wsConnected: boolean;
+  hitlQueue: HitlRequestItem[];
+}
+
+interface HitlRequestItem {
+  reqId: string;
+  agentId: string;
+  toolName: string;
+  params: Record<string, unknown>;
+  reason: string;
+  timeout: number;
 }
 
 type ServerMsg =
@@ -49,6 +59,7 @@ type ServerMsg =
   | { type: "trace"; event: TraceEvent }
   | { type: "chat_lifecycle"; chat: unknown }
   | { type: "job_lifecycle"; job: unknown }
+  | { type: "hitl_request"; reqId: string; agentId: string; toolName: string; params: Record<string, unknown>; reason: string; timeout: number }
   | { type: "delegation_start"; runId: string; delegationId: string; fromAgentId: string; toAgentId: string; task: string }
   | { type: "delegation_end"; runId: string; delegationId: string; result: string; durationMs: number; status: "ok" | "error" };
 
@@ -58,6 +69,7 @@ type LocalAction =
   | { type: "set_thread_messages"; messages: ThreadEnvelopeInfo[] }
   | { type: "toggle_trace"; eventId: string }
   | { type: "toggle_delegation"; delegationId: string }
+  | { type: "resolve_hitl_request"; reqId: string }
   | { type: "reset_dithie_state" }
   | { type: "ws_connected" }
   | { type: "ws_disconnected" };
@@ -87,6 +99,7 @@ const initialState: State = {
   expandedTraces: new Set(),
   expandedDelegations: new Set(),
   wsConnected: false,
+  hitlQueue: [],
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -223,6 +236,26 @@ function reducer(state: State, action: Action): State {
       return { ...state, jobs: nextJobs };
     }
 
+    case "hitl_request": {
+      if (state.hitlQueue.some((request) => request.reqId === action.reqId)) {
+        return state;
+      }
+
+      const request: HitlRequestItem = {
+        reqId: action.reqId,
+        agentId: action.agentId,
+        toolName: action.toolName,
+        params: action.params,
+        reason: action.reason,
+        timeout: action.timeout,
+      };
+
+      return {
+        ...state,
+        hitlQueue: [...state.hitlQueue, request],
+      };
+    }
+
     case "send_user_message": {
       const agentId = action.agentId;
       const msg: UIMessage = {
@@ -339,6 +372,12 @@ function reducer(state: State, action: Action): State {
       return { ...state, expandedDelegations: next };
     }
 
+    case "resolve_hitl_request":
+      return {
+        ...state,
+        hitlQueue: state.hitlQueue.filter((request) => request.reqId !== action.reqId),
+      };
+
     case "reset_dithie_state":
       return { ...state, dithieState: "idle" };
 
@@ -346,7 +385,7 @@ function reducer(state: State, action: Action): State {
       return { ...state, wsConnected: true };
 
     case "ws_disconnected":
-      return { ...state, wsConnected: false };
+      return { ...state, wsConnected: false, hitlQueue: [] };
 
     default:
       return state;
@@ -663,9 +702,56 @@ function TracePanel({ traces, expandedTraces, traceDurations, onToggleTrace }: {
 
 // ─── App ─────────────────────────────────────────────────────────────────────
 
+function HitlPrompt({
+  request,
+  queueSize,
+  onAllow,
+  onDeny,
+}: {
+  request: HitlRequestItem;
+  queueSize: number;
+  onAllow: () => void;
+  onDeny: () => void;
+}) {
+  const timeoutSeconds = Math.max(1, Math.floor(request.timeout / 1000));
+  let paramsPreview = "{}";
+  try {
+    paramsPreview = JSON.stringify(request.params, null, 2);
+  } catch {
+    paramsPreview = String(request.params);
+  }
+
+  return (
+    <div className="hitl-overlay" role="dialog" aria-modal="true" aria-live="assertive">
+      <div className="hitl-card">
+        <div className="hitl-title">Approval required</div>
+        <div className="hitl-subtitle">
+          {request.agentId} wants to run <code>{request.toolName}</code>.
+        </div>
+        <div className="hitl-reason">{request.reason}</div>
+        <div className="hitl-meta">
+          <span>timeout: {timeoutSeconds}s</span>
+          {queueSize > 1 && <span>pending: {queueSize}</span>}
+        </div>
+        <div className="hitl-section-title">params</div>
+        <pre className="hitl-params">{paramsPreview}</pre>
+        <div className="hitl-actions">
+          <button type="button" className="hitl-btn hitl-btn--allow" onClick={onAllow}>
+            Allow (y)
+          </button>
+          <button type="button" className="hitl-btn hitl-btn--deny" onClick={onDeny}>
+            Don&apos;t Allow (n)
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const wsRef = useRef<WebSocket | null>(null);
+  const activeHitlRequest = state.hitlQueue[0];
 
   const refreshThreadMessages = useCallback(() => {
     fetch("/api/threads")
@@ -753,6 +839,33 @@ function App() {
     ws.send(JSON.stringify({ type: "chat", toAgentId, content }));
   }, [state.activeView]);
 
+  const sendHitlResponse = useCallback((reqId: string, approved: boolean) => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "hitl_response", reqId, approved }));
+    }
+    dispatch({ type: "resolve_hitl_request", reqId });
+  }, []);
+
+  useEffect(() => {
+    if (!activeHitlRequest) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.repeat) return;
+      const key = event.key.toLowerCase();
+      if (key === "y") {
+        event.preventDefault();
+        sendHitlResponse(activeHitlRequest.reqId, true);
+      } else if (key === "n") {
+        event.preventDefault();
+        sendHitlResponse(activeHitlRequest.reqId, false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeHitlRequest, sendHitlResponse]);
+
   return (
     <div className="app">
       <Header dithieState={state.dithieState} sessionId={state.sessionId} wsConnected={state.wsConnected} />
@@ -807,6 +920,14 @@ function App() {
             : `message ${state.agents.find((agent) => agent.id === state.activeView)?.name ?? state.activeView}...`
         }
       />
+      {activeHitlRequest && (
+        <HitlPrompt
+          request={activeHitlRequest}
+          queueSize={state.hitlQueue.length}
+          onAllow={() => sendHitlResponse(activeHitlRequest.reqId, true)}
+          onDeny={() => sendHitlResponse(activeHitlRequest.reqId, false)}
+        />
+      )}
     </div>
   );
 }

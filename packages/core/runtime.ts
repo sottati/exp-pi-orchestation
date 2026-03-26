@@ -58,7 +58,89 @@ export interface ChatOutput extends RouteMessageOutput {
     runContext: RunContext;
 }
 
-function extractLastAssistantText(messages: AgentMessage[]): string {
+function stripThoughtPrefix(text: string): string {
+    let next = text.trim();
+    while (true) {
+        const replaced = next.replace(/^\s*(?:\.\s*)?thought:\s*/i, "");
+        if (replaced === next) break;
+        next = replaced.trimStart();
+    }
+    return next.trim();
+}
+
+function extractTextFromContent(content: unknown): { text: string; hasToolCall: boolean } {
+    if (typeof content === "string") {
+        return { text: content, hasToolCall: false };
+    }
+    if (!Array.isArray(content)) {
+        return { text: "", hasToolCall: false };
+    }
+
+    const textParts: string[] = [];
+    let hasToolCall = false;
+
+    for (const block of content) {
+        if (typeof block !== "object" || block === null) continue;
+        const typedBlock = block as { type?: unknown; text?: unknown };
+        const type = typeof typedBlock.type === "string" ? typedBlock.type : "";
+
+        if (type === "toolCall" || type === "tool_call" || type === "function_call") {
+            hasToolCall = true;
+        }
+        if (type === "text" && typeof typedBlock.text === "string") {
+            textParts.push(typedBlock.text);
+        }
+    }
+
+    return { text: textParts.join(""), hasToolCall };
+}
+
+function isChatStatusText(text: string): boolean {
+    const normalized = text.trim().toLowerCase();
+    return (
+        /^chatid\s+\S+\s+is\s+/.test(normalized) ||
+        normalized.startsWith("chat started with ") ||
+        normalized.startsWith("chat queued for ") ||
+        normalized.includes(" not found")
+    );
+}
+
+function extractCompletedChatResultFallback(messages: AgentMessage[]): string {
+    for (let i = messages.length - 1; i >= 0; i--) {
+        const message = messages[i] as {
+            role?: string;
+            toolName?: unknown;
+            content?: unknown;
+            details?: unknown;
+        };
+        if (message.role !== "toolResult") continue;
+        if (message.toolName !== "get_chat_result") continue;
+
+        const details =
+            typeof message.details === "object" && message.details !== null
+                ? (message.details as Record<string, unknown>)
+                : undefined;
+
+        const status = typeof details?.status === "string" ? details.status : undefined;
+        const closeReason =
+            typeof details?.closeReason === "string" ? details.closeReason : undefined;
+
+        if (status !== "closed" || closeReason !== "completed") continue;
+
+        if (typeof details?.result === "string") {
+            const fromDetails = stripThoughtPrefix(details.result);
+            if (fromDetails) return fromDetails;
+        }
+
+        const { text } = extractTextFromContent(message.content);
+        const fromContent = stripThoughtPrefix(text);
+        if (fromContent && !isChatStatusText(fromContent)) return fromContent;
+    }
+
+    return "";
+}
+
+export function extractLastAssistantText(messages: AgentMessage[]): string {
     let lastAssistantError: string | undefined;
 
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -72,25 +154,25 @@ function extractLastAssistantText(messages: AgentMessage[]): string {
 
         if (typeof message.errorMessage === "string" && message.errorMessage.trim()) {
             lastAssistantError = message.errorMessage.trim();
+        }
+
+        const stopReason = typeof message.stopReason === "string" ? message.stopReason : "";
+        const { text, hasToolCall } = extractTextFromContent(message.content);
+        const visibleText = stripThoughtPrefix(text);
+
+        // Tool-use turns are intermediate by design; don't expose them as final answers.
+        if (stopReason === "toolUse" || hasToolCall) {
             continue;
         }
 
-        if (typeof message.content === "string") {
-            return message.content.trim();
+        if (visibleText) {
+            return visibleText;
         }
-        if (!Array.isArray(message.content)) continue;
+    }
 
-        return message.content
-            .filter(
-                (content): content is { type: "text"; text: string } =>
-                    typeof content === "object" &&
-                    content !== null &&
-                    (content as { type?: string }).type === "text" &&
-                    typeof (content as { text?: unknown }).text === "string",
-            )
-            .map((content) => content.text)
-            .join("")
-            .trim();
+    const completedDelegationResult = extractCompletedChatResultFallback(messages);
+    if (completedDelegationResult) {
+        return completedDelegationResult;
     }
 
     if (lastAssistantError) {

@@ -49,6 +49,16 @@ const runtime = new MultiAgentRuntime({
     hitlHandler: createWebHitlHandler(clients),
 });
 
+function sanitizeThoughtPrefix(text: string): string {
+    let next = text;
+    while (true) {
+        const replaced = next.replace(/^\s*(?:\.\s*)?thought:\s*/i, "");
+        if (replaced === next) break;
+        next = replaced;
+    }
+    return next;
+}
+
 function broadcast(msg: object) {
     const text = JSON.stringify(msg);
     for (const ws of clients) {
@@ -235,10 +245,12 @@ Bun.serve({
                             event.type === "message_update" &&
                             event.assistantMessageEvent.type === "text_delta"
                         ) {
+                            const delta = sanitizeThoughtPrefix(event.assistantMessageEvent.delta);
+                            if (!delta) return;
                             ws.send(JSON.stringify({
                                 type: "stream_delta",
                                 runId,
-                                delta: event.assistantMessageEvent.delta,
+                                delta,
                             }));
                         } else if (event.type === "tool_execution_start") {
                             const args = event.args as Record<string, unknown>;
@@ -256,7 +268,7 @@ Bun.serve({
                         ws.send(JSON.stringify({
                             type: "stream_end",
                             runId,
-                            answer: output.answer,
+                            answer: sanitizeThoughtPrefix(output.answer),
                             durationMs: output.durationMs,
                         }));
                     })

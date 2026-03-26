@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { DithieSprite } from "./dithie-sprite";
+import { SidebarSpiderIcon } from "./sidebar-spider";
 import type { AgentInfo, DithieState, ViewTarget } from "./types";
-import { AGENT_PERSONALITIES } from "./types";
 
 interface SidebarProps {
   agents: AgentInfo[];
@@ -30,7 +30,6 @@ export function Sidebar({ agents, activeView, onSelectView, dithieState, busyAge
       <div className="sidebar-divider" />
 
       {specialistAgents.map((agent) => {
-        const personality = AGENT_PERSONALITIES[agent.id];
         const isActive = activeView === agent.id;
         const isBusy = busyAgents.has(agent.id);
 
@@ -42,7 +41,7 @@ export function Sidebar({ agents, activeView, onSelectView, dithieState, busyAge
             onMouseEnter={() => setHoveredId(agent.id)}
             onMouseLeave={() => setHoveredId(null)}
           >
-            {personality?.badge ?? agent.id[0]?.toUpperCase() ?? "?"}
+            <SidebarSpiderIcon agentId={agent.id} size={22} />
             <div className={`sidebar-status sidebar-status--${isBusy ? "busy" : "idle"}`} />
             {hoveredId === agent.id && (
               <div className="sidebar-tooltip">{agent.name}</div>

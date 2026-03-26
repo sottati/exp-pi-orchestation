@@ -628,6 +628,18 @@ html, body, #root {
 .sidebar-status--idle    { background: var(--text-muted); }
 .sidebar-status--busy    { background: var(--agent-accent, var(--text)); }
 
+/* Sidebar Spider Avatars */
+
+.sidebar-spider {
+  display: block;
+  color: currentColor;
+  image-rendering: pixelated;
+}
+
+.sidebar-spider rect {
+  fill: currentColor;
+}
+
 /* ── Agent View ───────────────────────────────────────────────────────────── */
 
 .agent-view {
@@ -831,4 +843,122 @@ html, body, #root {
   padding: 12px 16px;
   font-size: 11px;
   color: var(--text-muted);
+}
+
+/* HITL Prompt */
+
+.hitl-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(0, 0, 0, 0.78);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.hitl-card {
+  width: min(760px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.hitl-title {
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.hitl-subtitle {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.hitl-subtitle code {
+  font-family: var(--font);
+  color: var(--text);
+}
+
+.hitl-reason {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.hitl-meta {
+  display: flex;
+  gap: 14px;
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.hitl-section-title {
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.hitl-params {
+  background: #050505;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  padding: 10px;
+  max-height: 280px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.hitl-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.hitl-btn {
+  border: 1px solid var(--border-strong);
+  background: var(--surface-hover);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 12px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.hitl-btn:hover {
+  background: #1a1a1a;
+}
+
+.hitl-btn--allow {
+  border-color: var(--text);
+}
+
+.hitl-btn--deny {
+  border-color: var(--text-muted);
+  color: var(--text-secondary);
+}
+
+@media (max-width: 720px) {
+  .hitl-card {
+    max-height: calc(100vh - 24px);
+  }
+
+  .hitl-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }

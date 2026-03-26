@@ -9,7 +9,9 @@
       "Bash(git commit -m \"docs: update README, CLAUDE.md, and AGENTS.md for Dithie frontend:*)",
       "Bash(export PATH=\"$PATH:/c/Users/gerog/.bun/bin\")",
       "Bash(bun install:*)",
-      "Bash(bun test:*)"
+      "Bash(bun test:*)",
+      "Bash(bun add:*)",
+      "Bash(git commit:*)"
     ],
     "additionalDirectories": [
       "c:\\Users\\gerog\\source\\exp-pi-orchestation\\.worktrees\\extensible-agents\\docs\\superpowers",
