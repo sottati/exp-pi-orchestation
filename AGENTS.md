@@ -116,7 +116,14 @@ This repository is a terminal-first multi-agent runtime prototype.
 
 - CLI entry point: `apps/cli/index.ts`
 - Web backend entry point: `apps/backend/server.ts`
+- Agent activity endpoint: `/api/agents/:id/activity` (traces/chats/jobs filtered by agent)
 - UI gate entry point: `apps/backend/ui-gate.ts`
+- Web UI shell: `apps/web/index.html`
+- Web UI app: `apps/web/app.tsx` (sidebar navigation, home + per-agent views, direct messaging)
+- Web UI shared types: `apps/web/types.ts`
+- Web UI sidebar: `apps/web/sidebar.tsx`
+- Web UI agent view: `apps/web/agent-view.tsx`
+- Web UI styles: `apps/web/app.css`
 - Runtime: `packages/core/runtime.ts`
 - Tools: `packages/core/tools.ts`
 - Agents: `packages/core/agents.ts` (agent definitions via builder pattern)
@@ -170,6 +177,7 @@ Use these project scripts:
 - `bun run smoke:explorer`
 - `bun run smoke:writer`
 - `bun run smoke:debugger`
+- `bun run ui` (Dithie web dashboard with per-agent views)
 - `bun run ui:gate`
 
 Inside the CLI, useful commands:

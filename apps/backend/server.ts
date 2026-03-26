@@ -145,6 +145,24 @@ Bun.serve({
         "/api/agents": {
             GET: () => Response.json(runtime.listAgents()),
         },
+        "/api/agents/:id/activity": {
+            GET: async (req) => {
+                const agentId = req.params.id;
+                const allTraces = await runtime.getTraces();
+                const agentTraces = allTraces.filter(
+                    (t: TraceEvent) => t.agentId === agentId
+                ).slice(-100);
+                const allChats = runtime.listChats();
+                const agentChats = allChats.filter(
+                    (c: AgentChat) => c.agentId === agentId
+                );
+                const allJobs = runtime.scheduler?.listJobs() ?? [];
+                const agentJobs = allJobs.filter(
+                    (j: ScheduledJob) => j.targetAgentId === agentId || j.createdBy === agentId
+                );
+                return Response.json({ traces: agentTraces, chats: agentChats, jobs: agentJobs });
+            },
+        },
         "/api/chats": {
             GET: () => Response.json(runtime.listChats()),
         },

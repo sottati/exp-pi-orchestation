@@ -1,16 +1,31 @@
 import React, { useReducer, useEffect, useRef, useCallback, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { DithieSprite } from "./dithie-sprite";
-import type { AgentInfo, TraceEvent, DelegationBlock, DithieState, UIMessage, ChatItem } from "./types";
+import { Sidebar } from "./sidebar";
+import { AgentView } from "./agent-view";
+import type {
+  AgentInfo,
+  TraceEvent,
+  DelegationBlock,
+  DithieState,
+  UIMessage,
+  ChatItem,
+  ViewTarget,
+  ScheduledJobInfo,
+} from "./types";
 import "./app.css";
 
 interface State {
   agents: AgentInfo[];
+  activeView: ViewTarget;
   sessionId: string;
   messages: UIMessage[];
   chatItems: ChatItem[];
+  jobs: ScheduledJobInfo[];
+  busyAgents: Set<string>;
   isStreaming: boolean;
   streamBuffer: string;
+  streamingAgentId: string | null;
   currentRunId: string | null;
   dithieState: DithieState;
   traces: TraceEvent[];
@@ -36,7 +51,8 @@ type ServerMsg =
   | { type: "delegation_end"; runId: string; delegationId: string; result: string; durationMs: number; status: "ok" | "error" };
 
 type LocalAction =
-  | { type: "send_user_message"; content: string; id: string }
+  | { type: "send_user_message"; content: string; id: string; agentId?: string }
+  | { type: "set_view"; view: ViewTarget }
   | { type: "toggle_trace"; eventId: string }
   | { type: "toggle_delegation"; delegationId: string }
   | { type: "reset_dithie_state" }
@@ -49,11 +65,15 @@ type Action = ServerMsg | LocalAction;
 
 const initialState: State = {
   agents: [],
+  activeView: "home",
   sessionId: "",
   messages: [],
   chatItems: [],
+  jobs: [],
+  busyAgents: new Set(),
   isStreaming: false,
   streamBuffer: "",
+  streamingAgentId: null,
   currentRunId: null,
   dithieState: "idle",
   traces: [],
@@ -75,18 +95,25 @@ function reducer(state: State, action: Action): State {
       };
 
     case "chat_sending":
+      {
+      const newBusyAgents = new Set(state.busyAgents);
+      newBusyAgents.add(action.toAgentId);
       return {
         ...state,
         dithieState: "thinking",
         isStreaming: true,
         streamBuffer: "",
+        streamingAgentId: action.toAgentId,
         currentRunId: action.runId,
+        busyAgents: newBusyAgents,
       };
+      }
 
     case "stream_delta":
       return { ...state, streamBuffer: state.streamBuffer + action.delta };
 
     case "stream_end": {
+      const agentId = state.streamingAgentId ?? undefined;
       const msg: UIMessage = {
         id: `msg-${action.runId}`,
         role: "assistant",
@@ -94,34 +121,63 @@ function reducer(state: State, action: Action): State {
         timestamp: Date.now(),
         runId: action.runId,
         durationMs: action.durationMs,
+        agentId,
       };
+
+      const nextBusyAgents = new Set(state.busyAgents);
+      if (state.streamingAgentId) {
+        nextBusyAgents.delete(state.streamingAgentId);
+      }
+
+      const nextChatItems =
+        !agentId || agentId === "orchestrator"
+          ? [...state.chatItems, { kind: "message" as const, message: msg }]
+          : state.chatItems;
+
       return {
         ...state,
         isStreaming: false,
         streamBuffer: "",
+        streamingAgentId: null,
         currentRunId: null,
         dithieState: "idle",
         messages: [...state.messages, msg],
-        chatItems: [...state.chatItems, { kind: "message", message: msg }],
+        chatItems: nextChatItems,
+        busyAgents: nextBusyAgents,
       };
     }
 
     case "stream_error": {
+      const agentId = state.streamingAgentId ?? undefined;
       const msg: UIMessage = {
         id: `err-${action.runId}-${Date.now()}`,
         role: "error",
         content: `Error: ${action.error}`,
         timestamp: Date.now(),
         runId: action.runId,
+        agentId,
       };
+
+      const nextBusyAgents = new Set(state.busyAgents);
+      if (state.streamingAgentId) {
+        nextBusyAgents.delete(state.streamingAgentId);
+      }
+
+      const nextChatItems =
+        !agentId || agentId === "orchestrator"
+          ? [...state.chatItems, { kind: "message" as const, message: msg }]
+          : state.chatItems;
+
       return {
         ...state,
         isStreaming: false,
         streamBuffer: "",
+        streamingAgentId: null,
         currentRunId: null,
         dithieState: "error",
         messages: [...state.messages, msg],
-        chatItems: [...state.chatItems, { kind: "message", message: msg }],
+        chatItems: nextChatItems,
+        busyAgents: nextBusyAgents,
       };
     }
 
@@ -131,20 +187,41 @@ function reducer(state: State, action: Action): State {
     case "chat_lifecycle":
       return state;
 
-    case "job_lifecycle":
-      return state;
+    case "job_lifecycle": {
+      const maybeJob = action.job as Partial<ScheduledJobInfo> | undefined;
+      if (!maybeJob || typeof maybeJob.jobId !== "string") {
+        return state;
+      }
+
+      const nextJobs = state.jobs.filter((job) => job.jobId !== maybeJob.jobId);
+      const nextJob = maybeJob as ScheduledJobInfo;
+
+      if (nextJob.status !== "completed" && nextJob.status !== "failed") {
+        nextJobs.push(nextJob);
+      }
+
+      return { ...state, jobs: nextJobs };
+    }
 
     case "send_user_message": {
+      const agentId = action.agentId;
       const msg: UIMessage = {
         id: action.id,
         role: "user",
         content: action.content,
         timestamp: Date.now(),
+        agentId,
       };
+
+      const nextChatItems =
+        !agentId || agentId === "orchestrator"
+          ? [...state.chatItems, { kind: "message" as const, message: msg }]
+          : state.chatItems;
+
       return {
         ...state,
         messages: [...state.messages, msg],
-        chatItems: [...state.chatItems, { kind: "message", message: msg }],
+        chatItems: nextChatItems,
       };
     }
 
@@ -207,6 +284,9 @@ function reducer(state: State, action: Action): State {
       };
     }
 
+    case "set_view":
+      return { ...state, activeView: action.view };
+
     case "toggle_trace": {
       const next = new Set(state.expandedTraces);
       if (next.has(action.eventId)) {
@@ -267,7 +347,15 @@ function Header({ dithieState, sessionId, wsConnected }: {
 
 // ─── InputBar ────────────────────────────────────────────────────────────────
 
-function InputBar({ onSend, disabled }: { onSend: (text: string) => void; disabled: boolean }) {
+function InputBar({
+  onSend,
+  disabled,
+  placeholder,
+}: {
+  onSend: (text: string) => void;
+  disabled: boolean;
+  placeholder?: string;
+}) {
   const [value, setValue] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -291,7 +379,7 @@ function InputBar({ onSend, disabled }: { onSend: (text: string) => void; disabl
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder={disabled ? "thinking..." : "message dithie..."}
+        placeholder={disabled ? "thinking..." : (placeholder ?? "message dithie...")}
         disabled={disabled}
         autoFocus
       />
@@ -550,7 +638,22 @@ function App() {
   useEffect(() => {
     const ws = new WebSocket(`ws://${location.host}/ws`);
     wsRef.current = ws;
-    ws.onopen = () => dispatch({ type: "ws_connected" });
+    ws.onopen = () => {
+      dispatch({ type: "ws_connected" });
+      fetch("/api/jobs")
+        .then((response) => response.json())
+        .then((jobs: unknown) => {
+          if (!Array.isArray(jobs)) {
+            return;
+          }
+          for (const job of jobs) {
+            dispatch({ type: "job_lifecycle", job });
+          }
+        })
+        .catch(() => {
+          // ignore initial jobs fetch failures
+        });
+    };
     ws.onclose = () => dispatch({ type: "ws_disconnected" });
     ws.onmessage = (e) => {
       try {
@@ -572,23 +675,64 @@ function App() {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     const id = `user-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    dispatch({ type: "send_user_message", content, id });
-    ws.send(JSON.stringify({ type: "chat", toAgentId: "orchestrator", content }));
-  }, []);
+    const toAgentId = state.activeView === "home" ? "orchestrator" : state.activeView;
+    dispatch({ type: "send_user_message", content, id, agentId: toAgentId });
+    ws.send(JSON.stringify({ type: "chat", toAgentId, content }));
+  }, [state.activeView]);
 
   return (
     <div className="app">
       <Header dithieState={state.dithieState} sessionId={state.sessionId} wsConnected={state.wsConnected} />
       <div className="main">
-        <ChatPanel state={state} dispatch={dispatch} />
+        <Sidebar
+          agents={state.agents}
+          activeView={state.activeView}
+          onSelectView={(view) => dispatch({ type: "set_view", view })}
+          dithieState={state.dithieState}
+          busyAgents={state.busyAgents}
+        />
+        {state.activeView === "home" ? (
+          <ChatPanel state={state} dispatch={dispatch} />
+        ) : (
+          (() => {
+            const agent = state.agents.find((candidate) => candidate.id === state.activeView);
+            if (!agent) {
+              return <ChatPanel state={state} dispatch={dispatch} />;
+            }
+
+            return (
+              <AgentView
+                agent={agent}
+                traces={state.traces}
+                jobs={state.jobs}
+                messages={state.messages}
+                isStreaming={state.isStreaming}
+                streamBuffer={state.streamBuffer}
+                streamingAgentId={state.streamingAgentId}
+              />
+            );
+          })()
+        )}
         <TracePanel
-          traces={state.traces}
+          traces={
+            state.activeView === "home"
+              ? state.traces
+              : state.traces.filter((trace) => trace.agentId === state.activeView)
+          }
           expandedTraces={state.expandedTraces}
           traceDurations={state.traceDurations}
           onToggleTrace={(id) => dispatch({ type: "toggle_trace", eventId: id })}
         />
       </div>
-      <InputBar onSend={handleSend} disabled={state.isStreaming} />
+      <InputBar
+        onSend={handleSend}
+        disabled={state.isStreaming}
+        placeholder={
+          state.activeView === "home"
+            ? "message dithie..."
+            : `message ${state.agents.find((agent) => agent.id === state.activeView)?.name ?? state.activeView}...`
+        }
+      />
     </div>
   );
 }

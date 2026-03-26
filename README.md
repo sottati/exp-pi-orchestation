@@ -99,9 +99,12 @@ Abre http://localhost:3000 para ver el dashboard de Dithie:
 - **Estética B&W**: paleta monocromática negro/blanco/gris, fuente JetBrains Mono, estilo terminal moderno.
 - **Dithie**: pixel-art spider (16x16) como identidad del orchestrator, con estados animados (idle, thinking, delegating, error).
 - **Chat unificado**: toda la conversación pasa por Dithie (orchestrator). Las delegaciones se muestran como bloques colapsables inline.
+- **Sidebar por agente**: navegacion lateral con acceso directo a vistas dedicadas por especialista.
+- **Vistas por agente**: identidad (badge/tagline), actividad filtrada y panel de recursos por agente.
+- **Mensajeria directa**: desde cada vista se envian mensajes directos al agente seleccionado.
 - **Panel de trazas**: trazas en tiempo real (newest-last) con items expandibles y duración calculada client-side.
 - **WebSocket** en `/ws`: deltas de streaming, delegation events (`delegation_start`/`delegation_end`), lifecycle de chats y push de trazas.
-- **REST API**: `/api/agents`, `/api/chats`, `/api/threads`, `/api/traces`, `/api/jobs`.
+- **REST API**: `/api/agents`, `/api/agents/:id/activity`, `/api/chats`, `/api/threads`, `/api/traces`, `/api/jobs`.
 
 La CLI (`bun run start`) y el servidor UI son entradas independientes que comparten `MultiAgentRuntime`.
 
@@ -212,7 +215,10 @@ Cada envelope de hilo incluye metadatos de relación:
 - `apps/backend/server.ts`: servidor web con REST + WebSocket.
 - `apps/backend/ui-gate.ts`: evaluación de fricción para activar UI.
 - `apps/web/index.html`: shell HTML de la UI (title "dithie", JetBrains Mono font).
-- `apps/web/app.tsx`: SPA React (useReducer, Dithie state machine, chat + trace panels).
+- `apps/web/app.tsx`: SPA React (useReducer, layout con sidebar, home view + per-agent views, trace panel filtrable).
+- `apps/web/types.ts`: tipos compartidos de UI + personalidades por agente.
+- `apps/web/sidebar.tsx`: navegacion lateral por agente con estado busy/idle.
+- `apps/web/agent-view.tsx`: vista dedicada por agente (identidad, recursos, actividad/chat).
 - `apps/web/app.css`: estilos B&W monocromáticos.
 - `apps/web/dithie-sprite.tsx`: componente DithieSprite (CSS Grid 16/32px, canvas 64px, animaciones).
 - `apps/web/dithie-frames.ts`: frame data del pixel-art spider (16x16 grids para cada estado).
@@ -335,3 +341,5 @@ El runtime incluye un `Scheduler` para ejecución cron, one-time y delayed:
 ## Nota
 
 Este repo está en modo MPV terminal-first. La UI se activa cuando el gate indique fricción operativa real (concurrencia, HITL frecuente o volumen alto de trazas).
+
+

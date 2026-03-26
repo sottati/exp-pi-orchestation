@@ -312,14 +312,17 @@ Serves on http://localhost:3000.
 ### Design
 - **B&W monochromatic palette**: `#000` bg, `#fff` text, grey surfaces/borders. No colors.
 - **Dithie**: pixel-art spider character as orchestrator identity. States: idle (breathing + blink), thinking (eye movement cycle), delegating (eyes shifted), error (X eyes).
-- **Unified chat**: all conversation goes through Dithie (orchestrator). No agent switching. Delegations shown as collapsible inline blocks.
-- **Split view**: Chat panel (flex:1) | Trace panel (280px fixed).
+- **Home + per-agent views**: Home keeps orchestrator chat/delegations; each specialist has a dedicated view with filtered activity and direct chat.
+- **Split view**: Sidebar (56px) | Main panel (home or agent view) | Trace panel (280px fixed).
 - **Font**: JetBrains Mono via Google Fonts CDN.
 
 ### Files
 - `apps/backend/server.ts`: `Bun.serve()` with REST routes + WebSocket at `/ws`. Monkey-patches `store.appendTrace` for real-time trace push + delegation event tracking (`delegation_start`/`delegation_end`). Also patches `store.appendChatRecord` and `store.appendJob`.
 - `apps/web/index.html`: HTML shell (title "dithie", JetBrains Mono font link).
-- `apps/web/app.tsx`: React SPA (useReducer). Header, ChatPanel, TracePanel, InputBar. Dithie state machine (idle/thinking/delegating/error). Delegation blocks and trace duration computed client-side.
+- `apps/web/app.tsx`: React SPA with sidebar navigation, home chat, per-agent views, trace filtering, and direct-to-agent input routing.
+- `apps/web/types.ts`: shared UI types and `AGENT_PERSONALITIES` config.
+- `apps/web/sidebar.tsx`: agent sidebar with home button, badges, tooltips, and busy indicators.
+- `apps/web/agent-view.tsx`: dedicated agent panel (identity, resources, activity/chat tabs).
 - `apps/web/app.css`: B&W palette, layout grid, all component styles, animations (blink-cursor, breathe, dot-pulse).
 - `apps/web/dithie-sprite.tsx`: `DithieSprite` component — CSS Grid for 16/32px, canvas for 64px. Animation cycling per state.
 - `apps/web/dithie-frames.ts`: Pixel grid data (`Frame = number[][]`) for all animation frames (idle, blink, thinking 1-4, delegating, error).
@@ -350,6 +353,7 @@ Serves on http://localhost:3000.
 | Route | Method | Description |
 |---|---|---|
 | `/api/agents` | GET | List agents |
+| `/api/agents/:id/activity` | GET | List traces/chats/jobs filtered by agent |
 | `/api/chats` | GET | List all chats |
 | `/api/chats/:id` | GET/DELETE | Inspect or close chat |
 | `/api/threads` | GET | List thread IDs |
