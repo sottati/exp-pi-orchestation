@@ -13,7 +13,7 @@ import {
 
 export interface DithieSpriteProps {
   size: 16 | 32 | 64;
-  state: "idle" | "thinking" | "delegating" | "error";
+  state: "idle" | "thinking" | "walking" | "delegating" | "error";
 }
 
 const THINKING_FRAMES: Frame[] = [
@@ -21,6 +21,11 @@ const THINKING_FRAMES: Frame[] = [
   FRAME_THINKING_2,
   FRAME_THINKING_3,
   FRAME_THINKING_4,
+];
+
+const WALKING_FRAMES: Frame[] = [
+  FRAME_THINKING_1,
+  FRAME_THINKING_3,
 ];
 
 // ─── Canvas renderer (size=64) ────────────────────────────────────────────────
@@ -91,6 +96,7 @@ export function DithieSprite({ size, state }: DithieSpriteProps) {
     switch (state) {
       case "idle":        return FRAME_IDLE;
       case "thinking":    return FRAME_THINKING_1;
+      case "walking":     return FRAME_THINKING_1;
       case "delegating":  return FRAME_DELEGATING;
       case "error":       return FRAME_ERROR;
     }
@@ -132,6 +138,15 @@ export function DithieSprite({ size, state }: DithieSpriteProps) {
         const nextFrame = THINKING_FRAMES[frameIndex];
         if (nextFrame) setCurrentFrame(nextFrame);
       }, 500);
+    } else if (state === "walking") {
+      let frameIndex = 0;
+      setCurrentFrame(WALKING_FRAMES[frameIndex] ?? FRAME_THINKING_1);
+
+      interval = setInterval(() => {
+        frameIndex = (frameIndex + 1) % WALKING_FRAMES.length;
+        const nextFrame = WALKING_FRAMES[frameIndex];
+        if (nextFrame) setCurrentFrame(nextFrame);
+      }, 220);
     } else if (state === "delegating") {
       setCurrentFrame(FRAME_DELEGATING);
     } else if (state === "error") {
@@ -142,6 +157,7 @@ export function DithieSprite({ size, state }: DithieSpriteProps) {
   }, [state]);
 
   const isBreathing = state === "idle";
+  const isWalking = state === "walking";
 
   const inner =
     size === 64 ? (
@@ -152,7 +168,7 @@ export function DithieSprite({ size, state }: DithieSpriteProps) {
 
   return (
     <div
-      className={`dithie-sprite${isBreathing ? " dithie-sprite--breathing" : ""}`}
+      className={`dithie-sprite${isBreathing ? " dithie-sprite--breathing" : ""}${isWalking ? " dithie-sprite--walking" : ""}`}
       style={{ display: "inline-block", lineHeight: 0 }}
     >
       {inner}

@@ -125,6 +125,7 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Web UI specialist spider avatars: `apps/web/sidebar-spider.tsx` (16x16 pixel-art sprites)
 - Web UI agent view: `apps/web/agent-view.tsx` (activity + chat tabs with inter-agent messages)
 - Web UI styles: `apps/web/app.css`
+- Web UI Dithie sprite: `apps/web/dithie-sprite.tsx` (idle/thinking/walking/error; walks when replying to user, thinks while coordinating specialists)
 - Runtime: `packages/core/runtime.ts`
 - Tools: `packages/core/tools.ts`
 - Agents: `packages/core/agents.ts` (agent definitions via builder pattern)

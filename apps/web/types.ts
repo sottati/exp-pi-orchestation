@@ -28,7 +28,7 @@ export interface DelegationBlock {
   durationMs?: number;
 }
 
-export type DithieState = "idle" | "thinking" | "delegating" | "error";
+export type DithieState = "idle" | "thinking" | "walking" | "delegating" | "error";
 
 export interface UIMessage {
   id: string;

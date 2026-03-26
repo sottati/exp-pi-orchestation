@@ -118,6 +118,23 @@ function isThreadEnvelopeInfo(value: unknown): value is ThreadEnvelopeInfo {
   );
 }
 
+function hasRunningDelegations(delegations: Record<string, DelegationBlock>): boolean {
+  return Object.values(delegations).some((delegation) => delegation.status === "running");
+}
+
+function resolveStreamingDithieState(
+  streamingAgentId: string | null,
+  delegations: Record<string, DelegationBlock>,
+): DithieState {
+  if (!streamingAgentId) {
+    return "idle";
+  }
+  if (hasRunningDelegations(delegations)) {
+    return "thinking";
+  }
+  return streamingAgentId === "orchestrator" ? "walking" : "thinking";
+}
+
 function reducer(state: State, action: Action): State {
   switch (action.type) {
     case "agents":
@@ -133,7 +150,7 @@ function reducer(state: State, action: Action): State {
       newBusyAgents.add(action.toAgentId);
       return {
         ...state,
-        dithieState: "thinking",
+        dithieState: resolveStreamingDithieState(action.toAgentId, state.delegations),
         isStreaming: true,
         streamBuffer: "",
         streamingAgentId: action.toAgentId,
@@ -286,10 +303,11 @@ function reducer(state: State, action: Action): State {
         task: action.task,
         status: "running",
       };
+      const nextDelegations = { ...state.delegations, [action.delegationId]: block };
       return {
         ...state,
-        dithieState: "delegating",
-        delegations: { ...state.delegations, [action.delegationId]: block },
+        dithieState: "thinking",
+        delegations: nextDelegations,
         chatItems: [...state.chatItems, { kind: "delegation", delegationId: action.delegationId }],
       };
     }
@@ -303,10 +321,13 @@ function reducer(state: State, action: Action): State {
         status: action.status,
         durationMs: action.durationMs,
       };
+      const nextDelegations = { ...state.delegations, [action.delegationId]: updated };
       return {
         ...state,
-        dithieState: state.isStreaming ? "thinking" : "idle",
-        delegations: { ...state.delegations, [action.delegationId]: updated },
+        dithieState: state.isStreaming
+          ? resolveStreamingDithieState(state.streamingAgentId, nextDelegations)
+          : "idle",
+        delegations: nextDelegations,
       };
     }
 
@@ -497,11 +518,13 @@ function MessageBubble({ msg }: { msg: UIMessage }) {
 
 // ─── StreamingBubble ─────────────────────────────────────────────────────────
 
-function StreamingBubble({ content }: { content: string }) {
+function StreamingBubble({ content, dithieState }: { content: string; dithieState: DithieState }) {
+  const streamSpriteState = dithieState === "walking" ? "walking" : "thinking";
+
   return (
     <div className="message message--dithie streaming">
       <div className="message-meta">
-        <DithieSprite size={16} state="thinking" /> DITHIE
+        <DithieSprite size={16} state={streamSpriteState} /> DITHIE
       </div>
       <pre className="message-content">
         {content || "\u00a0"}
@@ -603,7 +626,7 @@ function ChatPanel({ state, dispatch }: { state: State; dispatch: React.Dispatch
             />
           );
         })}
-        {state.isStreaming && <StreamingBubble content={state.streamBuffer} />}
+        {state.isStreaming && <StreamingBubble content={state.streamBuffer} dithieState={state.dithieState} />}
       </div>
     </div>
   );

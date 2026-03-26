@@ -325,7 +325,7 @@ Serves on http://localhost:3000.
 
 ### Design
 - **B&W monochromatic palette**: `#000` bg, `#fff` text, grey surfaces/borders. No colors.
-- **Dithie**: pixel-art spider character as orchestrator identity. States: idle (breathing + blink), thinking (eye movement cycle), delegating (eyes shifted), error (X eyes).
+- **Dithie**: pixel-art spider character as orchestrator identity. States: idle (breathing + blink), thinking (coordination with specialists), walking (replying directly to user), error (X eyes).
 - **Sidebar avatars**: orchestrator uses larger Dithie sprite; each specialist uses a smaller, distinct pixel-art spider variant.
 - **Home + per-agent views**: Home keeps orchestrator chat/delegations; each specialist has a dedicated view with filtered activity, direct chat, and inter-agent thread messages.
 - **Split view**: Sidebar (56px) | Main panel (home or agent view) | Trace panel (280px fixed).

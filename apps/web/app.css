@@ -45,6 +45,13 @@ html, body, #root {
   50%       { transform: translateY(1px); }
 }
 
+@keyframes walk-bob {
+  0%, 100% { transform: translate(0, 0); }
+  25%      { transform: translate(1px, 0); }
+  50%      { transform: translate(0, 1px); }
+  75%      { transform: translate(-1px, 0); }
+}
+
 @keyframes dot-pulse {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.2; }
@@ -492,6 +499,10 @@ html, body, #root {
 
 .dithie-sprite--breathing {
   animation: breathe 1.5s ease-in-out infinite;
+}
+
+.dithie-sprite--walking {
+  animation: walk-bob 360ms steps(2, end) infinite;
 }
 
 .dithie-sprite canvas {

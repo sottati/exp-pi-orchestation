@@ -103,7 +103,7 @@ bun run ui -- --session demo-1
 Abre http://localhost:3000 para ver el dashboard de Dithie:
 
 - **Estética B&W**: paleta monocromática negro/blanco/gris, fuente JetBrains Mono, estilo terminal moderno.
-- **Dithie**: pixel-art spider (16x16) como identidad del orchestrator, con estados animados (idle, thinking, delegating, error).
+- **Dithie**: pixel-art spider (16x16) como identidad del orchestrator, con estados animados (idle, thinking, walking, error); cuando responde al usuario camina y cuando coordina con otros agentes piensa.
 - **Chat unificado**: toda la conversación pasa por Dithie (orchestrator). Las delegaciones se muestran como bloques colapsables inline.
 - **Sidebar por agente**: navegacion lateral con acceso directo a vistas dedicadas por especialista, con arañas distintivas por agente (Dithie principal más grande y especialistas más pequeños).
 - **Vistas por agente**: identidad (badge/tagline), actividad filtrada y panel de recursos por agente.
