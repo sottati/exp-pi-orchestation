@@ -19,24 +19,29 @@ function getTool(name: string) {
   return tools.find(t => t.name === name)!;
 }
 
+function getText(result: { content: Array<{ type: string; text?: string }> }): string {
+  const first = result.content[0];
+  return (first as { text: string }).text;
+}
+
 // --- read_file ---
 test("read_file reads a file with line numbers", async () => {
   const tool = getTool("read_file");
   const result = await tool.execute("t1", { filePath: join(TEST_DIR, "hello.ts") });
-  expect(result.content[0].text).toContain("1: const x = 1;");
-  expect(result.content[0].text).toContain("3: const z = 3;");
+  expect(getText(result)).toContain("1: const x = 1;");
+  expect(getText(result)).toContain("3: const z = 3;");
 });
 
 test("read_file respects startLine/endLine", async () => {
   const tool = getTool("read_file");
   const result = await tool.execute("t2", { filePath: join(TEST_DIR, "hello.ts"), startLine: 2, endLine: 2 });
-  expect(result.content[0].text).toBe("2: const y = 2;");
+  expect(getText(result)).toBe("2: const y = 2;");
 });
 
 test("read_file rejects path outside basePath", async () => {
   const tool = getTool("read_file");
   const result = await tool.execute("t3", { filePath: "/etc/passwd" });
-  expect(result.content[0].text).toContain("outside the allowed base path");
+  expect(getText(result)).toContain("outside the allowed base path");
 });
 
 // --- write_file ---
@@ -44,7 +49,7 @@ test("write_file creates a new file", async () => {
   const tool = getTool("write_file");
   const target = join(TEST_DIR, "new.ts");
   const result = await tool.execute("t4", { filePath: target, content: "hello world" });
-  expect(result.content[0].text).toContain("bytes");
+  expect(getText(result)).toContain("bytes");
   expect(readFileSync(target, "utf-8")).toBe("hello world");
 });
 
@@ -58,7 +63,7 @@ test("write_file creates parent dirs when createDirs is true", async () => {
 test("write_file rejects path outside basePath", async () => {
   const tool = getTool("write_file");
   const result = await tool.execute("t6", { filePath: "/tmp/__evil__.ts", content: "bad" });
-  expect(result.content[0].text).toContain("outside the allowed base path");
+  expect(getText(result)).toContain("outside the allowed base path");
 });
 
 // --- edit_file ---
@@ -69,7 +74,7 @@ test("edit_file replaces text in a file", async () => {
     oldText: "const y = 2;",
     newText: "const y = 42;",
   });
-  expect(result.content[0].text).toContain("replaced");
+  expect(getText(result)).toContain("replaced");
   expect(readFileSync(join(TEST_DIR, "hello.ts"), "utf-8")).toContain("const y = 42;");
 });
 
@@ -80,7 +85,7 @@ test("edit_file fails when oldText not found", async () => {
     oldText: "not here",
     newText: "whatever",
   });
-  expect(result.content[0].text).toContain("not found");
+  expect(getText(result)).toContain("not found");
 });
 
 test("edit_file fails when oldText is ambiguous (multiple matches)", async () => {
@@ -91,7 +96,7 @@ test("edit_file fails when oldText is ambiguous (multiple matches)", async () =>
     oldText: "const a = 1;",
     newText: "const a = 99;",
   });
-  expect(result.content[0].text).toContain("ambiguous");
+  expect(getText(result)).toContain("ambiguous");
 });
 
 test("edit_file replaceAll replaces all occurrences", async () => {
@@ -111,7 +116,7 @@ test("edit_file replaceAll replaces all occurrences", async () => {
 test("run_command executes whitelisted command", async () => {
   const tool = getTool("run_command");
   const result = await tool.execute("t11", { command: "bun test --help" });
-  const text = result.content[0].text;
+  const text = getText(result);
   const parsed = JSON.parse(text);
   expect(parsed.exitCode).toBeDefined();
 });
@@ -119,27 +124,27 @@ test("run_command executes whitelisted command", async () => {
 test("run_command rejects non-whitelisted command", async () => {
   const tool = getTool("run_command");
   const result = await tool.execute("t12", { command: "rm -rf /" });
-  expect(result.content[0].text).toContain("not allowed");
+  expect(getText(result)).toContain("not allowed");
 });
 
 test("run_command rejects shell metacharacters", async () => {
   const tool = getTool("run_command");
   const result = await tool.execute("t13", { command: "bun test && rm -rf /" });
-  expect(result.content[0].text).toContain("metacharacter");
+  expect(getText(result)).toContain("metacharacter");
 });
 
 // --- list_directory ---
 test("list_directory lists files", async () => {
   const tool = getTool("list_directory");
   const result = await tool.execute("t14", { directory: TEST_DIR });
-  expect(result.content[0].text).toContain("hello.ts");
+  expect(getText(result)).toContain("hello.ts");
 });
 
 // --- search_code ---
 test("search_code finds pattern", async () => {
   const tool = getTool("search_code");
   const result = await tool.execute("t15", { pattern: "const y", directory: TEST_DIR });
-  expect(result.content[0].text).toContain("const y = 2;");
+  expect(getText(result)).toContain("const y = 2;");
 });
 
 // --- tool count ---
