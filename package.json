@@ -27,6 +27,7 @@
     "@mariozechner/pi-ai": "^0.57.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "axe-core": "^4.11.1",
     "docx": "^9.6.1",
     "exceljs": "^4.4.0",
     "googleapis": "^171.4.0",
