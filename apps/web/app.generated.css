@@ -6,6 +6,7 @@
     --font-sans: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji",
       "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
     --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", ui-monospace, monospace;
+    --color-gray-100: oklch(96.7% 0.003 264.542);
     --color-white: #fff;
     --spacing: 0.25rem;
     --radius-sm: 0.25rem;
@@ -238,6 +239,10 @@
   }
   .table {
     display: table;
+  }
+  .size-3\.5 {
+    width: calc(var(--spacing) * 3.5);
+    height: calc(var(--spacing) * 3.5);
   }
   .h-\[var\(--header-h\)\] {
     height: var(--header-h);
@@ -557,6 +562,9 @@
   .pb-5 {
     padding-bottom: calc(var(--spacing) * 5);
   }
+  .pl-2 {
+    padding-left: calc(var(--spacing) * 2);
+  }
   .pl-5 {
     padding-left: calc(var(--spacing) * 5);
   }
@@ -805,19 +813,19 @@
   --color-neon-green-50-5: rgba(92, 255, 59, 0.5);
   --color-white: rgba(255, 255, 255, 1);
   --theme-overlay: var(--color-black-100-4);
-  --theme-background: var(--color-white);
-  --theme-background-modal: var(--color-gray-20);
-  --theme-background-modal-footer: var(--color-gray-40);
-  --theme-background-input: var(--color-gray-10);
-  --theme-border: var(--color-gray-20);
-  --theme-border-subdued: var(--color-gray-40-2);
-  --theme-text: var(--color-black-100);
-  --theme-button: var(--color-black-100);
-  --theme-button-text: var(--color-white);
+  --theme-background: var(--color-gray-100);
+  --theme-background-modal: var(--color-gray-90);
+  --theme-background-modal-footer: var(--color-gray-80);
+  --theme-background-input: var(--color-gray-80);
+  --theme-border: var(--color-gray-80);
+  --theme-border-subdued: var(--color-gray-70-3);
+  --theme-text: var(--color-white);
+  --theme-button: var(--color-white);
+  --theme-button-text: var(--color-black-100);
   --theme-button-foreground: var(--color-gray-30);
-  --theme-button-background: var(--color-gray-20);
-  --theme-focused-foreground: var(--color-neon-green-50);
-  --theme-focused-foreground-subdued: var(--color-neon-green-50-5);
+  --theme-button-background: var(--color-gray-80);
+  --theme-focused-foreground: var(--color-daybreak-10);
+  --theme-focused-foreground-subdued: var(--color-daybreak-10-5);
   --theme-text-subdued: var(--theme-border-subdued);
   --theme-text-secondary: var(--theme-button-foreground);
   --theme-text-soft: var(--theme-text);
@@ -832,6 +840,38 @@
   --theme-background-surface-hover: var(--theme-background-input);
   --theme-background-raised: var(--theme-background-input);
   --theme-background-panel: var(--theme-background-modal-footer);
+}
+:root[data-theme="light"] {
+  --theme-overlay: var(--color-black-100-4);
+  --theme-background: var(--color-white);
+  --theme-background-modal: var(--color-gray-20);
+  --theme-background-modal-footer: var(--color-gray-40);
+  --theme-background-input: var(--color-gray-10);
+  --theme-border: var(--color-gray-20);
+  --theme-border-subdued: var(--color-gray-40-2);
+  --theme-text: var(--color-black-100);
+  --theme-button: var(--color-black-100);
+  --theme-button-text: var(--color-white);
+  --theme-button-foreground: var(--color-gray-30);
+  --theme-button-background: var(--color-gray-20);
+  --theme-focused-foreground: var(--color-neon-green-50);
+  --theme-focused-foreground-subdued: var(--color-neon-green-50-5);
+}
+:root[data-theme="dark"] {
+  --theme-overlay: var(--color-black-100-4);
+  --theme-background: var(--color-gray-100);
+  --theme-background-modal: var(--color-gray-90);
+  --theme-background-modal-footer: var(--color-gray-80);
+  --theme-background-input: var(--color-gray-80);
+  --theme-border: var(--color-gray-80);
+  --theme-border-subdued: var(--color-gray-70-3);
+  --theme-text: var(--color-white);
+  --theme-button: var(--color-white);
+  --theme-button-text: var(--color-black-100);
+  --theme-button-foreground: var(--color-gray-30);
+  --theme-button-background: var(--color-gray-80);
+  --theme-focused-foreground: var(--color-daybreak-10);
+  --theme-focused-foreground-subdued: var(--color-daybreak-10-5);
 }
 * {
   box-sizing: border-box;

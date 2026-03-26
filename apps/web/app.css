@@ -46,6 +46,31 @@
   --color-white: rgba(255, 255, 255, 1);
 
   --theme-overlay: var(--color-black-100-4);
+  --theme-background: var(--color-gray-100);
+  --theme-background-modal: var(--color-gray-90);
+  --theme-background-modal-footer: var(--color-gray-80);
+  --theme-background-input: var(--color-gray-80);
+  --theme-border: var(--color-gray-80);
+  --theme-border-subdued: var(--color-gray-70-3);
+  --theme-text: var(--color-white);
+  --theme-button: var(--color-white);
+  --theme-button-text: var(--color-black-100);
+  --theme-button-foreground: var(--color-gray-30);
+  --theme-button-background: var(--color-gray-80);
+  --theme-focused-foreground: var(--color-daybreak-10);
+  --theme-focused-foreground-subdued: var(--color-daybreak-10-5);
+  --theme-text-subdued: var(--theme-border-subdued);
+  --theme-text-secondary: var(--theme-button-foreground);
+  --theme-text-soft: color-mix(in srgb, var(--theme-text) 72%, transparent);
+  --theme-text-muted: color-mix(in srgb, var(--theme-text) 40%, transparent);
+  --theme-background-surface: var(--theme-background-modal);
+  --theme-background-surface-hover: var(--theme-background-input);
+  --theme-background-raised: var(--theme-background-input);
+  --theme-background-panel: var(--theme-background-modal-footer);
+}
+
+:root[data-theme="light"] {
+  --theme-overlay: var(--color-black-100-4);
   --theme-background: var(--color-white);
   --theme-background-modal: var(--color-gray-20);
   --theme-background-modal-footer: var(--color-gray-40);
@@ -59,14 +84,23 @@
   --theme-button-background: var(--color-gray-20);
   --theme-focused-foreground: var(--color-neon-green-50);
   --theme-focused-foreground-subdued: var(--color-neon-green-50-5);
-  --theme-text-subdued: var(--theme-border-subdued);
-  --theme-text-secondary: var(--theme-button-foreground);
-  --theme-text-soft: color-mix(in srgb, var(--theme-text) 72%, transparent);
-  --theme-text-muted: color-mix(in srgb, var(--theme-text) 40%, transparent);
-  --theme-background-surface: var(--theme-background-modal);
-  --theme-background-surface-hover: var(--theme-background-input);
-  --theme-background-raised: var(--theme-background-input);
-  --theme-background-panel: var(--theme-background-modal-footer);
+}
+
+:root[data-theme="dark"] {
+  --theme-overlay: var(--color-black-100-4);
+  --theme-background: var(--color-gray-100);
+  --theme-background-modal: var(--color-gray-90);
+  --theme-background-modal-footer: var(--color-gray-80);
+  --theme-background-input: var(--color-gray-80);
+  --theme-border: var(--color-gray-80);
+  --theme-border-subdued: var(--color-gray-70-3);
+  --theme-text: var(--color-white);
+  --theme-button: var(--color-white);
+  --theme-button-text: var(--color-black-100);
+  --theme-button-foreground: var(--color-gray-30);
+  --theme-button-background: var(--color-gray-80);
+  --theme-focused-foreground: var(--color-daybreak-10);
+  --theme-focused-foreground-subdued: var(--color-daybreak-10-5);
 }
 
 * {

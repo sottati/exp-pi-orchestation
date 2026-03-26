@@ -1,9 +1,10 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { AgentChat, ScheduledJob, TraceEvent } from "../../packages/core/contracts";
 import type { AgentInfo, ChatItem, DelegationBlock, HydratedUiState, UIMessage } from "./ui-state";
 
 export type DithieState = "idle" | "thinking" | "delegating" | "error";
+export type ThemeMode = "light" | "dark";
 
 export interface RuntimeState {
   agents: AgentInfo[];
@@ -303,16 +304,29 @@ function reducer(state: RuntimeState, action: Action): RuntimeState {
 
 interface RuntimeContextValue {
   state: RuntimeState;
+  themeMode: ThemeMode;
+  setThemeMode: (mode: ThemeMode) => void;
+  toggleThemeMode: () => void;
   sendMessage: (content: string) => boolean;
   toggleTrace: (eventId: string) => void;
   toggleDelegation: (delegationId: string) => void;
 }
 
 const RuntimeContext = createContext<RuntimeContextValue | null>(null);
+const THEME_STORAGE_KEY = "dithie-theme-mode";
+const DEFAULT_THEME_MODE: ThemeMode = "dark";
+
+function readInitialThemeMode(): ThemeMode {
+  if (typeof window === "undefined") return DEFAULT_THEME_MODE;
+
+  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+  return stored === "light" || stored === "dark" ? stored : DEFAULT_THEME_MODE;
+}
 
 export function RuntimeProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const wsRef = useRef<WebSocket | null>(null);
+  const [themeMode, setThemeModeState] = useState<ThemeMode>(readInitialThemeMode);
 
   useEffect(() => {
     let cancelled = false;
@@ -363,6 +377,12 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
     }
   }, [state.dithieState]);
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = themeMode;
+    document.body.dataset.theme = themeMode;
+    window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+  }, [themeMode]);
+
   const sendMessage = useCallback((content: string) => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
@@ -381,12 +401,23 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
     dispatch({ type: "toggle_delegation", delegationId });
   }, []);
 
+  const setThemeMode = useCallback((mode: ThemeMode) => {
+    setThemeModeState(mode);
+  }, []);
+
+  const toggleThemeMode = useCallback(() => {
+    setThemeModeState((current) => (current === "dark" ? "light" : "dark"));
+  }, []);
+
   const value = useMemo<RuntimeContextValue>(() => ({
     state,
+    themeMode,
+    setThemeMode,
+    toggleThemeMode,
     sendMessage,
     toggleTrace,
     toggleDelegation,
-  }), [state, sendMessage, toggleTrace, toggleDelegation]);
+  }), [state, themeMode, setThemeMode, toggleThemeMode, sendMessage, toggleTrace, toggleDelegation]);
 
   return (
     <RuntimeContext.Provider value={value}>

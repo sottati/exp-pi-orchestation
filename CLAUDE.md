@@ -319,6 +319,8 @@ Serves on http://localhost:3000.
 - **Refresh restore**: F5/Ctrl+R rehydrates persisted session chat, delegation blocks, and traces via REST before WS reconnect.
 - **Ops snapshots**: `/api/ui-state` hidrata también `chats` y `jobs` para que las vistas operativas arranquen sin loaders extra.
 - **Tailwind UI**: el layout y los componentes usan utilidades Tailwind; `apps/web/app.css` queda como capa global de tokens/animaciones y `apps/web/app.generated.css` es el artefacto compilado servido por la SPA.
+- **Dark by default**: la UI carga en tema oscuro por defecto.
+- **Theme switcher**: la barra de navegación incluye un selector `dark/light` persistido en `localStorage`.
 - **Agent colors**: la vista `/agents` asigna un tinte Sacred por agente para distinguirlos visualmente.
 - **Font**: JetBrains Mono via Google Fonts CDN.
 
@@ -326,7 +328,7 @@ Serves on http://localhost:3000.
 - `apps/backend/server.ts`: `Bun.serve()` with REST routes + WebSocket at `/ws`. Monkey-patches `store.appendTrace` for real-time trace push + delegation event tracking (`delegation_start`/`delegation_end`). Also patches `store.appendChatRecord` and `store.appendJob`. Exposes `/api/ui-state` for reload hydration.
 - `apps/web/index.html`: HTML shell (title "dithie", JetBrains Mono font link).
 - `apps/web/app.tsx`: entrypoint React + `createBrowserRouter()` con rutas anidadas.
-- `apps/web/runtime-context.tsx`: estado global de la UI, reducer, bootstrap desde `/api/ui-state` y WebSocket persistente.
+- `apps/web/runtime-context.tsx`: estado global de la UI, reducer, bootstrap desde `/api/ui-state`, WebSocket persistente y preferencia de tema.
 - `apps/web/layouts/dashboard-layout.tsx`: shell persistente (header, nav, `Outlet`, input bar).
 - `apps/web/pages/*.tsx`: páginas separadas para chat, traces, agents, chats y jobs.
 - `apps/web/components/chat-ui.tsx` / `trace-ui.tsx` / `nav.tsx`: componentes presentacionales reutilizables.

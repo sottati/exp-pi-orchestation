@@ -96,7 +96,7 @@ bun run ui -- --session demo-1
 
 Abre http://localhost:3000 para ver el dashboard de Dithie:
 
-- **Estética Sacred-inspired**: paleta derivada del sistema de tokens de `sacred.computer`, con tema claro por defecto, superficies/contrastes terminales y fuente JetBrains Mono.
+- **Estética Sacred-inspired**: paleta derivada del sistema de tokens de `sacred.computer`, con tema dark por defecto, superficies/contrastes terminales y fuente JetBrains Mono.
 - **Dithie**: pixel-art spider (16x16) como identidad del orchestrator, con estados animados (idle, thinking, delegating, error).
 - **Chat unificado**: toda la conversación pasa por Dithie (orchestrator). Las delegaciones se muestran como bloques colapsables inline.
 - **React Router**: la UI ya no vive en un `App.tsx` monolítico; usa layout persistente + rutas para `/`, `/traces`, `/agents`, `/chats` y `/jobs`.
@@ -105,6 +105,7 @@ Abre http://localhost:3000 para ver el dashboard de Dithie:
 - **Panel de trazas**: trazas en tiempo real (newest-last) con items expandibles y duración calculada client-side.
 - **Reload seguro**: al refrescar con F5/Ctrl+R, la UI rehidrata chat, delegaciones, trazas, chats internos y jobs persistidos de la sesión activa.
 - **Color por agente**: la vista `/agents` asigna un tinte específico a cada agente usando una paleta compatible con Sacred.
+- **Theme switcher**: la barra de navegación permite alternar entre dark/light y persiste la preferencia en `localStorage`.
 - **WebSocket** en `/ws`: deltas de streaming, delegation events (`delegation_start`/`delegation_end`), lifecycle de chats y push de trazas.
 - **REST API**: `/api/agents`, `/api/chats`, `/api/threads`, `/api/traces`, `/api/ui-state`, `/api/jobs`.
 - **Fallback SPA**: el servidor web sirve el HTML base en las rutas cliente (`/chat`, `/traces`, `/agents`, `/chats`, `/jobs`) para soportar deep-linking y refresh.
