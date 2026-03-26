@@ -57,6 +57,8 @@ Hoy, los ocho agentes usan `openrouter/google/gemini-3.1-flash-lite-preview`.
 - [Bun](https://bun.com) 1.3+
 - Dependencias de Office tools: `exceljs`, `mammoth`, `docx` (instaladas via `bun install`)
 - Google Workspace: `googleapis` (instalada via `bun install`); requiere credenciales OAuth2 (ver sección Google Auth)
+- Explorer web: instalar browser de Playwright con `bunx playwright install chromium`
+- Explorer web: requiere salida a internet (DNS + HTTPS) desde el host
 
 ## Instalación
 
@@ -102,6 +104,7 @@ Abre http://localhost:3000 para ver el dashboard de Dithie:
 - **Sidebar por agente**: navegacion lateral con acceso directo a vistas dedicadas por especialista.
 - **Vistas por agente**: identidad (badge/tagline), actividad filtrada y panel de recursos por agente.
 - **Mensajeria directa**: desde cada vista se envian mensajes directos al agente seleccionado.
+- **Chat inter-agente visible**: cada vista de agente muestra tambien los mensajes agent↔agent reconstruidos desde `/api/threads`.
 - **Panel de trazas**: trazas en tiempo real (newest-last) con items expandibles y duración calculada client-side.
 - **WebSocket** en `/ws`: deltas de streaming, delegation events (`delegation_start`/`delegation_end`), lifecycle de chats y push de trazas.
 - **REST API**: `/api/agents`, `/api/agents/:id/activity`, `/api/chats`, `/api/threads`, `/api/traces`, `/api/jobs`.
@@ -121,7 +124,7 @@ La CLI (`bun run start`) y el servidor UI son entradas independientes que compar
 - `/threads`
 - `/thread <threadId>`
 - `/traces [n]`
-- `/smoke <math|code|orchestrator|explorer>`
+- `/smoke <math|code|orchestrator|explorer|writer|debugger>`
 - `/exit`
 
 ## Modelo de delegación: Chats
@@ -215,10 +218,10 @@ Cada envelope de hilo incluye metadatos de relación:
 - `apps/backend/server.ts`: servidor web con REST + WebSocket.
 - `apps/backend/ui-gate.ts`: evaluación de fricción para activar UI.
 - `apps/web/index.html`: shell HTML de la UI (title "dithie", JetBrains Mono font).
-- `apps/web/app.tsx`: SPA React (useReducer, layout con sidebar, home view + per-agent views, trace panel filtrable).
+- `apps/web/app.tsx`: SPA React (useReducer, layout con sidebar, home view + per-agent views, trace panel filtrable y sync de thread envelopes).
 - `apps/web/types.ts`: tipos compartidos de UI + personalidades por agente.
 - `apps/web/sidebar.tsx`: navegacion lateral por agente con estado busy/idle.
-- `apps/web/agent-view.tsx`: vista dedicada por agente (identidad, recursos, actividad/chat).
+- `apps/web/agent-view.tsx`: vista dedicada por agente (identidad, recursos, actividad/chat, incluyendo mensajes inter-agente).
 - `apps/web/app.css`: estilos B&W monocromáticos.
 - `apps/web/dithie-sprite.tsx`: componente DithieSprite (CSS Grid 16/32px, canvas 64px, animaciones).
 - `apps/web/dithie-frames.ts`: frame data del pixel-art spider (16x16 grids para cada estado).

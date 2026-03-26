@@ -9,7 +9,7 @@ import { createAgentDefinitions } from "../../packages/core/agents";
 function cliError(err: unknown) { console.error("Error:", errorMessage(err)); }
 
 type ChatTarget = string;
-const VALID_SMOKES = ["math", "code", "orchestrator"] as const;
+const VALID_SMOKES = ["math", "code", "orchestrator", "explorer", "writer", "debugger"] as const;
 
 function parseArgs(args: string[]) {
     const parsed: { sessionId: string; smoke?: (typeof VALID_SMOKES)[number] } = {
@@ -57,7 +57,7 @@ function printHelp() {
     console.log("  /threads               lista threadIds");
     console.log("  /thread <threadId>     muestra mensajes del thread");
     console.log("  /traces [n]            muestra ultimos n eventos de traza (default 20)");
-    console.log("  /smoke <name>          corre smoke (math|code|orchestrator)");
+    console.log("  /smoke <name>          corre smoke (math|code|orchestrator|explorer|writer|debugger)");
     console.log("  /exit                  salir");
     console.log("  (aliases: /jobs=/chats, /job=/task=/chat, /cancel=/close)\n");
 }
@@ -257,7 +257,7 @@ async function runInteractiveCli(runtime: MultiAgentRuntime, rl?: ReturnType<typ
             if (command === "/smoke") {
                 const smokeName = args[0] as (typeof VALID_SMOKES)[number] | undefined;
                 if (!smokeName || !VALID_SMOKES.includes(smokeName)) {
-                    console.log("Uso: /smoke math|code|orchestrator");
+                    console.log("Uso: /smoke math|code|orchestrator|explorer|writer|debugger");
                     continue;
                 }
                 try {

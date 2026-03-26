@@ -61,6 +61,20 @@ export interface ScheduledJobInfo {
   error?: string;
 }
 
+export interface ThreadEnvelopeInfo {
+  envelopeId: string;
+  threadId: string;
+  timestamp: number;
+  fromAgentId: string;
+  toAgentId: string;
+  chatId?: string;
+  message: {
+    role: string;
+    content: unknown;
+    timestamp?: number;
+  };
+}
+
 export type ChatItem =
   | { kind: "message"; message: UIMessage }
   | { kind: "delegation"; delegationId: string };

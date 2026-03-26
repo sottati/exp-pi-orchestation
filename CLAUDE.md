@@ -128,7 +128,7 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Scheduler: `packages/core/scheduler.ts` (cron parser, setTimeout-based timer, JSONL persistence)
 - Scheduler tools: `packages/core/scheduler-tools.ts` (`schedule_task`, `list_scheduled_jobs`, `cancel_scheduled_job`)
 - MCP client: `packages/core/mcp-client.ts` (`McpConnector` interface for external tool servers)
-- Browser wrapper: `packages/core/browser.ts` (Playwright-based `browseUrl`, `searchWeb`, `interactWithPage`)
+- Browser wrapper: `packages/core/browser.ts` (Playwright-based `browseUrl`, `searchWeb`, `interactWithPage` with launch/operation timeouts and temporary failure cooldown)
 - Explorer tools: `packages/core/explorer-tools.ts` (`browse_url`, `search_web`, `interact_page` tool entries)
 - Credential store: `packages/core/credential-store.ts` (AES-256-GCM encrypted credential storage)
 - Analyst tools: `packages/core/analyst-tools.ts` (`query_sqlite`, `query_supabase`, `parse_csv`, `analyze_data` tool entries)
@@ -171,6 +171,10 @@ Use these project scripts:
 - `bun run smoke:writer`
 - `bun run smoke:debugger`
 - `bun run ui:gate`
+
+Explorer prerequisite:
+- Install Playwright browser binary once: `bunx playwright install chromium`
+- Ensure outbound internet access (DNS + HTTPS) is available for web tools
 
 Inside the CLI, useful commands:
 
@@ -312,17 +316,17 @@ Serves on http://localhost:3000.
 ### Design
 - **B&W monochromatic palette**: `#000` bg, `#fff` text, grey surfaces/borders. No colors.
 - **Dithie**: pixel-art spider character as orchestrator identity. States: idle (breathing + blink), thinking (eye movement cycle), delegating (eyes shifted), error (X eyes).
-- **Home + per-agent views**: Home keeps orchestrator chat/delegations; each specialist has a dedicated view with filtered activity and direct chat.
+- **Home + per-agent views**: Home keeps orchestrator chat/delegations; each specialist has a dedicated view with filtered activity, direct chat, and inter-agent thread messages.
 - **Split view**: Sidebar (56px) | Main panel (home or agent view) | Trace panel (280px fixed).
 - **Font**: JetBrains Mono via Google Fonts CDN.
 
 ### Files
 - `apps/backend/server.ts`: `Bun.serve()` with REST routes + WebSocket at `/ws`. Monkey-patches `store.appendTrace` for real-time trace push + delegation event tracking (`delegation_start`/`delegation_end`). Also patches `store.appendChatRecord` and `store.appendJob`.
 - `apps/web/index.html`: HTML shell (title "dithie", JetBrains Mono font link).
-- `apps/web/app.tsx`: React SPA with sidebar navigation, home chat, per-agent views, trace filtering, and direct-to-agent input routing.
+- `apps/web/app.tsx`: React SPA with sidebar navigation, home chat, per-agent views, trace filtering, direct-to-agent input routing, and thread envelope sync from `/api/threads`.
 - `apps/web/types.ts`: shared UI types and `AGENT_PERSONALITIES` config.
 - `apps/web/sidebar.tsx`: agent sidebar with home button, badges, tooltips, and busy indicators.
-- `apps/web/agent-view.tsx`: dedicated agent panel (identity, resources, activity/chat tabs).
+- `apps/web/agent-view.tsx`: dedicated agent panel (identity, resources, activity/chat tabs, including agent-to-agent messages).
 - `apps/web/app.css`: B&W palette, layout grid, all component styles, animations (blink-cursor, breathe, dot-pulse).
 - `apps/web/dithie-sprite.tsx`: `DithieSprite` component — CSS Grid for 16/32px, canvas for 64px. Animation cycling per state.
 - `apps/web/dithie-frames.ts`: Pixel grid data (`Frame = number[][]`) for all animation frames (idle, blink, thinking 1-4, delegating, error).

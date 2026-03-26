@@ -119,10 +119,10 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Agent activity endpoint: `/api/agents/:id/activity` (traces/chats/jobs filtered by agent)
 - UI gate entry point: `apps/backend/ui-gate.ts`
 - Web UI shell: `apps/web/index.html`
-- Web UI app: `apps/web/app.tsx` (sidebar navigation, home + per-agent views, direct messaging)
+- Web UI app: `apps/web/app.tsx` (sidebar navigation, home + per-agent views, direct messaging, thread sync)
 - Web UI shared types: `apps/web/types.ts`
 - Web UI sidebar: `apps/web/sidebar.tsx`
-- Web UI agent view: `apps/web/agent-view.tsx`
+- Web UI agent view: `apps/web/agent-view.tsx` (activity + chat tabs with inter-agent messages)
 - Web UI styles: `apps/web/app.css`
 - Runtime: `packages/core/runtime.ts`
 - Tools: `packages/core/tools.ts`
@@ -135,7 +135,7 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Scheduler: `packages/core/scheduler.ts` (cron parser, setTimeout-based timer, JSONL persistence)
 - Scheduler tools: `packages/core/scheduler-tools.ts` (`schedule_task`, `list_scheduled_jobs`, `cancel_scheduled_job`)
 - MCP client: `packages/core/mcp-client.ts` (`McpConnector` interface for external tool servers)
-- Browser wrapper: `packages/core/browser.ts` (Playwright-based `browseUrl`, `searchWeb`, `interactWithPage`)
+- Browser wrapper: `packages/core/browser.ts` (Playwright-based `browseUrl`, `searchWeb`, `interactWithPage` with launch/operation timeouts and temporary failure cooldown)
 - Explorer tools: `packages/core/explorer-tools.ts` (`browse_url`, `search_web`, `interact_page` tool entries)
 - Credential store: `packages/core/credential-store.ts` (AES-256-GCM encrypted credential storage)
 - Analyst tools: `packages/core/analyst-tools.ts` (`query_sqlite`, `query_supabase`, `parse_csv`, `analyze_data` tool entries)
@@ -179,6 +179,10 @@ Use these project scripts:
 - `bun run smoke:debugger`
 - `bun run ui` (Dithie web dashboard with per-agent views)
 - `bun run ui:gate`
+
+Explorer prerequisite:
+- Install Playwright browser binary once: `bunx playwright install chromium`
+- Ensure outbound internet access (DNS + HTTPS) is available for web tools
 
 Inside the CLI, useful commands:
 

@@ -20,6 +20,12 @@ export interface SearchResult {
 
 const MAX_CONTENT_LENGTH = 8000;
 const NAV_TIMEOUT = 30_000;
+const LAUNCH_TIMEOUT = 10_000;
+const OPERATION_TIMEOUT = 60_000;
+const BROWSER_UNAVAILABLE_MS = 5 * 60_000;
+
+let browserUnavailableUntil = 0;
+let browserUnavailableReason = "";
 
 export function truncateContent(text: string, limit: number = MAX_CONTENT_LENGTH): string {
   if (text.length <= limit) return text;
@@ -35,20 +41,76 @@ async function getPlaywright() {
   }
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms}ms`));
+    }, ms);
+
+    promise
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+}
+
 export async function launchAndRun<T>(fn: (page: import("playwright").Page) => Promise<T>): Promise<T> {
+  if (Date.now() < browserUnavailableUntil) {
+    throw new Error(`Browser engine temporarily unavailable: ${browserUnavailableReason}`);
+  }
+
   const pw = await getPlaywright();
-  const browser = await pw.chromium.launch({ headless: true });
   try {
+    const browser = await withTimeout(
+      pw.chromium.launch({ headless: true, timeout: LAUNCH_TIMEOUT }),
+      OPERATION_TIMEOUT,
+      "chromium.launch",
+    );
     const page = await browser.newPage();
-    return await fn(page);
+    try {
+      return await withTimeout(fn(page), OPERATION_TIMEOUT, "browser operation");
+    } finally {
+      await withTimeout(browser.close(), 10_000, "browser.close").catch(() => {});
+    }
   } finally {
-    await browser.close();
+    // no-op
+  }
+}
+
+function markBrowserUnavailable(msg: string): void {
+  browserUnavailableReason = msg;
+  browserUnavailableUntil = Date.now() + BROWSER_UNAVAILABLE_MS;
+}
+
+function isLaunchFailureMessage(msg: string): boolean {
+  return (
+    msg.includes("Executable doesn't exist") ||
+    msg.includes("Timeout") ||
+    msg.includes("browserType.launch") ||
+    msg.includes("chrome-headless-shell")
+  );
+}
+
+export async function safeLaunchAndRun<T>(fn: (page: import("playwright").Page) => Promise<T>): Promise<T> {
+  try {
+    return await launchAndRun(fn);
+  } catch (err) {
+    const msg = errorMessage(err);
+    if (isLaunchFailureMessage(msg)) {
+      markBrowserUnavailable(msg);
+    }
+    throw err;
   }
 }
 
 export async function browseUrl(url: string, waitFor?: string): Promise<BrowseResult> {
   try {
-    return await launchAndRun(async (page) => {
+    return await safeLaunchAndRun(async (page) => {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
       if (waitFor) {
         await page.waitForSelector(waitFor, { timeout: 10_000 }).catch(() => {});
@@ -71,7 +133,7 @@ export async function browseUrl(url: string, waitFor?: string): Promise<BrowseRe
 export async function searchWeb(query: string, maxResults: number = 5): Promise<SearchResult[]> {
   const capped = Math.min(Math.max(maxResults, 1), 10);
   try {
-    return await launchAndRun(async (page) => {
+    return await safeLaunchAndRun(async (page) => {
       const searchUrl = `https://duckduckgo.com/?q=${encodeURIComponent(query)}`;
       await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
       await page.waitForSelector("[data-result]", { timeout: 10_000 }).catch(() => {});
@@ -103,7 +165,7 @@ export async function interactWithPage(
   followUpUrls?: string[],
 ): Promise<BrowseResult> {
   try {
-    return await launchAndRun(async (page) => {
+    return await safeLaunchAndRun(async (page) => {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
       for (const action of actions) {
         switch (action.type) {

@@ -12,6 +12,7 @@ import type {
   ChatItem,
   ViewTarget,
   ScheduledJobInfo,
+  ThreadEnvelopeInfo,
 } from "./types";
 import "./app.css";
 
@@ -22,6 +23,7 @@ interface State {
   messages: UIMessage[];
   chatItems: ChatItem[];
   jobs: ScheduledJobInfo[];
+  threadMessages: ThreadEnvelopeInfo[];
   busyAgents: Set<string>;
   isStreaming: boolean;
   streamBuffer: string;
@@ -53,6 +55,7 @@ type ServerMsg =
 type LocalAction =
   | { type: "send_user_message"; content: string; id: string; agentId?: string }
   | { type: "set_view"; view: ViewTarget }
+  | { type: "set_thread_messages"; messages: ThreadEnvelopeInfo[] }
   | { type: "toggle_trace"; eventId: string }
   | { type: "toggle_delegation"; delegationId: string }
   | { type: "reset_dithie_state" }
@@ -70,6 +73,7 @@ const initialState: State = {
   messages: [],
   chatItems: [],
   jobs: [],
+  threadMessages: [],
   busyAgents: new Set(),
   isStreaming: false,
   streamBuffer: "",
@@ -84,6 +88,22 @@ const initialState: State = {
   expandedDelegations: new Set(),
   wsConnected: false,
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isThreadEnvelopeInfo(value: unknown): value is ThreadEnvelopeInfo {
+  if (!isRecord(value) || !isRecord(value.message)) return false;
+  return (
+    typeof value.envelopeId === "string" &&
+    typeof value.threadId === "string" &&
+    typeof value.timestamp === "number" &&
+    typeof value.fromAgentId === "string" &&
+    typeof value.toAgentId === "string" &&
+    typeof value.message.role === "string"
+  );
+}
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
@@ -286,6 +306,18 @@ function reducer(state: State, action: Action): State {
 
     case "set_view":
       return { ...state, activeView: action.view };
+
+    case "set_thread_messages": {
+      const byEnvelopeId = new Map<string, ThreadEnvelopeInfo>();
+      for (const message of action.messages) {
+        byEnvelopeId.set(message.envelopeId, message);
+      }
+
+      const nextThreadMessages = [...byEnvelopeId.values()].sort(
+        (a, b) => a.timestamp - b.timestamp,
+      );
+      return { ...state, threadMessages: nextThreadMessages };
+    }
 
     case "toggle_trace": {
       const next = new Set(state.expandedTraces);
@@ -635,6 +667,38 @@ function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const wsRef = useRef<WebSocket | null>(null);
 
+  const refreshThreadMessages = useCallback(() => {
+    fetch("/api/threads")
+      .then((response) => response.json())
+      .then(async (threadIds: unknown) => {
+        if (!Array.isArray(threadIds)) {
+          return;
+        }
+
+        const threadResponses = await Promise.all(
+          threadIds
+            .filter((threadId): threadId is string => typeof threadId === "string")
+            .map(async (threadId) => {
+              const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}`);
+              if (!response.ok) {
+                return [] as unknown[];
+              }
+              const payload = await response.json();
+              return Array.isArray(payload) ? payload : [];
+            }),
+        );
+
+        const allThreadMessages = threadResponses
+          .flat()
+          .filter(isThreadEnvelopeInfo);
+
+        dispatch({ type: "set_thread_messages", messages: allThreadMessages });
+      })
+      .catch(() => {
+        // ignore thread refresh failures
+      });
+  }, []);
+
   useEffect(() => {
     const ws = new WebSocket(`ws://${location.host}/ws`);
     wsRef.current = ws;
@@ -653,16 +717,25 @@ function App() {
         .catch(() => {
           // ignore initial jobs fetch failures
         });
+      refreshThreadMessages();
     };
     ws.onclose = () => dispatch({ type: "ws_disconnected" });
     ws.onmessage = (e) => {
       try {
-        dispatch(JSON.parse(e.data as string));
+        const payload = JSON.parse(e.data as string) as ServerMsg;
+        dispatch(payload);
+        if (
+          payload.type === "chat_lifecycle" ||
+          payload.type === "delegation_end" ||
+          payload.type === "stream_end"
+        ) {
+          refreshThreadMessages();
+        }
       } catch { /* ignore parse errors */ }
     };
     ws.onerror = () => dispatch({ type: "stream_error", runId: "", error: "WebSocket connection error" });
     return () => ws.close();
-  }, []);
+  }, [refreshThreadMessages]);
 
   useEffect(() => {
     if (state.dithieState === "error") {
@@ -706,6 +779,7 @@ function App() {
                 traces={state.traces}
                 jobs={state.jobs}
                 messages={state.messages}
+                threadMessages={state.threadMessages}
                 isStreaming={state.isStreaming}
                 streamBuffer={state.streamBuffer}
                 streamingAgentId={state.streamingAgentId}
