@@ -1,3 +1,4 @@
+/* Tras cambiar tokens o añadir utilidades Tailwind nuevas: bun run ui:styles (regenera app.generated.css). */
 @import "tailwindcss";
 
 @theme {
@@ -6,13 +7,15 @@
   --color-theme-bg: var(--theme-background);
   --color-theme-surface: var(--theme-background-modal);
   --color-theme-surface-panel: var(--theme-background-modal-footer);
-  --color-theme-surface-hover: color-mix(in oklab, var(--theme-background-modal) 82%, var(--theme-text) 18%);
+  --color-theme-surface-hover: color-mix(in oklab, var(--theme-background-modal) 92%, var(--theme-text) 8%);
   --color-theme-border: var(--theme-border);
   --color-theme-border-subdued: var(--theme-border-subdued);
   --color-theme-text: var(--theme-text);
   --color-theme-text-soft: color-mix(in srgb, var(--theme-text) 72%, transparent);
   --color-theme-text-muted: color-mix(in srgb, var(--theme-text) 40%, transparent);
   --color-theme-focus: var(--theme-focused-foreground);
+  --color-theme-input: var(--theme-background-input);
+  --color-theme-button-foreground: var(--theme-button-foreground);
 
   --animate-blink-cursor: blink-cursor 0.6s step-end infinite;
   --animate-breathe: breathe 1.5s ease-in-out infinite;
@@ -22,7 +25,7 @@
 :root {
   --font-size: 13px;
   --theme-line-height-base: 1.5;
-  --header-h: 48px;
+  --header-h: 52px;
   --input-h: 56px;
   --trace-w: 280px;
   --font: var(--font-mono);
@@ -47,17 +50,18 @@
   --color-white: rgba(255, 255, 255, 1);
 
   --theme-overlay: var(--color-black-100-4);
-  --theme-background: var(--color-gray-100);
-  --theme-background-modal: var(--color-gray-90);
-  --theme-background-modal-footer: var(--color-gray-80);
-  --theme-background-input: var(--color-gray-80);
-  --theme-border: var(--color-gray-80);
-  --theme-border-subdued: var(--color-gray-70-3);
+  /* Sin data-theme (antes de hidratar) y modo oscuro por defecto: lienzo casi negro */
+  --theme-background: #000000;
+  --theme-background-modal: #0a0a0a;
+  --theme-background-modal-footer: #0c0c0c;
+  --theme-background-input: #0f0f0f;
+  --theme-border: #1f1f1f;
+  --theme-border-subdued: rgba(255, 255, 255, 0.14);
   --theme-text: var(--color-white);
   --theme-button: var(--color-white);
   --theme-button-text: var(--color-black-100);
   --theme-button-foreground: var(--color-gray-30);
-  --theme-button-background: var(--color-gray-80);
+  --theme-button-background: #141414;
   --theme-focused-foreground: var(--color-daybreak-10);
   --theme-focused-foreground-subdued: var(--color-daybreak-10-5);
   --theme-text-subdued: var(--theme-border-subdued);
@@ -89,17 +93,17 @@
 
 :root[data-theme="dark"] {
   --theme-overlay: var(--color-black-100-4);
-  --theme-background: var(--color-gray-100);
-  --theme-background-modal: var(--color-gray-90);
-  --theme-background-modal-footer: var(--color-gray-80);
-  --theme-background-input: var(--color-gray-80);
-  --theme-border: var(--color-gray-80);
-  --theme-border-subdued: var(--color-gray-70-3);
+  --theme-background: #000000;
+  --theme-background-modal: #0a0a0a;
+  --theme-background-modal-footer: #0c0c0c;
+  --theme-background-input: #0f0f0f;
+  --theme-border: #1f1f1f;
+  --theme-border-subdued: rgba(255, 255, 255, 0.14);
   --theme-text: var(--color-white);
   --theme-button: var(--color-white);
   --theme-button-text: var(--color-black-100);
   --theme-button-foreground: var(--color-gray-30);
-  --theme-button-background: var(--color-gray-80);
+  --theme-button-background: #141414;
   --theme-focused-foreground: var(--color-daybreak-10);
   --theme-focused-foreground-subdued: var(--color-daybreak-10-5);
 }
@@ -160,15 +164,20 @@ pre {
   50% { opacity: 0.2; }
 }
 
+/* Contenedor del pixel art: bloque fijo para alinear con texto en flex (evita baseline de inline-grid). */
+.dithie-sprite-root {
+  line-height: 0;
+}
+
 .dithie-sprite {
-  display: inline-grid;
+  display: grid;
 }
 
 .dithie-sprite--breathing {
   animation: breathe 1.5s ease-in-out infinite;
 }
 
-.dithie-sprite canvas {
+.dithie-sprite-root canvas {
   display: block;
 }
 

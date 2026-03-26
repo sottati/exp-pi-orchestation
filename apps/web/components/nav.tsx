@@ -16,7 +16,7 @@ export function AppNav() {
 
   return (
     <nav
-      className="flex items-center gap-2 overflow-x-auto border-b border-theme-border bg-theme-panel px-4 py-2.5"
+      className="flex items-center gap-2 overflow-x-auto border-b border-theme-border bg-theme-surface-panel px-4 py-2.5"
       aria-label="Primary"
     >
       {NAV_ITEMS.map((item) => (
@@ -26,7 +26,7 @@ export function AppNav() {
           end={item.end}
           className={({ isActive }) =>
             cn(
-              "inline-flex min-h-7 items-center whitespace-nowrap border border-theme-border px-2.5 text-[10px] uppercase tracking-[0.08em] text-theme-muted transition-colors hover:bg-theme-hover hover:text-theme-secondary",
+              "inline-flex min-h-7 items-center whitespace-nowrap border border-theme-border px-2.5 text-[10px] uppercase tracking-[0.08em] text-theme-text-muted transition-colors hover:bg-theme-surface-hover hover:text-theme-text-soft",
               isActive && "border-theme-text text-theme-text",
             )
           }
@@ -39,7 +39,7 @@ export function AppNav() {
           type="button"
           onClick={() => setThemeMode("light")}
           className={cn(
-            "inline-flex min-h-7 items-center gap-1 whitespace-nowrap border border-theme-border px-2.5 text-[10px] uppercase tracking-[0.08em] text-theme-muted transition-colors hover:bg-theme-hover hover:text-theme-secondary",
+            "inline-flex min-h-7 items-center gap-1 whitespace-nowrap border border-theme-border px-2.5 text-[10px] uppercase tracking-[0.08em] text-theme-text-muted transition-colors hover:bg-theme-surface-hover hover:text-theme-text-soft",
             themeMode === "light" && "border-theme-text text-theme-text",
           )}
           aria-pressed={themeMode === "light"}
@@ -51,7 +51,7 @@ export function AppNav() {
           type="button"
           onClick={() => setThemeMode("dark")}
           className={cn(
-            "inline-flex min-h-7 items-center gap-1 whitespace-nowrap border border-theme-border px-2.5 text-[10px] uppercase tracking-[0.08em] text-theme-muted transition-colors hover:bg-theme-hover hover:text-theme-secondary",
+            "inline-flex min-h-7 items-center gap-1 whitespace-nowrap border border-theme-border px-2.5 text-[10px] uppercase tracking-[0.08em] text-theme-text-muted transition-colors hover:bg-theme-surface-hover hover:text-theme-text-soft",
             themeMode === "dark" && "border-theme-text text-theme-text",
           )}
           aria-pressed={themeMode === "dark"}

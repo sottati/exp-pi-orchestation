@@ -221,7 +221,7 @@ Cada envelope de hilo incluye metadatos de relación:
 - `apps/web/index.html`: shell HTML de la UI (title "dithie", JetBrains Mono font).
 - `apps/web/app.tsx`: entrypoint React que monta `RouterProvider` + `RuntimeProvider`.
 - `apps/web/runtime-context.tsx`: estado global de la UI, hidratación desde `/api/ui-state`, conexión WebSocket y acciones compartidas.
-- `apps/web/layouts/dashboard-layout.tsx`: shell persistente con header, navegación y barra de entrada.
+- `apps/web/layouts/dashboard-layout.tsx`: shell persistente con header y navegación; la barra de entrada de chat solo en `/` (ruta de conversación).
 - `apps/web/pages/*.tsx`: páginas de router para chat, trazas, agentes, chats y jobs.
 - `apps/web/components/*.tsx`: componentes presentacionales reutilizables para chat, navegación y trazas.
 - `apps/web/app.css`: capa global de Tailwind + tokens/tema inspirados en Sacred.

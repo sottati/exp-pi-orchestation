@@ -30,25 +30,25 @@ function TraceItem({
     <>
       <div
         className={cn(
-          "flex cursor-pointer flex-row items-baseline gap-1.5 border-l-2 border-transparent px-2.5 py-1 text-[11px] leading-[1.4] transition-colors hover:bg-[var(--theme-background-input)]",
-          expanded && "border-l-[var(--theme-text)]",
+          "flex cursor-pointer flex-row items-baseline gap-1.5 border-l-2 border-transparent px-2.5 py-1 text-[11px] leading-[1.4] transition-colors hover:bg-theme-input",
+          expanded && "border-l-theme-text",
           statusClassName,
         )}
         onClick={onToggle}
       >
-        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[var(--theme-text)]">
+        <span className="min-w-0 flex-1 truncate text-theme-text">
           {statusPrefix}{trace.type}
         </span>
         {trace.agentId && (
-          <span className="max-w-[70px] shrink-0 overflow-hidden text-ellipsis whitespace-nowrap text-[10px] text-[var(--theme-border-subdued)]">
+          <span className="max-w-[70px] shrink-0 truncate text-[10px] text-theme-border-subdued">
             {trace.agentId}
           </span>
         )}
-        <span className="shrink-0 text-[10px] text-[var(--theme-border-subdued)]">{trace.status}</span>
-        {durationLabel && <span className="shrink-0 text-[10px] text-[var(--theme-border-subdued)]">{durationLabel}</span>}
+        <span className="shrink-0 text-[10px] text-theme-border-subdued">{trace.status}</span>
+        {durationLabel && <span className="shrink-0 text-[10px] text-theme-border-subdued">{durationLabel}</span>}
       </div>
       {expanded && trace.details && (
-        <div className="break-all border-l-2 border-[var(--theme-border-subdued)] px-2.5 py-1.5 pl-5 text-[10px] text-[var(--theme-border-subdued)]">
+        <div className="break-all border-l-2 border-theme-border-subdued px-2.5 py-1.5 pl-5 text-[10px] text-theme-border-subdued">
           {Object.entries(trace.details).map(([key, value]) => (
             <div key={key}>{key}: {typeof value === "object" ? JSON.stringify(value) : String(value)}</div>
           ))}
@@ -96,17 +96,17 @@ export function TracePanel({
 
   return (
     <div className={cn(
-      "flex min-h-0 flex-col overflow-hidden border-l border-[var(--theme-border)]",
+      "flex min-h-0 flex-col overflow-hidden border-l border-theme-border",
       variant === "sidebar" ? "w-[var(--trace-w)] shrink-0" : "w-full border-l-0",
     )}>
-      <div className="shrink-0 border-b border-[var(--theme-border)] px-3 py-2.5 text-[10px] uppercase tracking-[0.12em] text-[var(--theme-border-subdued)]">
+      <div className="shrink-0 border-b border-theme-border px-3 py-2.5 text-[10px] uppercase tracking-[0.12em] text-theme-border-subdued">
         {title}
       </div>
       <div
-        className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-0 py-1.5 [scrollbar-color:var(--theme-border)_transparent]"
+        className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-0 py-1.5 [scrollbar-color:var(--color-theme-border)_transparent]"
         ref={listRef}
       >
-        {traces.length === 0 && <div className="px-3 py-3 text-[11px] text-[var(--theme-border-subdued)]">no traces yet</div>}
+        {traces.length === 0 && <div className="px-3 py-3 text-[11px] text-theme-border-subdued">no traces yet</div>}
         {traces.map((trace) => (
           <TraceItem
             key={trace.eventId}

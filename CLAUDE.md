@@ -329,7 +329,7 @@ Serves on http://localhost:3000.
 - `apps/web/index.html`: HTML shell (title "dithie", JetBrains Mono font link).
 - `apps/web/app.tsx`: entrypoint React + `createBrowserRouter()` con rutas anidadas.
 - `apps/web/runtime-context.tsx`: estado global de la UI, reducer, bootstrap desde `/api/ui-state`, WebSocket persistente y preferencia de tema.
-- `apps/web/layouts/dashboard-layout.tsx`: shell persistente (header, nav, `Outlet`, input bar).
+- `apps/web/layouts/dashboard-layout.tsx`: shell persistente (header, nav, `Outlet`); barra de entrada solo en `/`.
 - `apps/web/pages/*.tsx`: páginas separadas para chat, traces, agents, chats y jobs.
 - `apps/web/components/chat-ui.tsx` / `trace-ui.tsx` / `nav.tsx`: componentes presentacionales reutilizables.
 - `apps/web/lib/utils.ts`: helper `cn()` para composición de clases Tailwind.

@@ -3,28 +3,29 @@ import { getAgentColorTokens } from "../lib/agent-colors";
 import { useRuntime } from "../runtime-context";
 
 export function AgentsPage() {
-  const { state } = useRuntime();
+  const { state, themeMode } = useRuntime();
 
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="flex shrink-0 flex-col gap-1 border-b border-[var(--theme-border)] bg-[var(--theme-background-modal)] px-5 pt-4 pb-3">
+      <div className="flex shrink-0 flex-col gap-1 border-b border-theme-border bg-theme-surface px-5 pt-4 pb-3">
         <div>
-          <div className="text-[12px] uppercase tracking-[0.14em] text-[var(--theme-text)]">Agents</div>
-          <div className="text-[11px] text-[var(--theme-border-subdued)]">Catalogo del runtime compartido por la UI.</div>
+          <div className="text-[12px] uppercase tracking-[0.14em] text-theme-text">Agents</div>
+          <div className="text-[11px] text-theme-text-soft">Catalogo del runtime compartido por la UI.</div>
         </div>
-        <span className="inline-flex items-center self-start border border-[var(--theme-border-subdued)] px-2 py-[2px] text-[10px] uppercase tracking-[0.06em] text-[var(--theme-border-subdued)]">
+        <span className="inline-flex items-center self-start border border-theme-border px-2 py-[2px] text-[10px] uppercase tracking-[0.06em] text-theme-text">
           {state.agents.length} total
         </span>
       </div>
 
-      <div className="flex flex-col gap-2.5 px-5 pt-4 pb-5">
+      <div className="min-h-0 flex-1 overflow-auto">
+        <div className="flex flex-col gap-2.5 px-5 pt-4 pb-5">
         {state.agents.map((agent) => {
-          const colors = getAgentColorTokens(agent.id);
+          const colors = getAgentColorTokens(agent.id, themeMode);
 
           return (
             <article
               key={agent.id}
-              className="flex flex-col gap-2.5 border border-[var(--theme-border)] bg-[var(--theme-background-input)] px-3.5 py-3"
+              className="flex flex-col gap-2.5 border border-theme-border bg-theme-input px-3.5 py-3"
               style={
                 {
                   "--agent-border": colors.border,
@@ -52,12 +53,12 @@ export function AgentsPage() {
               </div>
               <div className="grid grid-cols-[repeat(auto-fit,minmax(140px,1fr))] gap-x-3 gap-y-2">
                 <div className="flex flex-col gap-0.5">
-                  <span className="text-[10px] uppercase tracking-[0.06em] text-[var(--theme-border-subdued)]">Role</span>
-                  <span className="break-words text-[12px] text-[var(--theme-text)]">{agent.role}</span>
+                  <span className="text-[10px] uppercase tracking-[0.06em] text-theme-border-subdued">Role</span>
+                  <span className="break-words text-[12px] text-theme-text">{agent.role}</span>
                 </div>
                 <div className="flex flex-col gap-0.5">
-                  <span className="text-[10px] uppercase tracking-[0.06em] text-[var(--theme-border-subdued)]">Capabilities</span>
-                  <span className="text-[12px] text-[var(--theme-text)]">{agent.capabilities.length}</span>
+                  <span className="text-[10px] uppercase tracking-[0.06em] text-theme-border-subdued">Capabilities</span>
+                  <span className="text-[12px] text-theme-text">{agent.capabilities.length}</span>
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -79,9 +80,10 @@ export function AgentsPage() {
           );
         })}
         {state.agents.length === 0 && (
-          <div className="px-5 py-[18px] text-[12px] text-[var(--theme-border-subdued)]">no agents available</div>
+          <div className="px-5 py-[18px] text-[12px] text-theme-border-subdued">no agents available</div>
         )}
         </div>
+      </div>
     </section>
   );
 }

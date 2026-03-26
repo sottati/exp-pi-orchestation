@@ -28,15 +28,28 @@ export function getAgentTintHex(agentId: string): string {
   return SACRED_TINTS[getAgentTint(agentId)];
 }
 
-export function getAgentColorTokens(agentId: string) {
+export type AgentThemeMode = "light" | "dark";
+
+export function getAgentColorTokens(agentId: string, theme: AgentThemeMode) {
   const tint = getAgentTintHex(agentId);
 
+  if (theme === "light") {
+    return {
+      tint,
+      border: `oklch(from ${tint} 0.45 calc(c * 0.25) h)`,
+      muted: `oklch(from ${tint} 0.72 calc(c * 0.12) h)`,
+      background: `oklch(from ${tint} 0.96 calc(c * 0.08) h)`,
+      foreground: `oklch(from ${tint} 0.3 calc(c * 0.35) h)`,
+    };
+  }
+
+  /* Oscuro: mezclar el tinte con la misma base que app.css (--theme-background-modal / --theme-border) para no desentonar */
   return {
     tint,
-    border: `oklch(from ${tint} 0.45 calc(c * 0.25) h)`,
-    muted: `oklch(from ${tint} 0.72 calc(c * 0.12) h)`,
-    background: `oklch(from ${tint} 0.96 calc(c * 0.08) h)`,
-    foreground: `oklch(from ${tint} 0.3 calc(c * 0.35) h)`,
+    border: `color-mix(in oklab, ${tint} 26%, #1f1f1f 74%)`,
+    muted: `color-mix(in oklab, ${tint} 18%, rgba(255, 255, 255, 0.42) 82%)`,
+    background: `color-mix(in oklab, ${tint} 11%, #0a0a0a 89%)`,
+    foreground: `color-mix(in oklab, ${tint} 5%, #f2f2f2 95%)`,
   };
 }
 

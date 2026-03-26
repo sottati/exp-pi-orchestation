@@ -62,7 +62,7 @@ function DithieGrid({ frame, size }: { frame: Frame; size: 16 | 32 }) {
     <div
       className="dithie-sprite"
       style={{
-        display: "inline-grid",
+        display: "grid",
         gridTemplateColumns: `repeat(${cols}, ${cellSize}px)`,
         width: size,
         height: size,
@@ -152,8 +152,8 @@ export function DithieSprite({ size, state }: DithieSpriteProps) {
 
   return (
     <div
-      className={`dithie-sprite${isBreathing ? " dithie-sprite--breathing" : ""}`}
-      style={{ display: "inline-block", lineHeight: 0 }}
+      className={`dithie-sprite-root flex shrink-0 items-center justify-center overflow-hidden leading-none${isBreathing ? " dithie-sprite--breathing" : ""}`}
+      style={{ width: size, height: size }}
     >
       {inner}
     </div>
