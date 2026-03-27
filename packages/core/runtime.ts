@@ -1,5 +1,5 @@
 import type { Agent, AgentEvent, AgentMessage, AgentTool } from "@mariozechner/pi-agent-core";
-import { createOrchestratorAgent, createSpecialistRegistry, createAgentDefinitions, ORCHESTRATOR_ID } from "./agents";
+import { createSpecialistRegistry, createAgentDefinitions, ORCHESTRATOR_ID } from "./agents";
 import type { AgentChat, BaseAgentId, Initiator, RunContext, ThreadEnvelope, TraceEvent } from "./contracts";
 import { errorMessage } from "./errors";
 import { createId, now } from "./ids";
@@ -13,6 +13,8 @@ import { compileSystemPrompt } from "./prompt-compiler";
 import { Scheduler } from "./scheduler";
 import { createSchedulerToolEntries } from "./scheduler-tools";
 import { CredentialStore } from "./credential-store";
+import { WorkspaceManager } from "./workspace-manager";
+import { delimiter } from "node:path";
 
 interface RouteMessageInput {
     fromAgentId: BaseAgentId;
@@ -197,9 +199,21 @@ export interface RuntimeOptions {
     agents?: AgentDefinition[];
     hitlHandler?: HITLHandler;
     schedules?: Array<{ id: string; cron: string; agentId: string; task: string }>;
+    workspaceManager?: WorkspaceManager;
+    workspaceAllowedRoots?: string[];
 }
 
 const denyAllHandler: HITLHandler = async () => ({ approved: false });
+
+function parseAllowedRoots(raw?: string): string[] | undefined {
+    if (!raw) return undefined;
+    const parts = raw
+        .split(delimiter)
+        .flatMap((item) => item.split(/\r?\n/))
+        .map((item) => item.trim())
+        .filter(Boolean);
+    return parts.length > 0 ? parts : undefined;
+}
 
 export class MultiAgentRuntime {
     readonly sessionId: string;
@@ -211,6 +225,7 @@ export class MultiAgentRuntime {
     readonly hitlHandler: HITLHandler;
     readonly scheduler: Scheduler;
     readonly credentialStore: CredentialStore;
+    readonly workspaceManager: WorkspaceManager;
 
     constructor(optionsOrSessionId?: RuntimeOptions | string) {
         const options: RuntimeOptions = typeof optionsOrSessionId === "string"
@@ -227,14 +242,23 @@ export class MultiAgentRuntime {
             masterPassword: process.env.MASTER_PASSWORD,
         });
 
-        const credentialOpts = { credentialStore: this.credentialStore };
+        const workspaceAllowedRoots = options.workspaceAllowedRoots
+            ?? parseAllowedRoots(process.env.WORKSPACE_ALLOWED_ROOTS);
+        this.workspaceManager = options.workspaceManager ?? new WorkspaceManager({
+            allowedRoots: workspaceAllowedRoots,
+        });
+
+        const sharedOpts = {
+            credentialStore: this.credentialStore,
+            workspaceManager: this.workspaceManager,
+        };
 
         // Agent definitions
-        const agentDefList = options.agents ?? createAgentDefinitions(credentialOpts);
+        const agentDefList = options.agents ?? createAgentDefinitions(sharedOpts);
         this.agentDefs = new Map(agentDefList.map(d => [d.id, d]));
 
         // Backward-compatible specialist registry (used by orchestrator tools)
-        this.specialistRegistry = createSpecialistRegistry(credentialOpts);
+        this.specialistRegistry = createSpecialistRegistry(sharedOpts);
 
         // Tool registry
         this.toolRegistry = new ToolRegistry();
@@ -514,7 +538,7 @@ export class MultiAgentRuntime {
         }
     }
 
-    async runSmokeScenario(name: "math" | "code" | "orchestrator" | "explorer" | "writer" | "debugger") {
+    async runSmokeScenario(name: "math" | "code" | "orchestrator" | "explorer" | "writer" | "debugger" | "web-designer" | "marketing") {
         if (name === "math") {
             return this.chat({ toAgentId: "math", content: "Compute (8 * 5) - (6 / 2). Return one short sentence." });
         }
@@ -540,6 +564,18 @@ export class MultiAgentRuntime {
             return this.chat({
                 toAgentId: "debugger",
                 content: "List the files in packages/core/ and read packages/core/errors.ts. Give a brief code review summary.",
+            });
+        }
+        if (name === "web-designer") {
+            return this.chat({
+                toAgentId: "web-designer",
+                content: "List the main accessibility best practices for a modern landing page. Return a concise bullet list.",
+            });
+        }
+        if (name === "marketing") {
+            return this.chat({
+                toAgentId: "marketing",
+                content: "Audit the SEO of https://example.com and list the top issues found.",
             });
         }
         return this.chat({
@@ -623,19 +659,12 @@ export class MultiAgentRuntime {
         } as AgentTool<any>));
     }
 
-    private createAgentForRoute(toAgentId: string, runContext: RunContext): Agent {
-        if (toAgentId === ORCHESTRATOR_ID) {
-            const orchTools = this.createOrchestratorToolsForRun(runContext);
-            return createOrchestratorAgent([...orchTools], {
-                credentialStore: this.credentialStore,
-            });
-        }
-
-        const def = this.agentDefs.get(toAgentId);
-        if (!def) throw new Error(`Agent '${toAgentId}' is not registered.`);
-
-        // Resolve localTools → AgentTool[] with middleware (permissions, HITL)
-        const localTools: AgentTool<any>[] = (def.localTools ?? []).map(entry => {
+    private resolveWrappedLocalTools(
+        def: AgentDefinition,
+        agentId: string,
+        runContext: RunContext,
+    ): AgentTool<any>[] {
+        return (def.localTools ?? []).map(entry => {
             const permission = resolvePermission(
                 undefined,
                 def.permissions,
@@ -653,7 +682,7 @@ export class MultiAgentRuntime {
                 {
                     permission,
                     hitlHandler: this.hitlHandler,
-                    agentId: toAgentId,
+                    agentId,
                     tracePermission: async (info) => {
                         await this.trace({
                             type: "tool_start",
@@ -667,6 +696,21 @@ export class MultiAgentRuntime {
                 },
             );
         });
+    }
+
+    private createAgentForRoute(toAgentId: string, runContext: RunContext): Agent {
+        const def = this.agentDefs.get(toAgentId);
+        if (!def) throw new Error(`Agent '${toAgentId}' is not registered.`);
+
+        // Resolve localTools → AgentTool[] with middleware (permissions, HITL)
+        const localTools = this.resolveWrappedLocalTools(def, toAgentId, runContext);
+
+        if (toAgentId === ORCHESTRATOR_ID) {
+            const orchTools = this.createOrchestratorToolsForRun(runContext);
+            const orchestratorTools = [...orchTools, ...localTools];
+            const systemPrompt = compileSystemPrompt(def, orchestratorTools);
+            return def.createAgent(orchestratorTools, systemPrompt);
+        }
 
         // Inject scheduler tools into the secretary agent
         if (toAgentId === "secretary") {
