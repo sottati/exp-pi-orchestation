@@ -184,6 +184,7 @@ Use these project scripts:
 - `bun run smoke:writer`
 - `bun run smoke:debugger`
 - `bun run smoke:web-designer`
+- `bun run smoke:marketing`
 - `bun run ui:gate`
 
 Explorer prerequisite:
@@ -192,6 +193,9 @@ Explorer prerequisite:
 - Browser launch timeout is set to 30s for slower environments
 - When running runtime with Bun, ensure `node` is in `PATH` for Playwright bridge fallback
 - Env override: `PLAYWRIGHT_NODE_BRIDGE=1` force Node bridge, `PLAYWRIGHT_NODE_BRIDGE=0` disable it
+
+Marketing prerequisite:
+- `MARKETING_SHEET_ID` env var or CredentialStore domain `"marketing"` — Google Sheets spreadsheet ID used by `marketing_keywords`, `marketing_competitors`, `marketing_content_calendar`
 
 Git/GitHub prerequisite:
 - `git` installed and available in `PATH`
@@ -312,7 +316,7 @@ Agent tool assignments:
 - `writer`: `read_gdoc`, `write_gdoc`, `create_gdoc`, `gmail_send`, `gmail_draft`
 - `explorer`: `drive_list`, `drive_search`, `drive_download`
 - `secretary`: `gmail_search`, `gmail_read`, `calendar_list`, `calendar_create`, `calendar_update`, `calendar_delete`, `tasks_list`, `tasks_create`, `tasks_complete` + scheduler tools
-- `marketing`: `seo_audit`, `marketing_keywords`, `marketing_competitors`, `marketing_content_calendar`, `search_web`, `browse_url` (delegates to `writer`, `explorer`, `secretary`)
+- `marketing`: `seo_audit`, `marketing_keywords`, `marketing_competitors`, `marketing_content_calendar`, `search_web`, `browse_url` (Google Sheets via `MARKETING_SHEET_ID`; delegates to `writer`, `explorer`, `secretary`)
 
 Secretary also includes internal contacts tools:
 - `contacts_list`, `contacts_read`, `contacts_search`, `contacts_create`, `contacts_delete`

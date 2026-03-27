@@ -43,7 +43,7 @@ Necesito un snippet en C para imprimir del 1 al 10
 ## Configuración del modelo
 
 Agentes definidos via builder pattern en `packages/core/agents.ts` usando `defineAgent()`.
-Hoy, los diez agentes usan `openrouter/google/gemini-3.1-flash-lite-preview`.
+Hoy, los nueve agentes usan `openrouter/google/gemini-3.1-flash-lite-preview`.
 
 | Agent ID | Provider | Model ID |
 |---|---|---|
@@ -69,6 +69,7 @@ Hoy, los diez agentes usan `openrouter/google/gemini-3.1-flash-lite-preview`.
 - Explorer web en Bun: requiere `node` en `PATH` para el bridge de Playwright (`browser-node-bridge.mjs`)
 - Explorer web env: `PLAYWRIGHT_NODE_BRIDGE=1` fuerza bridge Node, `PLAYWRIGHT_NODE_BRIDGE=0` lo desactiva (default: auto en Bun).
 - Para PRs desde agentes: [GitHub CLI (`gh`)](https://cli.github.com/) autenticado (`gh auth login`)
+- Marketing: env var `MARKETING_SHEET_ID` o CredentialStore dominio `"marketing"` con el ID de la hoja de Google Sheets usada por `marketing_keywords`, `marketing_competitors`, `marketing_content_calendar`
 
 ## Instalación
 
@@ -90,6 +91,7 @@ bun run smoke:explorer
 bun run smoke:writer
 bun run smoke:debugger
 bun run smoke:web-designer
+bun run smoke:marketing
 bun run ui:gate
 ```
 
@@ -360,7 +362,7 @@ GOOGLE_REFRESH_TOKEN=...
 | `writer` | `read_gdoc`, `write_gdoc`, `create_gdoc`, `gmail_send`, `gmail_draft` |
 | `explorer` | `drive_list`, `drive_search`, `drive_download` |
 | `secretary` | `gmail_search`, `gmail_read`, `calendar_list`, `calendar_create`, `calendar_update`, `calendar_delete`, `tasks_list`, `tasks_create`, `tasks_complete`, `schedule_task`, `list_scheduled_jobs`, `cancel_scheduled_job` |
-| `marketing` | `seo_audit`, `marketing_keywords`, `marketing_competitors`, `marketing_content_calendar`, `search_web`, `browse_url` |
+| `marketing` | `seo_audit`, `marketing_keywords`, `marketing_competitors`, `marketing_content_calendar`, `search_web`, `browse_url` (Google Sheets via `MARKETING_SHEET_ID`; delega a `writer`, `explorer`, `secretary`) |
 
 ### Contactos internos (secretary)
 
