@@ -13,12 +13,31 @@ import { createGoogleTasksToolEntries } from "./google-tasks-tools";
 import { createLocalContactsToolEntries } from "./local-contacts-tools";
 import { createDevToolEntries } from "./dev-tools";
 import { createFrontendToolEntries } from "./frontend-tools";
+import { createMarketingToolEntries } from "./marketing-tools";
+import type { WorkspaceManager } from "./workspace-manager";
+import { createWorkspaceToolEntries } from "./workspace-tools";
+import { createGitToolEntries } from "./git-tools";
 
 export const ORCHESTRATOR_ID = "orchestrator" as const;
 
 export function createAgentDefinitions(opts?: {
   credentialStore?: CredentialStore;
+  workspaceManager?: WorkspaceManager;
 }): AgentDefinition[] {
+  const workspaceManager = opts?.workspaceManager;
+  const getWorkspaceBasePath = () => workspaceManager?.getActiveWorkspacePath();
+  const workspaceToolEntries = workspaceManager
+    ? createWorkspaceToolEntries({ workspaceManager })
+    : [];
+  const gitToolEntries = workspaceManager
+    ? createGitToolEntries({ workspaceManager })
+    : [];
+
+  const orchestratorFileTools = createDebuggerToolEntries();
+  const orchestratorTerminalTool = createDevToolEntries({
+    commandWhitelist: ["powershell -NoProfile -Command", "bash -lc"],
+  }).filter((tool) => tool.name === "run_command");
+
   const orchestrator = defineAgent(ORCHESTRATOR_ID)
     .name("Orchestrator")
     .role("Routes and delegates tasks to specialists.")
@@ -34,11 +53,23 @@ export function createAgentDefinitions(opts?: {
       "The debugger specialist reviews code, debugs errors, and identifies security issues. It can read files, search code, and list directories.",
       "The secretary specialist manages the user's personal organization: Google Calendar, Gmail reading/summaries, an internal contact list, Google Tasks, and scheduling (cron jobs, recurring tasks, reminders). Delegate scheduling and agenda tasks to her.",
       "The web-designer specialist builds frontend interfaces (HTML, CSS, React, Tailwind), previews pages, and validates accessibility.",
+      "The marketing specialist handles SEO audits, keyword research, competitor analysis, and content calendar management via Google Sheets. It can delegate to writer/explorer/secretary.",
+      "You can also directly inspect local files on the user's computer with read_file, search_code, and list_directory.",
+      "You can run terminal commands with run_command in powershell or bash mode when needed.",
+      "For shell commands, prefer run_command with shell + shellCommand parameters.",
+      "For local filesystem and terminal requests, prefer your direct tools first; delegate only when specialist reasoning is needed.",
       "After tool results, produce a direct final answer for the user.",
       "Be concise by default.",
     ].join(" "))
     .capabilities(["routing", "delegation"])
     .tools([])
+    .localToolEntries([...orchestratorFileTools, ...orchestratorTerminalTool])
+    .permissions({
+      "read_file": "hitl",
+      "search_code": "hitl",
+      "list_directory": "hitl",
+      "run_command": "hitl",
+    })
     .maxConcurrency(Infinity)
     .build();
 
@@ -49,13 +80,18 @@ export function createAgentDefinitions(opts?: {
     .systemPrompt(
       "You are a coding specialist. Return concise, practical answers. "
       + "You can read, write, and edit files in the project. You can run build and "
-      + "test commands. When you need frontend work, delegate to the web-designer."
+      + "test commands. Use workspace_* tools to select the active repository, and "
+      + "git_*/github_* tools for version control workflows. When you need frontend "
+      + "work, delegate to the web-designer."
     )
     .capabilities(["code-snippet", "small-refactor", "bug-fix-hint"])
     .localToolEntries([
       ...createDevToolEntries({
+        getBasePath: getWorkspaceBasePath,
         commandWhitelist: ["bun build", "bun test", "bun run", "bunx tsc"],
       }),
+      ...workspaceToolEntries,
+      ...gitToolEntries,
     ])
     .permissions({
       "read_file": "hitl",
@@ -63,6 +99,19 @@ export function createAgentDefinitions(opts?: {
       "edit_file": "hitl",
       "run_command": "hitl",
       "search_code": "hitl",
+      "list_directory": "hitl",
+      "workspace_register": "hitl",
+      "workspace_set_active": "hitl",
+      "workspace_roots": "allow",
+      "workspace_list": "allow",
+      "workspace_get_active": "allow",
+      "git_status": "allow",
+      "git_diff": "allow",
+      "git_log": "allow",
+      "git_list_branches": "allow",
+      "git_fetch": "allow",
+      "git_*": "hitl",
+      "github_*": "hitl",
     })
     .canDelegateTo(["web-designer"], { maxDepth: 2 })
     .maxConcurrency(1)
@@ -228,7 +277,7 @@ export function createAgentDefinitions(opts?: {
     ].join("\n"))
     .capabilities(["debug", "review", "analyze", "security", "read-file", "search-code"])
     .localToolEntries(debuggerTools)
-    .permissions({ "read_file": "hitl", "search_code": "hitl" })
+    .permissions({ "read_file": "hitl", "search_code": "hitl", "list_directory": "hitl" })
     .maxConcurrency(1)
     .build();
 
@@ -323,8 +372,9 @@ export function createAgentDefinitions(opts?: {
     .systemPrompt("You are a frontend specialist. You build UI components, pages, "
       + "and layouts. You write clean, accessible, responsive code. You read existing "
       + "code to understand patterns before making changes. You preview your work in "
-      + "the browser and validate accessibility. When you need backend endpoints, "
-      + "delegate to the code specialist.")
+      + "the browser and validate accessibility. Use workspace_* tools to select the "
+      + "active repository, and git_*/github_* tools for version control workflows. "
+      + "When you need backend endpoints, delegate to the code specialist.")
     .capabilities([
       "html", "css", "tailwind", "react", "tsx",
       "responsive-design", "accessibility", "design-systems",
@@ -333,9 +383,12 @@ export function createAgentDefinitions(opts?: {
     ])
     .localToolEntries([
       ...createDevToolEntries({
+        getBasePath: getWorkspaceBasePath,
         commandWhitelist: ["bun build", "bun test", "bunx tailwindcss",
           "bunx eslint", "bunx prettier", "bun run"],
       }),
+      ...workspaceToolEntries,
+      ...gitToolEntries,
       ...createFrontendToolEntries(),
       ...browseUrlEntry,
     ])
@@ -345,12 +398,79 @@ export function createAgentDefinitions(opts?: {
       "edit_file": "hitl",
       "run_command": "hitl",
       "search_code": "hitl",
+      "list_directory": "hitl",
+      "workspace_register": "hitl",
+      "workspace_set_active": "hitl",
+      "workspace_roots": "allow",
+      "workspace_list": "allow",
+      "workspace_get_active": "allow",
+      "git_status": "allow",
+      "git_diff": "allow",
+      "git_log": "allow",
+      "git_list_branches": "allow",
+      "git_fetch": "allow",
+      "git_*": "hitl",
+      "github_*": "hitl",
     })
     .canDelegateTo(["code"], { maxDepth: 2 })
     .maxConcurrency(1)
     .build();
 
-  return [orchestrator, code, math, explorer, writer, debugger_, secretary, webDesigner];
+  const explorerToolsForMarketing = createExplorerToolEntries({
+    credentialStore: opts?.credentialStore,
+  });
+  const searchWebEntry = explorerToolsForMarketing.filter(t => t.name === "search_web");
+  const browseUrlForMarketing = explorerToolsForMarketing.filter(t => t.name === "browse_url");
+  const marketingToolEntries = createMarketingToolEntries({ credentialStore: opts?.credentialStore });
+
+  const marketing = defineAgent("marketing")
+    .name("Marketing")
+    .role("SEO & growth strategist — keyword research, competitor analysis, on-page audits, content strategy via Google Sheets.")
+    .model("openrouter", "google/gemini-3.1-flash-lite-preview")
+    .systemPrompt([
+      "You are a virtual CMO focused on SEO and growth.",
+      "",
+      "Your tools:",
+      "- seo_audit: Run an on-page SEO audit on any URL. Extracts title, meta, headings, images, links, schema, timing, and issues.",
+      "- marketing_keywords: CRUD on Google Sheets 'Keywords' tab — track keyword volume, difficulty, position.",
+      "- marketing_competitors: CRUD on Google Sheets 'Competitors' tab — track competitor URLs, strengths, weaknesses.",
+      "- marketing_content_calendar: CRUD on Google Sheets 'Content Calendar' tab — manage content pipeline (idea → draft → review → published).",
+      "- search_web: Search the web for keyword research, competitor discovery, and market trends.",
+      "- browse_url: Fetch and read page content for competitor analysis and content research.",
+      "",
+      "Delegation:",
+      "- Delegate to 'writer' for content creation (blog posts, landing pages, email copy).",
+      "- Delegate to 'explorer' for complex multi-page research and deep browsing sessions.",
+      "- Delegate to 'secretary' for scheduling campaigns, reminders, and calendar coordination.",
+      "",
+      "Guidelines:",
+      "- Start with data: audit the current state before recommending changes.",
+      "- Track everything in Sheets: keywords, competitors, content calendar — the user can inspect and edit directly.",
+      "- Prioritize actionable recommendations over generic advice.",
+      "- Be concise. Use structured output (tables, lists) over prose.",
+    ].join("\n"))
+    .capabilities([
+      "seo-audit", "keyword-research", "competitor-analysis",
+      "content-calendar", "web-search", "content-strategy",
+    ])
+    .localToolEntries([
+      ...marketingToolEntries,
+      ...searchWebEntry,
+      ...browseUrlForMarketing,
+    ])
+    .permissions({
+      seo_audit: "allow",
+      marketing_keywords: "allow",
+      marketing_competitors: "allow",
+      marketing_content_calendar: "allow",
+      search_web: "allow",
+      browse_url: "allow",
+    })
+    .canDelegateTo(["writer", "explorer", "secretary"], { maxDepth: 2 })
+    .maxConcurrency(1)
+    .build();
+
+  return [orchestrator, code, math, explorer, writer, debugger_, secretary, webDesigner, marketing];
 }
 
 // Deprecated — kept for backward compatibility until runtime migration (Task 15)
@@ -361,6 +481,7 @@ import type { SpecialistRegistry } from "./tools";
 /** @deprecated Use createAgentDefinitions() instead. */
 export function createSpecialistRegistry(opts?: {
   credentialStore?: CredentialStore;
+  workspaceManager?: WorkspaceManager;
 }): SpecialistRegistry {
   const defs = createAgentDefinitions(opts);
   const registry: SpecialistRegistry = {};
@@ -381,6 +502,7 @@ export function createSpecialistRegistry(opts?: {
 /** @deprecated Use createAgentDefinitions() instead. */
 export function createOrchestratorAgent(tools: AgentTool<any>[] = [], opts?: {
   credentialStore?: CredentialStore;
+  workspaceManager?: WorkspaceManager;
 }) {
   const defs = createAgentDefinitions(opts);
   const orch = defs.find(d => d.id === ORCHESTRATOR_ID)!;
