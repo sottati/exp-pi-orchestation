@@ -3,6 +3,8 @@ import type { ToolEntry } from "./tool-registry";
 import type { CredentialStore } from "./credential-store";
 import { errorMessage } from "./errors";
 import { safeLaunchAndRun } from "./browser";
+import { getGoogleAuth } from "./google-auth";
+import { google } from "googleapis";
 
 export interface MarketingToolOptions {
   credentialStore?: CredentialStore;
@@ -20,6 +22,117 @@ export function getSheetId(): string {
     );
   }
   return id;
+}
+
+interface SheetCrudOpts {
+  credentialStore?: CredentialStore;
+  tab: string;
+  headers: string[];
+  action: string;
+  keyField: string;
+  keyValue?: string;
+  data?: Record<string, string>;
+}
+
+async function sheetCrud(opts: SheetCrudOpts) {
+  const { tab, headers, action, keyField, keyValue, data } = opts;
+
+  try {
+    const spreadsheetId = getSheetId();
+    const auth = await getGoogleAuth({ credentialStore: opts.credentialStore });
+    const sheets = google.sheets({ version: "v4", auth });
+    const range = `${tab}!A:${String.fromCharCode(64 + headers.length)}`;
+
+    if (action === "list") {
+      const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+      const allValues = res.data.values ?? [];
+      if (allValues.length <= 1) {
+        return textResult(JSON.stringify({ tab, rows: [], rowCount: 0 }));
+      }
+      const hdr = allValues[0] as string[];
+      const rows = allValues.slice(1).map((row) => {
+        const obj: Record<string, unknown> = {};
+        for (let i = 0; i < hdr.length; i++) obj[hdr[i]!] = row[i] ?? null;
+        return obj;
+      });
+      return textResult(JSON.stringify({ tab, rowCount: rows.length, rows }, null, 2));
+    }
+
+    if (!keyValue) {
+      return textResult(`Error: ${keyField} is required for ${action}`);
+    }
+
+    if (action === "add") {
+      const existing = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${tab}!A1:1` });
+      if (!existing.data.values?.length) {
+        await sheets.spreadsheets.values.update({
+          spreadsheetId,
+          range: `${tab}!A1`,
+          valueInputOption: "USER_ENTERED",
+          requestBody: { values: [headers] },
+        });
+      }
+
+      const row = headers.map((h) => {
+        if (h === keyField) return keyValue;
+        if (h === "Updated") return new Date().toISOString().slice(0, 10);
+        const dataKey = h.charAt(0).toLowerCase() + h.slice(1);
+        return data?.[dataKey] ?? data?.[h] ?? "";
+      });
+
+      await sheets.spreadsheets.values.append({
+        spreadsheetId,
+        range: `${tab}!A1`,
+        valueInputOption: "USER_ENTERED",
+        requestBody: { values: [row] },
+      });
+      return textResult(`Added "${keyValue}" to ${tab}`);
+    }
+
+    // For update/remove, find the row
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+    const allValues = res.data.values ?? [];
+    if (allValues.length <= 1) {
+      return textResult(`Error: No data in ${tab}`);
+    }
+    const hdr = allValues[0] as string[];
+    const keyCol = hdr.indexOf(keyField);
+    if (keyCol === -1) {
+      return textResult(`Error: Column "${keyField}" not found in ${tab}`);
+    }
+    const rowIndex = allValues.findIndex((row, i) => i > 0 && row[keyCol] === keyValue);
+    if (rowIndex === -1) {
+      return textResult(`Error: "${keyValue}" not found in ${tab}`);
+    }
+
+    if (action === "remove") {
+      const clearRange = `${tab}!A${rowIndex + 1}:${String.fromCharCode(64 + headers.length)}${rowIndex + 1}`;
+      await sheets.spreadsheets.values.clear({ spreadsheetId, range: clearRange });
+      return textResult(`Removed "${keyValue}" from ${tab}`);
+    }
+
+    if (action === "update") {
+      const existingRow = allValues[rowIndex]!;
+      const updatedRow = hdr.map((h, i) => {
+        if (h === "Updated") return new Date().toISOString().slice(0, 10);
+        const dataKey = h.charAt(0).toLowerCase() + h.slice(1);
+        const newVal = data?.[dataKey] ?? data?.[h];
+        return newVal ?? existingRow[i] ?? "";
+      });
+      const updateRange = `${tab}!A${rowIndex + 1}`;
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: updateRange,
+        valueInputOption: "USER_ENTERED",
+        requestBody: { values: [updatedRow] },
+      });
+      return textResult(`Updated "${keyValue}" in ${tab}`);
+    }
+
+    return textResult(`Error: Unknown action "${action}"`);
+  } catch (err) {
+    return textResult(`Error: ${errorMessage(err)}`);
+  }
 }
 
 export function createMarketingToolEntries(opts?: MarketingToolOptions): ToolEntry[] {
@@ -225,5 +338,113 @@ export function createMarketingToolEntries(opts?: MarketingToolOptions): ToolEnt
     },
   };
 
-  return [seoAudit];
+  const marketingKeywords: ToolEntry = {
+    name: "marketing_keywords",
+    source: "local",
+    description:
+      "CRUD operations on the Keywords tracking sheet. Actions: list, add, update, remove.",
+    parameters: Type.Object({
+      action: Type.Union(
+        [Type.Literal("list"), Type.Literal("add"), Type.Literal("update"), Type.Literal("remove")],
+        { description: "The operation to perform" },
+      ),
+      keyword: Type.Optional(Type.String({ description: "The keyword (required for add/update/remove)" })),
+      data: Type.Optional(
+        Type.Object({
+          volume: Type.Optional(Type.String({ description: "Search volume" })),
+          difficulty: Type.Optional(Type.String({ description: "Keyword difficulty" })),
+          position: Type.Optional(Type.String({ description: "Current ranking position" })),
+          notes: Type.Optional(Type.String({ description: "Additional notes" })),
+        }),
+      ),
+    }),
+    defaultPermission: "allow",
+    available: true,
+    execute: async (_toolCallId, params) => {
+      return sheetCrud({
+        credentialStore: opts?.credentialStore,
+        tab: "Keywords",
+        headers: ["Keyword", "Volume", "Difficulty", "Position", "Notes", "Updated"],
+        action: params.action as string,
+        keyField: "Keyword",
+        keyValue: params.keyword as string | undefined,
+        data: params.data as Record<string, string> | undefined,
+      });
+    },
+  };
+
+  const marketingCompetitors: ToolEntry = {
+    name: "marketing_competitors",
+    source: "local",
+    description:
+      "CRUD operations on the Competitors tracking sheet. Actions: list, add, update, remove.",
+    parameters: Type.Object({
+      action: Type.Union(
+        [Type.Literal("list"), Type.Literal("add"), Type.Literal("update"), Type.Literal("remove")],
+        { description: "The operation to perform" },
+      ),
+      competitor: Type.Optional(Type.String({ description: "The competitor name (required for add/update/remove)" })),
+      data: Type.Optional(
+        Type.Object({
+          url: Type.Optional(Type.String({ description: "Competitor URL" })),
+          strengths: Type.Optional(Type.String({ description: "Competitor strengths" })),
+          weaknesses: Type.Optional(Type.String({ description: "Competitor weaknesses" })),
+          notes: Type.Optional(Type.String({ description: "Additional notes" })),
+        }),
+      ),
+    }),
+    defaultPermission: "allow",
+    available: true,
+    execute: async (_toolCallId, params) => {
+      return sheetCrud({
+        credentialStore: opts?.credentialStore,
+        tab: "Competitors",
+        headers: ["Competitor", "URL", "Strengths", "Weaknesses", "Notes", "Updated"],
+        action: params.action as string,
+        keyField: "Competitor",
+        keyValue: params.competitor as string | undefined,
+        data: params.data as Record<string, string> | undefined,
+      });
+    },
+  };
+
+  const marketingContentCalendar: ToolEntry = {
+    name: "marketing_content_calendar",
+    source: "local",
+    description:
+      "CRUD operations on the Content Calendar sheet. Actions: list, add, update, remove.",
+    parameters: Type.Object({
+      action: Type.Union(
+        [Type.Literal("list"), Type.Literal("add"), Type.Literal("update"), Type.Literal("remove")],
+        { description: "The operation to perform" },
+      ),
+      entryId: Type.Optional(Type.String({ description: "The entry title (required for add/update/remove)" })),
+      data: Type.Optional(
+        Type.Object({
+          title: Type.Optional(Type.String({ description: "Content title" })),
+          type: Type.Optional(Type.String({ description: "Content type (blog, video, social, etc.)" })),
+          keyword: Type.Optional(Type.String({ description: "Target keyword" })),
+          status: Type.Optional(Type.String({ description: "Status (draft, in-progress, published)" })),
+          publishDate: Type.Optional(Type.String({ description: "Planned publish date" })),
+          assignee: Type.Optional(Type.String({ description: "Assigned person" })),
+          notes: Type.Optional(Type.String({ description: "Additional notes" })),
+        }),
+      ),
+    }),
+    defaultPermission: "allow",
+    available: true,
+    execute: async (_toolCallId, params) => {
+      return sheetCrud({
+        credentialStore: opts?.credentialStore,
+        tab: "Content Calendar",
+        headers: ["Title", "Type", "Keyword", "Status", "PublishDate", "Assignee", "Notes", "Updated"],
+        action: params.action as string,
+        keyField: "Title",
+        keyValue: params.entryId as string | undefined,
+        data: params.data as Record<string, string> | undefined,
+      });
+    },
+  };
+
+  return [seoAudit, marketingKeywords, marketingCompetitors, marketingContentCalendar];
 }
