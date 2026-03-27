@@ -20,7 +20,7 @@ Necesito un snippet en C para imprimir del 1 al 10
 
 ## Qué incluye hoy
 
-- Orquestador + especialistas (`code`, `math`, `explorer`, `writer`, `debugger`, `secretary`, `web-designer`) en runtime único.
+- Orquestador + especialistas (`code`, `math`, `explorer`, `writer`, `debugger`, `secretary`, `web-designer`, `marketing`) en runtime único.
 - Toda delegación es async via chat (`delegate` tool). Sin sync path.
 - Per-agent concurrency: cada especialista tiene `maxConcurrency` slots de chat.
 - Chats con cola FIFO: si un agente está al máximo, los nuevos chats se encolan como `waiting`.
@@ -37,6 +37,8 @@ Necesito un snippet en C para imprimir del 1 al 10
 - Restauración automática de chats y scheduled jobs interrumpidos al reiniciar sesión.
 - CLI interactiva para operar y testear sin UI, con HITL approval prompts.
 - Gate de decisión para saber cuándo pasar a UI/monorepo.
+- Workspace manager local (`workspace_*`): registro de repos/workspaces, workspace activo y roots permitidos.
+- Git/GitHub tools para `code` y `web-designer`: `git_*` + `github_*` (create/merge PR via `gh`) con HITL en operaciones mutables.
 
 ## Configuración del modelo
 
@@ -53,15 +55,21 @@ Hoy, los nueve agentes usan `openrouter/google/gemini-3.1-flash-lite-preview`.
 | `debugger` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
 | `secretary` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
 | `web-designer` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
+| `marketing` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
 
 ## Requisitos
 
 - [Bun](https://bun.com) 1.3+
+- [Git](https://git-scm.com/) instalado y disponible en `PATH`
 - Dependencias de Office tools: `exceljs`, `mammoth`, `docx` (instaladas via `bun install`)
 - Google Workspace: `googleapis` (instalada via `bun install`); requiere credenciales OAuth2 (ver sección Google Auth)
 - Explorer web: instalar browser de Playwright con `bunx playwright install chromium`
 - Explorer web: requiere salida a internet (DNS + HTTPS) desde el host
 - Explorer web: `chromium.launch` usa timeout de 30s para entornos lentos
+- Explorer web en Bun: requiere `node` en `PATH` para el bridge de Playwright (`browser-node-bridge.mjs`)
+- Explorer web env: `PLAYWRIGHT_NODE_BRIDGE=1` fuerza bridge Node, `PLAYWRIGHT_NODE_BRIDGE=0` lo desactiva (default: auto en Bun).
+- Para PRs desde agentes: [GitHub CLI (`gh`)](https://cli.github.com/) autenticado (`gh auth login`)
+- Marketing: env var `MARKETING_SHEET_ID` o CredentialStore dominio `"marketing"` con el ID de la hoja de Google Sheets usada por `marketing_keywords`, `marketing_competitors`, `marketing_content_calendar`
 
 ## Instalación
 
@@ -83,6 +91,7 @@ bun run smoke:explorer
 bun run smoke:writer
 bun run smoke:debugger
 bun run smoke:web-designer
+bun run smoke:marketing
 bun run ui:gate
 ```
 
@@ -100,7 +109,7 @@ bun run ui:gate -- --session test01
 bun run ui -- --session demo-1
 ```
 
-Abre http://localhost:3000 para ver el dashboard de Dithie:
+Abre <http://localhost:3000> para ver el dashboard de Dithie:
 
 - **Estética Sacred-inspired**: paleta derivada del sistema de tokens de `sacred.computer`, con tema dark por defecto, superficies/contrastes terminales y fuente JetBrains Mono.
 - **Dithie**: pixel-art spider (16x16) como identidad del orchestrator, con estados animados (idle, thinking, delegating, error).
@@ -114,6 +123,11 @@ Abre http://localhost:3000 para ver el dashboard de Dithie:
 - **Color por agente**: la vista `/agents` asigna un tinte específico a cada agente usando una paleta compatible con Sacred.
 - **Theme switcher**: la barra de navegación permite alternar entre dark/light y persiste la preferencia en `localStorage`.
 - **WebSocket** en `/ws`: deltas de streaming, delegation events (`delegation_start`/`delegation_end`), lifecycle de chats y push de trazas.
+- **HITL en UI**: cuando una tool requiere aprobación, aparece un modal con `Allow` / `Don't Allow` y atajos `y` / `n`. El timeout empieza recién cuando la UI confirma recepción (`hitl_seen`), evitando timeouts “silenciosos” sin modal.
+- **Diagnóstico HITL (server logs)**: el backend imprime `"[hitl] request ... delivered=..."`, respuestas y timeouts para depurar por qué no aparece el modal.
+- **Acceso local con HITL**: Dithie/orchestrator puede usar `read_file`, `search_code` y `list_directory` sobre paths locales del PC, siempre con aprobación humana.
+- **Terminal con HITL**: Dithie/orchestrator puede ejecutar comandos via `run_command` en modo `powershell` o `bash`, con aprobación humana en cada ejecución.
+- **REST API**: `/api/agents`, `/api/agents/:id/activity`, `/api/chats`, `/api/threads`, `/api/traces`, `/api/jobs`.
 - **REST API**: `/api/agents`, `/api/agents/:id/activity`, `/api/chats`, `/api/threads`, `/api/traces`, `/api/ui-state`, `/api/jobs`.
 - **Fallback SPA**: el servidor web sirve el HTML base en las rutas cliente (`/chat`, `/traces`, `/agents`, `/chats`, `/jobs`) para soportar deep-linking y refresh.
 
@@ -123,7 +137,7 @@ La CLI (`bun run start`) y el servidor UI son entradas independientes que compar
 
 - `/help`
 - `/agents`
-- `/use <agentId>` (`orchestrator|code|math|explorer|writer|debugger|secretary`)
+- `/use <agentId>` (`orchestrator|code|math|explorer|writer|debugger|secretary|web-designer|marketing`)
 - `/chats` (alias: `/jobs`)
 - `/chat <chatId> [--json]` (aliases: `/job`, `/task`) — transcript live; con `--json` devuelve inspección raw
 - `/close <chatId>` (alias: `/cancel`)
@@ -155,6 +169,28 @@ Cuando un chat activo se cierra, el siguiente en la cola del mismo agente pasa a
 | `get_chat_status` | Estado de un chat por chatId |
 | `get_chat_result` | Resultado de un chat completado |
 | `close_chat` | Cierra un chat activo o en cola |
+| `read_file` | Lee un archivo local con numeración de líneas (HITL) |
+| `search_code` | Busca texto en archivos dentro de un directorio local (HITL) |
+| `list_directory` | Lista archivos/subdirectorios de un path local (HITL) |
+| `run_command` | Ejecuta comandos en terminal (directo o shell `powershell`/`bash`) con HITL |
+
+### Workspaces + Git (code/web-designer)
+
+`code` y `web-designer` ahora tienen:
+
+- `workspace_roots`, `workspace_list`, `workspace_get_active`
+- `workspace_register` (HITL), `workspace_set_active` (HITL)
+- `git_status`, `git_diff`, `git_log`, `git_list_branches`, `git_fetch`
+- `git_checkout_branch`, `git_add`, `git_commit`, `git_pull`, `git_push`, `git_merge_branch` (HITL)
+- `github_create_pr`, `github_merge_pr` (HITL, vía `gh`)
+
+Comportamiento de alcance:
+
+- Por defecto, el runtime permite toda la PC (sin roots restringidos).
+- Si definís `WORKSPACE_ALLOWED_ROOTS`, el acceso queda limitado a esos roots.
+- Formato:
+  - Windows: `WORKSPACE_ALLOWED_ROOTS=C:\\repos;D:\\work`
+  - Linux/macOS: `WORKSPACE_ALLOWED_ROOTS=/home/me/repos:/srv/work`
 
 ## Persistencia local
 
@@ -251,10 +287,15 @@ Cada envelope de hilo incluye metadatos de relación:
 - `packages/core/scheduler-tools.ts`: tools de scheduling (`schedule_task`, `list_scheduled_jobs`, `cancel_scheduled_job`).
 - `packages/core/mcp-client.ts`: interfaz `McpConnector` para servidores de tools externos.
 - `packages/core/browser.ts`: `browseUrl`/`interactWithPage` con Playwright y `searchWeb` con fetch+parse de DuckDuckGo HTML.
+- `packages/core/browser-node-bridge.mjs`: bridge ejecutado con `node` para operaciones Playwright cuando el runtime corre en Bun.
 - `packages/core/explorer-tools.ts`: tool entries del explorer (`browse_url`, `search_web`, `interact_page`).
 - `packages/core/analyst-tools.ts`: tool entries del data analyst (`query_sqlite`, `query_supabase`, `parse_csv`, `analyze_data`).
 - `packages/core/office-tools.ts`: tool entries de Office — `read_excel`, `write_excel` (exceljs) para math/analyst; `read_docx`, `write_docx` (mammoth + docx) para writer.
 - `packages/core/debugger-tools.ts`: tool entries del debugger (`read_file`, `search_code`, `list_directory`).
+- `packages/core/marketing-tools.ts`: tool entries del marketing (`seo_audit`, `marketing_keywords`, `marketing_competitors`, `marketing_content_calendar`).
+- `packages/core/workspace-manager.ts`: estado/persistencia de workspaces (`.runtime-data/workspaces.json`), workspace activo y allowed roots.
+- `packages/core/workspace-tools.ts`: tools `workspace_*` para listar/registrar/activar workspaces.
+- `packages/core/git-tools.ts`: tools `git_*` y `github_*` (via `gh`) sobre el workspace activo.
 - `packages/core/credential-store.ts`: almacenamiento cifrado AES-256-GCM de credenciales.
 - `packages/core/google-auth.ts`: helper OAuth2 para Google APIs — lee credenciales del CredentialStore (dominio `"google"`) o env vars (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`).
 - `packages/core/google-sheets-tools.ts`: tool entries de Google Sheets — `read_gsheet`, `write_gsheet`, `create_gsheet` (asignados al agente `math`/analyst).
@@ -331,6 +372,7 @@ GOOGLE_REFRESH_TOKEN=...
 | `writer` | `read_gdoc`, `write_gdoc`, `create_gdoc`, `gmail_send`, `gmail_draft` |
 | `explorer` | `drive_list`, `drive_search`, `drive_download` |
 | `secretary` | `gmail_search`, `gmail_read`, `calendar_list`, `calendar_create`, `calendar_update`, `calendar_delete`, `tasks_list`, `tasks_create`, `tasks_complete`, `schedule_task`, `list_scheduled_jobs`, `cancel_scheduled_job` |
+| `marketing` | `seo_audit`, `marketing_keywords`, `marketing_competitors`, `marketing_content_calendar`, `search_web`, `browse_url` (Google Sheets via `MARKETING_SHEET_ID`; delega a `writer`, `explorer`, `secretary`) |
 
 ### Contactos internos (secretary)
 
@@ -364,5 +406,3 @@ El runtime incluye un `Scheduler` para ejecución cron, one-time y delayed:
 ## Nota
 
 Este repo está en modo MPV terminal-first. La UI se activa cuando el gate indique fricción operativa real (concurrencia, HITL frecuente o volumen alto de trazas).
-
-

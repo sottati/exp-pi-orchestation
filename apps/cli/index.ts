@@ -4,12 +4,11 @@ import { errorMessage } from "../../packages/core/errors";
 import type { ChatInspection } from "../../packages/core/runtime";
 import { MultiAgentRuntime } from "../../packages/core/runtime";
 import type { HITLHandler, HITLRequest } from "../../packages/core/tool-middleware";
-import { createAgentDefinitions } from "../../packages/core/agents";
 
 function cliError(err: unknown) { console.error("Error:", errorMessage(err)); }
 
 type ChatTarget = string;
-const VALID_SMOKES = ["math", "code", "orchestrator", "explorer", "writer", "debugger", "web-designer"] as const;
+const VALID_SMOKES = ["math", "code", "orchestrator", "explorer", "writer", "debugger", "web-designer", "marketing"] as const;
 
 function parseArgs(args: string[]) {
     const parsed: { sessionId: string; smoke?: (typeof VALID_SMOKES)[number] } = {
@@ -257,7 +256,7 @@ async function runInteractiveCli(runtime: MultiAgentRuntime, rl?: ReturnType<typ
             if (command === "/smoke") {
                 const smokeName = args[0] as (typeof VALID_SMOKES)[number] | undefined;
                 if (!smokeName || !VALID_SMOKES.includes(smokeName)) {
-                    console.log("Uso: /smoke math|code|orchestrator|explorer|writer|debugger|web-designer");
+                    console.log("Uso: /smoke math|code|orchestrator|explorer|writer|debugger|web-designer|marketing");
                     continue;
                 }
                 try {
@@ -312,7 +311,6 @@ const args = parseArgs(Bun.argv.slice(2));
 if (args.smoke) {
     const runtime = new MultiAgentRuntime({
         sessionId: args.sessionId,
-        agents: createAgentDefinitions(),
     });
     const result = await runtime.runSmokeScenario(args.smoke);
     console.log(`[smoke:${args.smoke}] ${result.answer}`);
@@ -320,7 +318,6 @@ if (args.smoke) {
     const rl = createInterface({ input: stdin, output: stdout });
     const runtime = new MultiAgentRuntime({
         sessionId: args.sessionId,
-        agents: createAgentDefinitions(),
         hitlHandler: createCliHitlHandler(rl),
     });
     await runInteractiveCli(runtime, rl);

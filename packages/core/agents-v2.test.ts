@@ -1,6 +1,9 @@
 import { test, expect, describe } from "bun:test";
 import { createAgentDefinitions, ORCHESTRATOR_ID } from "./agents";
 import type { AgentDefinition } from "./agent-builder";
+import { mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { WorkspaceManager } from "./workspace-manager";
 
 describe("Agent definitions v2", () => {
   test("createAgentDefinitions returns orchestrator, code, and math", () => {
@@ -31,6 +34,25 @@ describe("Agent definitions v2", () => {
     expect(orch.toolRefs).toBeDefined();
   });
 
+  test("orchestrator has local file tools gated by HITL", () => {
+    const defs = createAgentDefinitions();
+    const orch = defs.find((d) => d.id === ORCHESTRATOR_ID)!;
+    const localToolNames = (orch.localTools ?? []).map((tool) => tool.name).sort();
+    expect(localToolNames).toEqual(["list_directory", "read_file", "run_command", "search_code"]);
+    expect(orch.permissions["read_file"]).toBe("hitl");
+    expect(orch.permissions["search_code"]).toBe("hitl");
+    expect(orch.permissions["list_directory"]).toBe("hitl");
+    expect(orch.permissions["run_command"]).toBe("hitl");
+  });
+
+  test("code, debugger, and web-designer require HITL for list_directory", () => {
+    const defs = createAgentDefinitions();
+    const byId = Object.fromEntries(defs.map((d) => [d.id, d] as const)) as Record<string, AgentDefinition>;
+    expect(byId["code"]!.permissions["list_directory"]).toBe("hitl");
+    expect(byId["debugger"]!.permissions["list_directory"]).toBe("hitl");
+    expect(byId["web-designer"]!.permissions["list_directory"]).toBe("hitl");
+  });
+
   test("math specialist has maxConcurrency 1", () => {
     const defs = createAgentDefinitions();
     const math = defs.find((d) => d.id === "math")!;
@@ -41,5 +63,36 @@ describe("Agent definitions v2", () => {
     const defs = createAgentDefinitions();
     const code = defs.find((d) => d.id === "code")!;
     expect(code.maxConcurrency).toBe(1);
+  });
+
+  test("code and web-designer expose workspace/git tools when workspace manager is provided", () => {
+    const tmpDir = join(import.meta.dir, "__agents_workspace_test__");
+    mkdirSync(tmpDir, { recursive: true });
+    const manager = new WorkspaceManager({
+      dataDir: join(tmpDir, ".runtime-data-test"),
+      allowedRoots: [tmpDir],
+    });
+    manager.registerWorkspace({ path: tmpDir, workspaceId: "tmp", name: "tmp", setActive: true });
+
+    try {
+      const defs = createAgentDefinitions({ workspaceManager: manager });
+      const code = defs.find((d) => d.id === "code")!;
+      const webDesigner = defs.find((d) => d.id === "web-designer")!;
+
+      const codeTools = (code.localTools ?? []).map((tool) => tool.name);
+      const webTools = (webDesigner.localTools ?? []).map((tool) => tool.name);
+
+      expect(codeTools).toContain("workspace_list");
+      expect(codeTools).toContain("workspace_set_active");
+      expect(codeTools).toContain("git_status");
+      expect(codeTools).toContain("github_create_pr");
+
+      expect(webTools).toContain("workspace_list");
+      expect(webTools).toContain("workspace_set_active");
+      expect(webTools).toContain("git_status");
+      expect(webTools).toContain("github_create_pr");
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });

@@ -1,0 +1,13 @@
+{
+  "planPath": "docs/plans/2026-03-27-marketing-agent.md",
+  "tasks": [
+    {"id": 0, "subject": "Task 0: Create marketing-tools.ts — seo_audit tool", "status": "completed"},
+    {"id": 1, "subject": "Task 1: Add Google Sheets CRUD tools to marketing-tools.ts", "status": "completed", "blockedBy": [0]},
+    {"id": 2, "subject": "Task 2: Add marketing agent definition to agents.ts", "status": "completed", "blockedBy": [0, 1]},
+    {"id": 3, "subject": "Task 3: Add marketing to UI (AGENT_PERSONALITIES)", "status": "completed", "blockedBy": [2]},
+    {"id": 4, "subject": "Task 4: Add smoke test", "status": "completed", "blockedBy": [2]},
+    {"id": 5, "subject": "Task 5: Update documentation (CLAUDE.md, README.md, AGENTS.md)", "status": "completed", "blockedBy": [2]},
+    {"id": 6, "subject": "Task 6: Run full typecheck and smoke test", "status": "completed", "blockedBy": [3, 4, 5]}
+  ],
+  "lastUpdated": "2026-03-27T02:00:00Z"
+}

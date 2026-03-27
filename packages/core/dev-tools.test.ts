@@ -44,6 +44,22 @@ test("read_file rejects path outside basePath", async () => {
   expect(getText(result)).toContain("outside the allowed base path");
 });
 
+test("read_file honors dynamic base path", async () => {
+  mkdirSync(join(TEST_DIR, "inner"), { recursive: true });
+  const state = { basePath: TEST_DIR };
+  const tool = createDevToolEntries({
+    getBasePath: () => state.basePath,
+    commandWhitelist: ["bun test"],
+  }).find((t) => t.name === "read_file")!;
+
+  const ok = await tool.execute("t3b", { filePath: join(TEST_DIR, "hello.ts") });
+  expect(getText(ok)).toContain("1: const x = 1;");
+
+  state.basePath = join(TEST_DIR, "inner");
+  const denied = await tool.execute("t3c", { filePath: join(TEST_DIR, "hello.ts") });
+  expect(getText(denied)).toContain("outside the allowed base path");
+});
+
 // --- write_file ---
 test("write_file creates a new file", async () => {
   const tool = getTool("write_file");
@@ -131,6 +147,48 @@ test("run_command rejects shell metacharacters", async () => {
   const tool = getTool("run_command");
   const result = await tool.execute("t13", { command: "bun test && rm -rf /" });
   expect(getText(result)).toContain("metacharacter");
+});
+
+test("run_command requires shellCommand when shell is provided", async () => {
+  const tool = getTool("run_command");
+  const result = await tool.execute("t13b", { shell: "bash" });
+  expect(getText(result)).toContain("shellCommand is required");
+});
+
+test("run_command rejects shell launcher when not whitelisted", async () => {
+  const tool = getTool("run_command");
+  const result = await tool.execute("t13c", { shell: "bash", shellCommand: "echo hi" });
+  expect(getText(result)).toContain("launcher");
+  expect(getText(result)).toContain("not allowed");
+});
+
+test("run_command executes shell mode for current platform", async () => {
+  const isWindows = process.platform === "win32";
+  const shell = isWindows ? "powershell" : "bash";
+  const shellCommand = isWindows ? "Write-Output hi-shell" : "echo hi-shell";
+  const commandWhitelist = isWindows
+    ? ["powershell -NoProfile -Command"]
+    : ["bash -lc"];
+  const tool = createDevToolEntries({ basePath: TEST_DIR, commandWhitelist }).find(t => t.name === "run_command")!;
+  const result = await tool.execute("t13d", { shell, shellCommand });
+  const parsed = JSON.parse(getText(result));
+  expect(parsed.mode).toBe(`shell:${shell}`);
+  expect(parsed.exitCode).toBe(0);
+  expect(parsed.stdout.toLowerCase()).toContain("hi-shell");
+});
+
+test("run_command rejects cwd outside dynamic base path", async () => {
+  const tool = createDevToolEntries({
+    getBasePath: () => TEST_DIR,
+    commandWhitelist: ["bun test"],
+  }).find((t) => t.name === "run_command")!;
+
+  const outsideCwd = join(TEST_DIR, "..");
+  const result = await tool.execute("t13e", {
+    command: "bun test --help",
+    cwd: outsideCwd,
+  });
+  expect(getText(result)).toContain("outside the allowed base path");
 });
 
 // --- list_directory ---

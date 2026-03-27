@@ -1,4 +1,5 @@
 import { errorMessage } from "./errors";
+import { fileURLToPath } from "node:url";
 
 export interface BrowseResult {
   content: string;
@@ -24,6 +25,9 @@ const LAUNCH_TIMEOUT = 30_000;
 const OPERATION_TIMEOUT = 60_000;
 const BROWSER_UNAVAILABLE_MS = 5 * 60_000;
 const SEARCH_TIMEOUT = 20_000;
+const NODE_BRIDGE_TIMEOUT = 120_000;
+const NODE_BRIDGE_FORCE = "1";
+const NODE_BRIDGE_DISABLE = "0";
 
 let browserUnavailableUntil = 0;
 let browserUnavailableReason = "";
@@ -102,12 +106,127 @@ function markBrowserUnavailable(msg: string): void {
 }
 
 function isLaunchFailureMessage(msg: string): boolean {
+  const text = msg.toLowerCase();
   return (
-    msg.includes("Executable doesn't exist") ||
-    msg.includes("Timeout") ||
-    msg.includes("browserType.launch") ||
-    msg.includes("chrome-headless-shell")
+    text.includes("executable doesn't exist") ||
+    text.includes("timeout") ||
+    text.includes("timed out") ||
+    text.includes("browsertype.launch") ||
+    text.includes("chromium.launch") ||
+    text.includes("chrome-headless-shell") ||
+    text.includes("temporarily unavailable")
   );
+}
+
+function isBunRuntime(): boolean {
+  return typeof Bun !== "undefined";
+}
+
+function shouldForceNodeBridge(): boolean {
+  return process.env.PLAYWRIGHT_NODE_BRIDGE === NODE_BRIDGE_FORCE;
+}
+
+function shouldDisableNodeBridge(): boolean {
+  return process.env.PLAYWRIGHT_NODE_BRIDGE === NODE_BRIDGE_DISABLE;
+}
+
+function hasNodeBinary(): boolean {
+  if (!isBunRuntime()) return false;
+  try {
+    return Boolean(Bun.which("node"));
+  } catch {
+    return false;
+  }
+}
+
+function shouldPreferNodeBridge(): boolean {
+  if (shouldDisableNodeBridge()) return false;
+  if (shouldForceNodeBridge()) return true;
+  return isBunRuntime() && hasNodeBinary();
+}
+
+function shouldUseNodeBridgeForError(err: unknown): boolean {
+  if (shouldDisableNodeBridge()) return false;
+  if (!isBunRuntime()) return false;
+  if (shouldForceNodeBridge()) return true;
+  return isLaunchFailureMessage(errorMessage(err));
+}
+
+interface NodeBridgeTaskBrowse {
+  kind: "browse";
+  url: string;
+  waitFor?: string;
+  maxContentLength: number;
+  navTimeout: number;
+  launchTimeout: number;
+}
+
+interface NodeBridgeTaskInteract {
+  kind: "interact";
+  url: string;
+  actions: PageAction[];
+  followUpUrls?: string[];
+  maxContentLength: number;
+  navTimeout: number;
+  launchTimeout: number;
+}
+
+type NodeBridgeTask = NodeBridgeTaskBrowse | NodeBridgeTaskInteract;
+
+class NodeBridgeTaskError extends Error {}
+class NodeBridgeInfraError extends Error {}
+
+async function runNodeBridgeTask(task: NodeBridgeTask): Promise<BrowseResult> {
+  if (shouldDisableNodeBridge()) {
+    throw new NodeBridgeInfraError("Node browser bridge is disabled by PLAYWRIGHT_NODE_BRIDGE=0");
+  }
+
+  const scriptPath = fileURLToPath(new URL("./browser-node-bridge.mjs", import.meta.url));
+  const proc = Bun.spawn(["node", scriptPath], {
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  proc.stdin.write(JSON.stringify(task));
+  proc.stdin.end();
+
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    try { proc.kill(); } catch { /* ignore */ }
+  }, NODE_BRIDGE_TIMEOUT);
+
+  try {
+    const [stdout, stderr] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    const exitCode = await proc.exited;
+
+    if (timedOut) {
+      throw new NodeBridgeInfraError(`Node browser bridge timed out after ${NODE_BRIDGE_TIMEOUT}ms`);
+    }
+
+    if (exitCode !== 0) {
+      throw new NodeBridgeInfraError(`Node browser bridge failed (exit ${exitCode}): ${stderr || stdout || "unknown error"}`);
+    }
+
+    let parsed: { ok?: boolean; result?: BrowseResult; error?: string };
+    try {
+      parsed = JSON.parse(stdout || "{}") as { ok?: boolean; result?: BrowseResult; error?: string };
+    } catch {
+      throw new NodeBridgeInfraError(`Node browser bridge returned invalid JSON: ${stdout.slice(0, 400)}`);
+    }
+
+    if (!parsed.ok || !parsed.result) {
+      throw new NodeBridgeTaskError(parsed.error || `Node browser bridge failed: ${stderr || "unknown error"}`);
+    }
+
+    return parsed.result;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function safeLaunchAndRun<T>(fn: (page: import("playwright").Page) => Promise<T>): Promise<T> {
@@ -236,21 +355,44 @@ async function searchWebViaHttp(query: string, maxResults: number): Promise<Sear
 export async function browseUrl(url: string, waitFor?: string): Promise<BrowseResult> {
   try {
     const targetUrl = validateHttpUrl(url);
-    return await safeLaunchAndRun(async (page) => {
-      await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
-      if (waitFor) {
-        await page.waitForSelector(waitFor, { timeout: 10_000 }).catch(() => {});
+    const bridgeTask: NodeBridgeTaskBrowse = {
+      kind: "browse",
+      url: targetUrl,
+      waitFor,
+      maxContentLength: MAX_CONTENT_LENGTH,
+      navTimeout: NAV_TIMEOUT,
+      launchTimeout: LAUNCH_TIMEOUT,
+    };
+
+    if (shouldPreferNodeBridge()) {
+      try {
+        return await runNodeBridgeTask(bridgeTask);
+      } catch (err) {
+        if (err instanceof NodeBridgeTaskError) throw err;
+        if (shouldForceNodeBridge()) throw err;
       }
-      const title = await page.title();
-      const content = await page.evaluate(() => {
-        const selectors = ["nav", "header", "footer", "[role=navigation]", "[role=banner]", ".ad", ".ads", "#cookie-banner"];
-        for (const sel of selectors) {
-          document.querySelectorAll(sel).forEach(el => el.remove());
+    }
+
+    try {
+      return await safeLaunchAndRun(async (page) => {
+        await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
+        if (waitFor) {
+          await page.waitForSelector(waitFor, { timeout: 10_000 }).catch(() => {});
         }
-        return document.body?.innerText ?? "";
+        const title = await page.title();
+        const content = await page.evaluate(() => {
+          const selectors = ["nav", "header", "footer", "[role=navigation]", "[role=banner]", ".ad", ".ads", "#cookie-banner"];
+          for (const sel of selectors) {
+            document.querySelectorAll(sel).forEach(el => el.remove());
+          }
+          return document.body?.innerText ?? "";
+        });
+        return { content: truncateContent(content), title, url: page.url() };
       });
-      return { content: truncateContent(content), title, url: page.url() };
-    });
+    } catch (err) {
+      if (!shouldUseNodeBridgeForError(err)) throw err;
+      return await runNodeBridgeTask(bridgeTask);
+    }
   } catch (err) {
     return { content: `Error browsing ${url}: ${errorMessage(err)}`, title: "Error", url };
   }
@@ -278,50 +420,74 @@ export async function interactWithPage(
 ): Promise<BrowseResult> {
   try {
     const targetUrl = validateHttpUrl(url);
-    return await safeLaunchAndRun(async (page) => {
-      await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
-      for (const action of actions) {
-        switch (action.type) {
-          case "click":
-            await page.click(action.selector, { timeout: 10_000 });
-            break;
-          case "fill":
-            await page.fill(action.selector, action.value, { timeout: 10_000 });
-            break;
-          case "select":
-            await page.selectOption(action.selector, action.value, { timeout: 10_000 });
-            break;
-          case "wait":
-            if (action.selector) {
-              await page.waitForSelector(action.selector, { timeout: action.timeout ?? 10_000 }).catch(() => {});
-            } else {
-              await page.waitForTimeout(action.timeout ?? 3000);
-            }
-            break;
-        }
+    const bridgeTask: NodeBridgeTaskInteract = {
+      kind: "interact",
+      url: targetUrl,
+      actions,
+      followUpUrls,
+      maxContentLength: MAX_CONTENT_LENGTH,
+      navTimeout: NAV_TIMEOUT,
+      launchTimeout: LAUNCH_TIMEOUT,
+    };
+
+    if (shouldPreferNodeBridge()) {
+      try {
+        return await runNodeBridgeTask(bridgeTask);
+      } catch (err) {
+        if (err instanceof NodeBridgeTaskError) throw err;
+        if (shouldForceNodeBridge()) throw err;
       }
-      const parts: string[] = [];
-      const mainContent = await page.evaluate(() => document.body?.innerText ?? "");
-      parts.push(truncateContent(mainContent, 4000));
-      if (followUpUrls) {
-        for (const followUrl of followUpUrls) {
-          try {
-            const nextUrl = validateHttpUrl(followUrl);
-            await page.goto(nextUrl, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
-            const followContent = await page.evaluate(() => document.body?.innerText ?? "");
-            parts.push(`\n--- ${nextUrl} ---\n${truncateContent(followContent, 4000)}`);
-          } catch (err) {
-            parts.push(`\n--- ${followUrl} ---\nError: ${errorMessage(err)}`);
+    }
+
+    try {
+      return await safeLaunchAndRun(async (page) => {
+        await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
+        for (const action of actions) {
+          switch (action.type) {
+            case "click":
+              await page.click(action.selector, { timeout: 10_000 });
+              break;
+            case "fill":
+              await page.fill(action.selector, action.value, { timeout: 10_000 });
+              break;
+            case "select":
+              await page.selectOption(action.selector, action.value, { timeout: 10_000 });
+              break;
+            case "wait":
+              if (action.selector) {
+                await page.waitForSelector(action.selector, { timeout: action.timeout ?? 10_000 }).catch(() => {});
+              } else {
+                await page.waitForTimeout(action.timeout ?? 3000);
+              }
+              break;
           }
         }
-      }
-      const title = await page.title();
-      return {
-        content: truncateContent(parts.join("\n"), MAX_CONTENT_LENGTH),
-        title,
-        url: page.url(),
-      };
-    });
+        const parts: string[] = [];
+        const mainContent = await page.evaluate(() => document.body?.innerText ?? "");
+        parts.push(truncateContent(mainContent, 4000));
+        if (followUpUrls) {
+          for (const followUrl of followUpUrls) {
+            try {
+              const nextUrl = validateHttpUrl(followUrl);
+              await page.goto(nextUrl, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
+              const followContent = await page.evaluate(() => document.body?.innerText ?? "");
+              parts.push(`\n--- ${nextUrl} ---\n${truncateContent(followContent, 4000)}`);
+            } catch (err) {
+              parts.push(`\n--- ${followUrl} ---\nError: ${errorMessage(err)}`);
+            }
+          }
+        }
+        const title = await page.title();
+        return {
+          content: truncateContent(parts.join("\n"), MAX_CONTENT_LENGTH),
+          title,
+          url: page.url(),
+        };
+      });
+    } catch (err) {
+      if (!shouldUseNodeBridgeForError(err)) throw err;
+      return await runNodeBridgeTask(bridgeTask);
+    }
   } catch (err) {
     return { content: `Error interacting with ${url}: ${errorMessage(err)}`, title: "Error", url };
   }
