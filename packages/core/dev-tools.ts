@@ -8,6 +8,7 @@ export interface DevToolOptions {
   maxFileSize?: number;
   maxSearchResults?: number;
   basePath?: string;
+  getBasePath?: () => string | undefined;
   commandWhitelist?: string[];
 }
 
@@ -42,8 +43,8 @@ function isCommandAllowed(command: string, whitelist?: string[]): boolean {
 export function createDevToolEntries(opts?: DevToolOptions): ToolEntry[] {
   const maxFileSize = opts?.maxFileSize ?? DEFAULT_MAX_FILE_SIZE;
   const maxSearchResults = opts?.maxSearchResults ?? DEFAULT_MAX_SEARCH_RESULTS;
-  const basePath = opts?.basePath;
   const commandWhitelist = opts?.commandWhitelist;
+  const getBasePath = () => opts?.getBasePath?.() ?? opts?.basePath;
 
   const readFile: ToolEntry = {
     name: "read_file",
@@ -60,6 +61,7 @@ export function createDevToolEntries(opts?: DevToolOptions): ToolEntry[] {
       const filePath = params.filePath as string;
       const startLine = (params.startLine as number | undefined) ?? 1;
       const endLine = params.endLine as number | undefined;
+      const basePath = getBasePath();
 
       if (!isPathSafe(filePath, basePath)) {
         return textResult(`Error: Path "${filePath}" is outside the allowed base path.`);
@@ -103,6 +105,7 @@ export function createDevToolEntries(opts?: DevToolOptions): ToolEntry[] {
       const pattern = params.pattern as string;
       const directory = params.directory as string;
       const extensions = params.fileExtensions as string[] | undefined;
+      const basePath = getBasePath();
 
       if (!isPathSafe(directory, basePath)) {
         return textResult(`Error: Directory "${directory}" is outside the allowed base path.`);
@@ -168,6 +171,7 @@ export function createDevToolEntries(opts?: DevToolOptions): ToolEntry[] {
     execute: async (_toolCallId, params) => {
       const directory = params.directory as string;
       const recursive = (params.recursive as boolean) ?? false;
+      const basePath = getBasePath();
 
       if (!isPathSafe(directory, basePath)) {
         return textResult(`Error: Directory "${directory}" is outside the allowed base path.`);
@@ -217,6 +221,7 @@ export function createDevToolEntries(opts?: DevToolOptions): ToolEntry[] {
       const filePath = params.filePath as string;
       const content = params.content as string;
       const createDirs = (params.createDirs as boolean) ?? false;
+      const basePath = getBasePath();
 
       if (!isPathSafe(filePath, basePath)) {
         return textResult(`Error: Path "${filePath}" is outside the allowed base path.`);
@@ -253,6 +258,7 @@ export function createDevToolEntries(opts?: DevToolOptions): ToolEntry[] {
       const oldText = params.oldText as string;
       const newText = params.newText as string;
       const replaceAll = (params.replaceAll as boolean) ?? false;
+      const basePath = getBasePath();
 
       if (!isPathSafe(filePath, basePath)) {
         return textResult(`Error: Path "${filePath}" is outside the allowed base path.`);
@@ -267,7 +273,7 @@ export function createDevToolEntries(opts?: DevToolOptions): ToolEntry[] {
           return textResult(`Error: Text not found in ${filePath}.`);
         }
         if (occurrences > 1 && !replaceAll) {
-          return textResult(`Error: Text is ambiguous — found ${occurrences} occurrences in ${filePath}. Use replaceAll: true to replace all.`);
+          return textResult(`Error: Text is ambiguous - found ${occurrences} occurrences in ${filePath}. Use replaceAll: true to replace all.`);
         }
 
         const updated = replaceAll
@@ -284,29 +290,68 @@ export function createDevToolEntries(opts?: DevToolOptions): ToolEntry[] {
   const runCommand: ToolEntry = {
     name: "run_command",
     source: "local",
-    description: "Execute a whitelisted shell command. Returns stdout, stderr, and exit code.",
+    description: "Execute a whitelisted command. Supports direct command mode and shell mode (powershell/bash); use shell + shellCommand for full shell strings. Returns stdout, stderr, and exit code.",
     parameters: Type.Object({
-      command: Type.String({ description: "Shell command to execute" }),
-      cwd: Type.Optional(Type.String({ description: "Working directory (default: process.cwd())" })),
+      command: Type.Optional(Type.String({ description: "Command to execute in direct mode (tokenized by spaces)." })),
+      shell: Type.Optional(Type.Union([
+        Type.Literal("powershell"),
+        Type.Literal("bash"),
+      ], { description: "Optional shell mode. Use with shellCommand." })),
+      shellCommand: Type.Optional(Type.String({ description: "Command string to execute inside the selected shell." })),
+      cwd: Type.Optional(Type.String({ description: "Working directory (default: active basePath or process.cwd())" })),
       timeout: Type.Optional(Type.Number({ description: "Timeout in ms (default: 30000, max: 120000)" })),
     }),
     defaultPermission: "hitl",
     available: true,
     execute: async (_toolCallId, params) => {
-      const command = params.command as string;
-      const cwd = (params.cwd as string | undefined) ?? process.cwd();
+      const command = params.command as string | undefined;
+      const shell = params.shell as "powershell" | "bash" | undefined;
+      const shellCommand = params.shellCommand as string | undefined;
+      const basePath = getBasePath();
+      const requestedCwd = params.cwd as string | undefined;
+      const cwd = resolve(requestedCwd ?? basePath ?? process.cwd());
       const timeout = Math.min((params.timeout as number | undefined) ?? DEFAULT_TIMEOUT, MAX_TIMEOUT);
 
-      if (SHELL_METACHAR_RE.test(command)) {
-        return textResult(`Error: Command contains shell metacharacter(s) and is rejected for security.`);
+      if (shell && !shellCommand) {
+        return textResult(`Error: shellCommand is required when shell is set.`);
       }
-      if (!isCommandAllowed(command, commandWhitelist)) {
-        return textResult(`Error: Command "${command}" is not allowed. Allowed prefixes: ${(commandWhitelist ?? []).join(", ")}`);
+      if (!shell && !command) {
+        return textResult(`Error: command is required when shell is not set.`);
+      }
+      if (!isPathSafe(cwd, basePath)) {
+        return textResult(`Error: cwd "${cwd}" is outside the allowed base path.`);
       }
 
       try {
         const start = Date.now();
-        const tokens = command.trim().split(/\s+/);
+        let tokens: string[] = [];
+        let requested: string;
+
+        if (shell === "powershell") {
+          const launcherPrefix = "powershell -NoProfile -Command";
+          if (!isCommandAllowed(launcherPrefix, commandWhitelist)) {
+            return textResult(`Error: Shell launcher "${launcherPrefix}" is not allowed. Allowed prefixes: ${(commandWhitelist ?? []).join(", ")}`);
+          }
+          tokens = ["powershell", "-NoProfile", "-Command", shellCommand!];
+          requested = `${launcherPrefix} ${shellCommand!}`;
+        } else if (shell === "bash") {
+          const launcherPrefix = "bash -lc";
+          if (!isCommandAllowed(launcherPrefix, commandWhitelist)) {
+            return textResult(`Error: Shell launcher "${launcherPrefix}" is not allowed. Allowed prefixes: ${(commandWhitelist ?? []).join(", ")}`);
+          }
+          tokens = ["bash", "-lc", shellCommand!];
+          requested = `${launcherPrefix} ${shellCommand!}`;
+        } else {
+          if (SHELL_METACHAR_RE.test(command!)) {
+            return textResult(`Error: Command contains shell metacharacter(s) and is rejected for security.`);
+          }
+          if (!isCommandAllowed(command!, commandWhitelist)) {
+            return textResult(`Error: Command "${command}" is not allowed. Allowed prefixes: ${(commandWhitelist ?? []).join(", ")}`);
+          }
+          tokens = command!.trim().split(/\s+/);
+          requested = command!;
+        }
+
         const proc = Bun.spawn(tokens, { cwd, stdout: "pipe", stderr: "pipe" });
 
         const timer = setTimeout(() => proc.kill(), timeout);
@@ -318,7 +363,14 @@ export function createDevToolEntries(opts?: DevToolOptions): ToolEntry[] {
         clearTimeout(timer);
         const durationMs = Date.now() - start;
 
-        const resultData = { stdout: stdout.slice(0, 8000), stderr: stderr.slice(0, 4000), exitCode, durationMs };
+        const resultData = {
+          mode: shell ? `shell:${shell}` : "direct",
+          requested,
+          stdout: stdout.slice(0, 8000),
+          stderr: stderr.slice(0, 4000),
+          exitCode,
+          durationMs,
+        };
         return textResult(JSON.stringify(resultData, null, 2), resultData);
       } catch (err) {
         return textResult(`Error: ${errorMessage(err)}`);

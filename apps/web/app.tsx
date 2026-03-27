@@ -60,6 +60,8 @@ type ServerMsg =
   | { type: "chat_lifecycle"; chat: unknown }
   | { type: "job_lifecycle"; job: unknown }
   | { type: "hitl_request"; reqId: string; agentId: string; toolName: string; params: Record<string, unknown>; reason: string; timeout: number }
+  | { type: "hitl_resolved"; reqId: string; approved: boolean }
+  | { type: "hitl_expired"; reqId: string; agentId: string; toolName: string; timeout: number }
   | { type: "delegation_start"; runId: string; delegationId: string; fromAgentId: string; toAgentId: string; task: string }
   | { type: "delegation_end"; runId: string; delegationId: string; result: string; durationMs: number; status: "ok" | "error" };
 
@@ -69,7 +71,6 @@ type LocalAction =
   | { type: "set_thread_messages"; messages: ThreadEnvelopeInfo[] }
   | { type: "toggle_trace"; eventId: string }
   | { type: "toggle_delegation"; delegationId: string }
-  | { type: "resolve_hitl_request"; reqId: string }
   | { type: "reset_dithie_state" }
   | { type: "ws_connected" }
   | { type: "ws_disconnected" };
@@ -273,6 +274,13 @@ function reducer(state: State, action: Action): State {
       };
     }
 
+    case "hitl_resolved":
+    case "hitl_expired":
+      return {
+        ...state,
+        hitlQueue: state.hitlQueue.filter((request) => request.reqId !== action.reqId),
+      };
+
     case "send_user_message": {
       const agentId = action.agentId;
       const msg: UIMessage = {
@@ -392,12 +400,6 @@ function reducer(state: State, action: Action): State {
       }
       return { ...state, expandedDelegations: next };
     }
-
-    case "resolve_hitl_request":
-      return {
-        ...state,
-        hitlQueue: state.hitlQueue.filter((request) => request.reqId !== action.reqId),
-      };
 
     case "reset_dithie_state":
       return { ...state, dithieState: "idle" };
@@ -832,6 +834,11 @@ function App() {
     ws.onmessage = (e) => {
       try {
         const payload = JSON.parse(e.data as string) as ServerMsg;
+
+        if (payload.type === "hitl_request" && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "hitl_seen", reqId: payload.reqId }));
+        }
+
         dispatch(payload);
         if (
           payload.type === "chat_lifecycle" ||
@@ -864,10 +871,10 @@ function App() {
 
   const sendHitlResponse = useCallback((reqId: string, approved: boolean) => {
     const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "hitl_response", reqId, approved }));
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return;
     }
-    dispatch({ type: "resolve_hitl_request", reqId });
+    ws.send(JSON.stringify({ type: "hitl_response", reqId, approved }));
   }, []);
 
   useEffect(() => {
