@@ -826,6 +826,7 @@ export class MultiAgentRuntime {
                 {
                     permission,
                     hitlHandler: this.hitlHandler,
+                    hitlTimeout: 5 * 60_000, // 5 minutes timeout for HITL
                     agentId,
                     onHitlStart: () => {
                         if (chatId) this.chatManager.pauseTimeout(chatId);
