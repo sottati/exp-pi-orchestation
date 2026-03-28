@@ -35,7 +35,7 @@ Necesito un snippet en C para imprimir del 1 al 10
 - Contactos internos del `secretary`: libreta local persistida en `.runtime-data/secretary-contacts.json` (listar, leer, buscar, crear, eliminar).
 - Scheduler integrado: cron, one-time, delayed tasks con persistencia JSONL (scheduler tools migrados al agente `secretary`).
 - Prompt compiler: ensamblado de system prompt en 5 capas (base, tools, delegation, rules, examples).
-- Skills layer local: cada agente puede usar `.skills(...)` y el runtime auto-inyecta contexto desde `SKILL.md` en `.agents/skills`/`.claude/skills` según relevancia por turno.
+- Skills layer local: cada agente puede usar `.skills(...)` y el runtime auto-inyecta contexto desde `SKILL.md` en `./skills` según relevancia por turno.
 - Restauración automática de chats y scheduled jobs interrumpidos al reiniciar sesión.
 - CLI interactiva para operar y testear sin UI, con HITL approval prompts.
 - Gate de decisión para saber cuándo pasar a UI/monorepo.
@@ -66,11 +66,11 @@ Hoy, los nueve agentes usan `openrouter/google/gemini-3.1-flash-lite-preview`.
 - [Git](https://git-scm.com/) instalado y disponible en `PATH`
 - Dependencias de Office tools: `exceljs`, `mammoth`, `docx` (instaladas via `bun install`)
 - Google Workspace: `googleapis` (instalada via `bun install`); requiere credenciales OAuth2 (ver sección Google Auth)
-- Explorer web: instalar browser de Playwright con `bunx playwright install chromium`
+- Explorer web: iniciar servicios de soporte con `docker-compose up searxng pi-browse-service -d`
 - Explorer web: requiere salida a internet (DNS + HTTPS) desde el host
-- Explorer web: `chromium.launch` usa timeout de 30s para entornos lentos
-- Explorer web en Bun: requiere `node` en `PATH` para el bridge de Playwright (`browser-node-bridge.mjs`)
-- Explorer web env: `PLAYWRIGHT_NODE_BRIDGE=1` fuerza bridge Node, `PLAYWRIGHT_NODE_BRIDGE=0` lo desactiva (default: auto en Bun).
+- Explorer web: `SEARXNG_URL=http://localhost:8080` (default) y `BROWSE_SERVICE_URL=http://localhost:8001` (default)
+- Explorer web: `OPENROUTER_API_KEY` requerido para `interact_page` (browser-use LLM)
+- Explorer web: `BROWSE_LLM_MODEL` opcional para overridear el modelo LLM de browser-use
 - Para PRs desde agentes: [GitHub CLI (`gh`)](https://cli.github.com/) autenticado (`gh auth login`)
 - Marketing: env var `MARKETING_SHEET_ID` o CredentialStore dominio `"marketing"` con el ID de la hoja de Google Sheets usada por `marketing_keywords`, `marketing_competitors`, `marketing_content_calendar`
 - Graphic designer: env vars `GEMINI_API_KEY`, `CANVA_API_KEY`, `FIGMA_ACCESS_TOKEN` o CredentialStore dominios `"gemini"` (field: `apiKey`), `"canva"` (field: `apiKey`), `"figma"` (field: `accessToken`)
@@ -288,7 +288,7 @@ Cada envelope de hilo incluye metadatos de relación:
 - `packages/core/tools.ts`: tools del orquestador (`list_agents`, `delegate`, `delegate_task`, `get_chat_status`, `get_chat_result`, `close_chat`).
 - `packages/core/agents.ts`: definición de agentes via builder pattern (`defineAgent()`).
 - `packages/core/agent-builder.ts`: builder pattern para declarar agentes (incluye `.skills(...)` para configurar skills locales por agente).
-- `packages/core/skills-layer.ts`: capa de skills locales (`SKILL.md`) con descubrimiento en `.agents/skills`/`.claude/skills`, selección por relevancia por turno y anexado controlado al prompt.
+- `packages/core/skills-layer.ts`: capa de skills locales (`SKILL.md`) con descubrimiento en `./skills`, selección por relevancia por turno y anexado controlado al prompt.
 - `packages/core/tool-registry.ts`: registro y resolución de tools con glob patterns, ciclo de vida MCP.
 - `packages/core/tool-middleware.ts`: `wrapTool` con permisos, HITL approval y hooks.
 - `packages/core/prompt-compiler.ts`: compilador de system prompt en 5 capas.
@@ -296,9 +296,8 @@ Cada envelope de hilo incluye metadatos de relación:
 - `packages/core/scheduler.ts`: cron parser, timer basado en setTimeout, persistencia JSONL.
 - `packages/core/scheduler-tools.ts`: tools de scheduling (`schedule_task`, `list_scheduled_jobs`, `cancel_scheduled_job`).
 - `packages/core/mcp-client.ts`: interfaz `McpConnector` para servidores de tools externos.
-- `packages/core/browser.ts`: `browseUrl`/`interactWithPage` con Playwright (espera de hidratación SPA + snapshot DOM con texto/forms/inputs/buttons e iframes + fallback heurístico de selectores para `click`/`fill`/`select`) y `searchWeb` con fetch+parse de DuckDuckGo HTML.
-- `packages/core/browser-node-bridge.mjs`: bridge ejecutado con `node` para operaciones Playwright cuando el runtime corre en Bun.
-- `packages/core/explorer-tools.ts`: tool entries del explorer (`browse_url`, `search_web`, `interact_page`).
+- `packages/core/browser.ts`: `browseUrl` llama al microservicio Python (Crawl4AI); `searchWeb` llama directamente a SearXNG REST API; `interactWithPage` llama al microservicio Python (browser-use LLM-driven automation).
+- `packages/core/explorer-tools.ts`: tool entries del explorer (`browse_url`, `search_web`, `interact_page`); `interact_page` usa parámetro `task` en lenguaje natural — browser-use decide las acciones de forma autónoma; soporta placeholders `{{credential:fieldname}}` en el task string.
 - `packages/core/credential-tools.ts`: tool entry `request_credentials` para solicitar credenciales por HITL y guardarlas en `CredentialStore`.
 - `packages/core/analyst-tools.ts`: tool entries del data analyst (`query_sqlite`, `query_supabase`, `parse_csv`, `analyze_data`).
 - `packages/core/office-tools.ts`: tool entries de Office — `read_excel`, `write_excel` (exceljs) para math/analyst; `read_docx`, `write_docx` (mammoth + docx) para writer.
@@ -335,7 +334,7 @@ const agent = defineAgent("myAgent")
   .systemPrompt("You are a helpful agent.")
   .capabilities(["cap1", "cap2"])
   .tools(["tool1", "tool2"])
-  .skills({ enabled: true, roots: [".agents/skills"] })
+  .skills({ enabled: true, roots: ["skills"] })
   .permissions({ "tool1": "allow" })
   .maxConcurrency(1)
   .build();

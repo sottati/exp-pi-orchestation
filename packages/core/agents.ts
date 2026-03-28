@@ -41,7 +41,7 @@ export function createAgentDefinitions(opts?: {
 }): AgentDefinition[] {
   const agentSkillsConfig: AgentSkillsConfig = opts?.skills ?? {
     enabled: true,
-    roots: [".agents/skills", ".claude/skills"],
+    roots: ["skills"],
     maxSkillsPerTurn: 2,
     maxCharsPerSkill: 3_500,
     maxTotalChars: 7_000,
@@ -199,9 +199,9 @@ export function createAgentDefinitions(opts?: {
       "Web tools:",
       "- browse_url: Fetch and extract readable content from a URL. Returns markdown.",
       "- search_web: Search the web for a query. Returns titles, URLs, and snippets.",
-      "- interact_page: Navigate to a URL and perform actions (click, fill, select, wait).",
-      "  Supports followUpUrls to navigate after actions (e.g., login then browse).",
-      "  Credentials can be auto-injected using {{credential:username}} and {{credential:password}} placeholders.",
+      "- interact_page: Autonomously interact with a web page using a natural language task.",
+      "  Describe what to accomplish (e.g., 'log in and navigate to reports'), browser-use handles the execution.",
+      "  Credentials can be injected using {{credential:username}} and {{credential:password}} placeholders.",
       "",
       "Google Drive tools:",
       "- drive_list: List files in Google Drive. Filter by folder or query.",

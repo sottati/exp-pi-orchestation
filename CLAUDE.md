@@ -121,7 +121,7 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Tools: `packages/core/tools.ts`
 - Agents: `packages/core/agents.ts` (agent definitions via builder pattern)
 - Agent builder: `packages/core/agent-builder.ts` (`defineAgent().name().model().tools().skills(...).build()`)
-- Skills layer: `packages/core/skills-layer.ts` (loads local `SKILL.md` files from `.agents/skills` / `.claude/skills`, picks relevant skills per turn, and appends bounded context to prompts)
+- Skills layer: `packages/core/skills-layer.ts` (loads local `SKILL.md` files from `./skills`, picks relevant skills per turn, and appends bounded context to prompts)
 - Tool registry: `packages/core/tool-registry.ts` (register/resolve tools with glob patterns, MCP lifecycle)
 - Tool middleware: `packages/core/tool-middleware.ts` (`wrapTool` with permission check, HITL approval, hooks)
 - Prompt compiler: `packages/core/prompt-compiler.ts` (5-layer system prompt assembly)
@@ -129,9 +129,8 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Scheduler: `packages/core/scheduler.ts` (cron parser, setTimeout-based timer, JSONL persistence)
 - Scheduler tools: `packages/core/scheduler-tools.ts` (`schedule_task`, `list_scheduled_jobs`, `cancel_scheduled_job`)
 - MCP client: `packages/core/mcp-client.ts` (`McpConnector` interface for external tool servers)
-- Browser wrapper: `packages/core/browser.ts` (`browseUrl`/`interactWithPage` use Playwright with SPA hydration waits + DOM snapshots including forms/inputs/buttons/iframes + heuristic selector fallback for `click`/`fill`/`select`; `searchWeb` uses DuckDuckGo HTML fetch+parse; includes launch/operation timeouts, temporary failure cooldown, and Bun→Node fallback bridge for Playwright launches)
-- Browser Node bridge: `packages/core/browser-node-bridge.mjs` (runs Playwright under `node` when Bun runtime cannot establish Chromium connection)
-- Explorer tools: `packages/core/explorer-tools.ts` (`browse_url`, `search_web`, `interact_page` tool entries)
+- Browser wrapper: `packages/core/browser.ts` (`browseUrl` calls Python microservice → Crawl4AI; `searchWeb` calls SearXNG REST API directly; `interactWithPage` calls Python microservice → browser-use LLM-driven automation)
+- Explorer tools: `packages/core/explorer-tools.ts` (`browse_url`, `search_web`, `interact_page` tool entries; `interact_page` uses natural language `task` parameter — browser-use decides actions autonomously; supports `{{credential:fieldname}}` placeholders in task string)
 - Credential store: `packages/core/credential-store.ts` (AES-256-GCM encrypted credential storage)
 - Credential tools: `packages/core/credential-tools.ts` (`request_credentials` asks user for keys via HITL and stores them encrypted by domain)
 - Analyst tools: `packages/core/analyst-tools.ts` (`query_sqlite`, `query_supabase`, `parse_csv`, `analyze_data` tool entries)
@@ -197,11 +196,15 @@ Use these project scripts:
 
 Explorer prerequisite:
 
-- Install Playwright browser binary once: `bunx playwright install chromium`
-- Ensure outbound internet access (DNS + HTTPS) is available for web tools
-- Browser launch timeout is set to 30s for slower environments
-- When running runtime with Bun, ensure `node` is in `PATH` for Playwright bridge fallback
-- Env override: `PLAYWRIGHT_NODE_BRIDGE=1` force Node bridge, `PLAYWRIGHT_NODE_BRIDGE=0` disable it
+- Start supporting services before running explorer agent or smoke test:
+  - `docker-compose up searxng pi-browse-service -d`
+  - Or run SearXNG manually: `docker run -p 8080:8080 -v ./services/searxng:/etc/searxng searxng/searxng:latest`
+  - Or run Python service manually: `cd services/browse-service && uvicorn main:app --port 8001`
+- Set env vars for local dev (no Docker):
+  - `SEARXNG_URL=http://localhost:8080` (default)
+  - `BROWSE_SERVICE_URL=http://localhost:8001` (default)
+- Python service requires `OPENROUTER_API_KEY` for `interact_page` (browser-use LLM)
+- `BROWSE_LLM_MODEL` overrides the LLM model used by browser-use (default: `openrouter/google/gemini-3.1-flash-lite-preview`)
 
 Marketing prerequisite:
 
@@ -302,7 +305,7 @@ const agent = defineAgent("myAgent")
   .systemPrompt("You are a helpful agent.")
   .capabilities(["cap1", "cap2"])
   .tools(["tool1", "tool2"])         // tool refs resolved from ToolRegistry
-  .skills({ enabled: true, roots: [".agents/skills"] }) // optional local skill layer
+  .skills({ enabled: true, roots: ["skills"] }) // optional local skill layer
   .permissions({ "tool1": "allow" }) // per-tool permission overrides
   .maxConcurrency(1)
   .build();
