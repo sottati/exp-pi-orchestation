@@ -120,7 +120,8 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Runtime: `packages/core/runtime.ts`
 - Tools: `packages/core/tools.ts`
 - Agents: `packages/core/agents.ts` (agent definitions via builder pattern)
-- Agent builder: `packages/core/agent-builder.ts` (`defineAgent().name().model().tools().build()`)
+- Agent builder: `packages/core/agent-builder.ts` (`defineAgent().name().model().tools().skills(...).build()`)
+- Skills layer: `packages/core/skills-layer.ts` (loads local `SKILL.md` files from `.agents/skills` / `.claude/skills`, picks relevant skills per turn, and appends bounded context to prompts)
 - Tool registry: `packages/core/tool-registry.ts` (register/resolve tools with glob patterns, MCP lifecycle)
 - Tool middleware: `packages/core/tool-middleware.ts` (`wrapTool` with permission check, HITL approval, hooks)
 - Prompt compiler: `packages/core/prompt-compiler.ts` (5-layer system prompt assembly)
@@ -171,6 +172,7 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Runtime defaults to unrestricted filesystem roots for workspace registration; set `WORKSPACE_ALLOWED_ROOTS` to enforce path limits.
 - User→orchestrator turns wait for delegated chats created in that run to close before final reply.
 - Delegated chat timeout defaults to 180s; `explorer`, `web-designer`, and `marketing` delegations use 300s.
+- Runtime can augment any agent prompt with local skills context (`SKILL.md`) when available.
 - Delay UI work until `ui:gate` indicates clear operational friction.
 - Math specialist defaults to short result-only replies unless user asks for steps.
 
@@ -300,6 +302,7 @@ const agent = defineAgent("myAgent")
   .systemPrompt("You are a helpful agent.")
   .capabilities(["cap1", "cap2"])
   .tools(["tool1", "tool2"])         // tool refs resolved from ToolRegistry
+  .skills({ enabled: true, roots: [".agents/skills"] }) // optional local skill layer
   .permissions({ "tool1": "allow" }) // per-tool permission overrides
   .maxConcurrency(1)
   .build();

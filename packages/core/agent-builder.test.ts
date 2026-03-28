@@ -123,4 +123,23 @@ describe("defineAgent builder", () => {
 
     expect(def.scheduleConfig).toBeUndefined();
   });
+
+  test("skills config can be set", () => {
+    const def = defineAgent("skills-agent")
+      .name("Skills Agent")
+      .role("Uses local skills.")
+      .model("openrouter", "x")
+      .systemPrompt("You can use skills.")
+      .skills({
+        enabled: true,
+        roots: [".agents/skills"],
+        maxSkillsPerTurn: 2,
+      })
+      .build();
+
+    expect(def.skillsConfig).toBeDefined();
+    expect(def.skillsConfig?.enabled).toBe(true);
+    expect(def.skillsConfig?.roots).toEqual([".agents/skills"]);
+    expect(def.skillsConfig?.maxSkillsPerTurn).toBe(2);
+  });
 });

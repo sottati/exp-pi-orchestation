@@ -12,7 +12,7 @@ import { ChatManager } from "./chat-manager";
 import { ThreadStore } from "./thread-store";
 import { createOrchestratorTools, createOrchestratorToolEntries, type SpecialistRegistry } from "./tools";
 import { ToolRegistry } from "./tool-registry";
-import { type AgentDefinition } from "./agent-builder";
+import { type AgentDefinition, type AgentSkillsConfig } from "./agent-builder";
 import { type HITLHandler, wrapTool, resolvePermission } from "./tool-middleware";
 import { compileSystemPrompt } from "./prompt-compiler";
 import { Scheduler } from "./scheduler";
@@ -20,6 +20,7 @@ import { createSchedulerToolEntries } from "./scheduler-tools";
 import { CredentialStore } from "./credential-store";
 import { WorkspaceManager } from "./workspace-manager";
 import { delimiter, join } from "node:path";
+import { buildSkillContextSection } from "./skills-layer";
 
 interface RouteMessageInput {
     fromAgentId: BaseAgentId;
@@ -37,6 +38,13 @@ interface RouteMessageOutput {
     answer: string;
     durationMs: number;
     threadId: string;
+}
+
+interface PreparedAgent {
+    agent: Agent;
+    selectedSkills: string[];
+    availableSkills: number;
+    skillErrors: string[];
 }
 
 export interface ChatInspectionSummary {
@@ -231,6 +239,7 @@ export interface RuntimeOptions {
     orgId?: string;
     dataDir?: string;
     agents?: AgentDefinition[];
+    agentSkills?: AgentSkillsConfig;
     orchestratorIds?: string[];
     hitlHandler?: HITLHandler;
     schedules?: Array<{ id: string; cron: string; agentId: string; task: string }>;
@@ -300,6 +309,7 @@ export class MultiAgentRuntime {
             credentialStore: this.credentialStore,
             workspaceManager: this.workspaceManager,
             orchestratorIds: options.orchestratorIds,
+            skills: options.agentSkills,
         };
 
         // Agent definitions
@@ -838,34 +848,57 @@ export class MultiAgentRuntime {
         });
     }
 
-    private createAgentForRoute(toAgentId: string, runContext: RunContext, chatId?: string): Agent {
+    private async createAgentForRoute(
+        toAgentId: string,
+        userInput: string,
+        runContext: RunContext,
+        chatId?: string,
+    ): Promise<PreparedAgent> {
         const def = this.agentDefs.get(toAgentId);
         if (!def) throw new Error(`Agent '${toAgentId}' is not registered.`);
 
         // Resolve localTools → AgentTool[] with middleware (permissions, HITL)
         const localTools = this.resolveWrappedLocalTools(def, toAgentId, runContext, chatId);
+        let resolvedTools = localTools;
 
         if (isOrchestratorAgentId(toAgentId)) {
             const orchTools = this.createOrchestratorToolsForRun(runContext, toAgentId);
-            const orchestratorTools = [...orchTools, ...localTools];
-            const systemPrompt = compileSystemPrompt(def, orchestratorTools);
-            return def.createAgent(orchestratorTools, systemPrompt);
+            resolvedTools = [...orchTools, ...localTools];
         }
 
         // Inject scheduler tools into the secretary agent
         if (toAgentId === "secretary") {
             const schedulerCaller = runContext.orchestratorId ?? this.primaryOrchestratorId;
             const schedulerTools = this.createSchedulerToolsForRun(schedulerCaller);
-            localTools.push(...schedulerTools);
+            resolvedTools = [...resolvedTools, ...schedulerTools];
         }
 
-        const systemPrompt = compileSystemPrompt(def, localTools);
-        return def.createAgent(localTools, systemPrompt);
+        const basePrompt = compileSystemPrompt(def, resolvedTools);
+        const skillContext = await buildSkillContextSection({
+            userInput,
+            config: def.skillsConfig,
+        });
+        const systemPrompt = skillContext.section
+            ? `${basePrompt}\n\n${skillContext.section}`
+            : basePrompt;
+        const agent = def.createAgent(resolvedTools, systemPrompt);
+        return {
+            agent,
+            selectedSkills: skillContext.selectedSkills,
+            availableSkills: skillContext.availableSkills,
+            skillErrors: skillContext.errors,
+        };
     }
 
     private async routeMessage(input: RouteMessageInput): Promise<RouteMessageOutput> {
         const startedAt = now();
-        const agent = this.createAgentForRoute(input.toAgentId, input.runContext, input.chatId);
+        const preparedAgent = await this.createAgentForRoute(
+            input.toAgentId,
+            input.content,
+            input.runContext,
+            input.chatId,
+        );
+        const agent = preparedAgent.agent;
 
         const threadId = createThreadId(this.sessionId, input.fromAgentId, input.toAgentId);
         const history = await this.store.getThreadMessages(threadId);
@@ -975,6 +1008,9 @@ export class MultiAgentRuntime {
                 channel: input.runContext.channel,
                 contact: input.runContext.contact,
                 orchestratorId: input.runContext.orchestratorId,
+                selectedSkills: preparedAgent.selectedSkills,
+                availableSkills: preparedAgent.availableSkills,
+                skillErrors: preparedAgent.skillErrors.length > 0 ? preparedAgent.skillErrors : undefined,
                 ...(input.metadata ?? {}),
             },
         });

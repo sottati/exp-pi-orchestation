@@ -4,6 +4,14 @@ import { errorMessage } from "./errors";
 import type { Permission, ScheduledJob } from "./contracts";
 import type { ToolEntry } from "./tool-registry";
 
+export interface AgentSkillsConfig {
+  enabled?: boolean;
+  roots?: string[];
+  maxSkillsPerTurn?: number;
+  maxCharsPerSkill?: number;
+  maxTotalChars?: number;
+}
+
 export interface AgentModelConfig {
   provider: string;
   modelId: string;
@@ -34,6 +42,7 @@ export interface AgentDefinition {
   toolRefs: string[];
   localTools?: ToolEntry[];
   delegationRules: { targets: string[]; maxDepth: number } | null;
+  skillsConfig?: AgentSkillsConfig;
   permissions: Record<string, Permission>;
   hooks: AgentHooks;
   maxConcurrency: number;
@@ -55,6 +64,7 @@ class AgentBuilder {
   private _mcpToolRefs: string[] = [];
   private _localTools: ToolEntry[] = [];
   private _delegationRules: { targets: string[]; maxDepth: number } | null = null;
+  private _skillsConfig?: AgentSkillsConfig;
   private _permissions: Record<string, Permission> = {};
   private _hooks: AgentHooks = {};
   private _maxConcurrency: number = 1;
@@ -117,6 +127,11 @@ class AgentBuilder {
 
   canDelegateTo(targets: string[], opts: { maxDepth?: number } = {}): this {
     this._delegationRules = { targets, maxDepth: opts.maxDepth ?? 1 };
+    return this;
+  }
+
+  skills(value: AgentSkillsConfig): this {
+    this._skillsConfig = value;
     return this;
   }
 
@@ -187,6 +202,7 @@ class AgentBuilder {
       toolRefs: [...this._toolRefs, ...this._mcpToolRefs],
       localTools: this._localTools.length > 0 ? this._localTools : undefined,
       delegationRules: this._delegationRules,
+      skillsConfig: this._skillsConfig,
       permissions: this._permissions,
       hooks: this._hooks,
       maxConcurrency: this._maxConcurrency,

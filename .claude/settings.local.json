@@ -14,7 +14,8 @@
       "Bash(git commit:*)",
       "Bash(git stash:*)",
       "Bash(__NEW_LINE_c99ba6c28a446727__ echo:*)",
-      "Bash(grep -A 5 'if \\(name === \"\"\"\"graphic-designer\"\"\"\"\\)' packages/core/runtime.ts)"
+      "Bash(grep -A 5 'if \\(name === \"\"\"\"graphic-designer\"\"\"\"\\)' packages/core/runtime.ts)",
+      "Bash(ls packages/core/*.test.ts)"
     ],
     "additionalDirectories": [
       "c:\\Users\\gerog\\source\\exp-pi-orchestation\\.worktrees\\extensible-agents\\docs\\superpowers",

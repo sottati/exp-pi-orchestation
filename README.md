@@ -35,6 +35,7 @@ Necesito un snippet en C para imprimir del 1 al 10
 - Contactos internos del `secretary`: libreta local persistida en `.runtime-data/secretary-contacts.json` (listar, leer, buscar, crear, eliminar).
 - Scheduler integrado: cron, one-time, delayed tasks con persistencia JSONL (scheduler tools migrados al agente `secretary`).
 - Prompt compiler: ensamblado de system prompt en 5 capas (base, tools, delegation, rules, examples).
+- Skills layer local: cada agente puede usar `.skills(...)` y el runtime auto-inyecta contexto desde `SKILL.md` en `.agents/skills`/`.claude/skills` según relevancia por turno.
 - Restauración automática de chats y scheduled jobs interrumpidos al reiniciar sesión.
 - CLI interactiva para operar y testear sin UI, con HITL approval prompts.
 - Gate de decisión para saber cuándo pasar a UI/monorepo.
@@ -286,7 +287,8 @@ Cada envelope de hilo incluye metadatos de relación:
 - `packages/core/runtime.ts`: runtime multiagente, enrutado de mensajes, correlación de IDs y trazas.
 - `packages/core/tools.ts`: tools del orquestador (`list_agents`, `delegate`, `delegate_task`, `get_chat_status`, `get_chat_result`, `close_chat`).
 - `packages/core/agents.ts`: definición de agentes via builder pattern (`defineAgent()`).
-- `packages/core/agent-builder.ts`: builder pattern para declarar agentes.
+- `packages/core/agent-builder.ts`: builder pattern para declarar agentes (incluye `.skills(...)` para configurar skills locales por agente).
+- `packages/core/skills-layer.ts`: capa de skills locales (`SKILL.md`) con descubrimiento en `.agents/skills`/`.claude/skills`, selección por relevancia por turno y anexado controlado al prompt.
 - `packages/core/tool-registry.ts`: registro y resolución de tools con glob patterns, ciclo de vida MCP.
 - `packages/core/tool-middleware.ts`: `wrapTool` con permisos, HITL approval y hooks.
 - `packages/core/prompt-compiler.ts`: compilador de system prompt en 5 capas.
@@ -333,6 +335,7 @@ const agent = defineAgent("myAgent")
   .systemPrompt("You are a helpful agent.")
   .capabilities(["cap1", "cap2"])
   .tools(["tool1", "tool2"])
+  .skills({ enabled: true, roots: [".agents/skills"] })
   .permissions({ "tool1": "allow" })
   .maxConcurrency(1)
   .build();

@@ -67,6 +67,15 @@ describe("Agent definitions v2", () => {
     expect(math.maxConcurrency).toBe(1);
   });
 
+  test("all agents get default skills config", () => {
+    const defs = createAgentDefinitions();
+    for (const def of defs) {
+      expect(def.skillsConfig).toBeDefined();
+      expect(def.skillsConfig?.enabled).toBe(true);
+      expect(def.skillsConfig?.roots).toEqual([".agents/skills", ".claude/skills"]);
+    }
+  });
+
   test("code specialist has maxConcurrency 1", () => {
     const defs = createAgentDefinitions();
     const code = defs.find((d) => d.id === "code")!;

@@ -1,4 +1,4 @@
-import { defineAgent, type AgentDefinition } from "./agent-builder";
+import { defineAgent, type AgentDefinition, type AgentSkillsConfig } from "./agent-builder";
 import type { CredentialStore } from "./credential-store";
 import { createExplorerToolEntries } from "./explorer-tools";
 import { createAnalystToolEntries } from "./analyst-tools";
@@ -37,7 +37,17 @@ export function createAgentDefinitions(opts?: {
   credentialStore?: CredentialStore;
   workspaceManager?: WorkspaceManager;
   orchestratorIds?: string[];
+  skills?: AgentSkillsConfig;
 }): AgentDefinition[] {
+  const agentSkillsConfig: AgentSkillsConfig = opts?.skills ?? {
+    enabled: true,
+    roots: [".agents/skills", ".claude/skills"],
+    maxSkillsPerTurn: 2,
+    maxCharsPerSkill: 3_500,
+    maxTotalChars: 7_000,
+  };
+  const withSkills = (builder: ReturnType<typeof defineAgent>) => builder.skills(agentSkillsConfig);
+
   const workspaceManager = opts?.workspaceManager;
   const getWorkspaceBasePath = () => workspaceManager?.getActiveWorkspacePath();
   const workspaceToolEntries = workspaceManager
@@ -56,7 +66,7 @@ export function createAgentDefinitions(opts?: {
   });
   const normalizedOrchestratorIds = [...new Set((opts?.orchestratorIds ?? [ORCHESTRATOR_ID]).map((id) => makeOrchestratorAgentId(id)))];
 
-  const orchestrators = normalizedOrchestratorIds.map((agentId) => defineAgent(agentId)
+  const orchestrators = normalizedOrchestratorIds.map((agentId) => withSkills(defineAgent(agentId))
     .name(agentId === ORCHESTRATOR_ID ? "Orchestrator" : `Orchestrator (${agentId.slice((ORCHESTRATOR_ID + ":").length)})`)
     .role("Routes and delegates tasks to specialists.")
     .model("openrouter", "google/gemini-3-flash-preview")
@@ -94,7 +104,7 @@ export function createAgentDefinitions(opts?: {
     .maxConcurrency(Infinity)
     .build());
 
-  const code = defineAgent("code")
+  const code = withSkills(defineAgent("code"))
     .name("Code Specialist")
     .role("Creates, edits, and debugs backend code.")
     .model("openrouter", "google/gemini-3.1-flash-lite-preview")
@@ -142,7 +152,7 @@ export function createAgentDefinitions(opts?: {
   const excelTools = createExcelToolEntries();
   const gSheetsTools = createGoogleSheetsToolEntries({ credentialStore: opts?.credentialStore });
 
-  const math = defineAgent("math")
+  const math = withSkills(defineAgent("math"))
     .name("Math & Data Analyst")
     .role("Solves arithmetic, analyzes data from CSV, Excel, Google Sheets, SQLite, and Supabase.")
     .model("openrouter", "google/gemini-3.1-flash-lite-preview")
@@ -179,7 +189,7 @@ export function createAgentDefinitions(opts?: {
   });
   const gDriveTools = createGoogleDriveToolEntries({ credentialStore: opts?.credentialStore });
 
-  const explorer = defineAgent("explorer")
+  const explorer = withSkills(defineAgent("explorer"))
     .name("Web Explorer")
     .role("Retrieves information from the web and Google Drive via browsing, searching, and file access.")
     .model("openrouter", "google/gemini-3.1-flash-lite-preview")
@@ -216,7 +226,7 @@ export function createAgentDefinitions(opts?: {
   const gDocsTools = createGoogleDocsToolEntries({ credentialStore: opts?.credentialStore });
   const gmailWriteTools = createGmailWriteToolEntries({ credentialStore: opts?.credentialStore });
 
-  const writer = defineAgent("writer")
+  const writer = withSkills(defineAgent("writer"))
     .name("Writer")
     .role("Drafts documents, summaries, translations, Word/Google Docs files, and sends emails via Gmail.")
     .model("openrouter", "google/gemini-3.1-flash-lite-preview")
@@ -259,7 +269,7 @@ export function createAgentDefinitions(opts?: {
 
   const debuggerTools = createDebuggerToolEntries();
 
-  const debugger_ = defineAgent("debugger")
+  const debugger_ = withSkills(defineAgent("debugger"))
     .name("Debugger & Reviewer")
     .role("Reviews code, debugs errors, analyzes stack traces, and identifies security issues.")
     .model("openrouter", "google/gemini-3.1-flash-lite-preview")
@@ -308,7 +318,7 @@ export function createAgentDefinitions(opts?: {
   const contactsTools = createLocalContactsToolEntries();
   const tasksTools = createGoogleTasksToolEntries({ credentialStore: opts?.credentialStore });
 
-  const secretary = defineAgent("secretary")
+  const secretary = withSkills(defineAgent("secretary"))
     .name("Secretary")
     .role("Personal assistant: manages calendar, reads/summarizes emails, contacts, tasks, and scheduling (cron jobs, reminders).")
     .model("openrouter", "google/gemini-3.1-flash-lite-preview")
@@ -384,7 +394,7 @@ export function createAgentDefinitions(opts?: {
   });
   const browseUrlEntry = explorerToolsForDesigner.filter(t => t.name === "browse_url");
 
-  const webDesigner = defineAgent("web-designer")
+  const webDesigner = withSkills(defineAgent("web-designer"))
     .name("Web Designer & Frontend Dev")
     .role("Designs and builds frontend interfaces — HTML, CSS, React/TSX, Tailwind. "
       + "Reads/writes project files, previews in browser, validates accessibility. "
@@ -444,7 +454,7 @@ export function createAgentDefinitions(opts?: {
   const browseUrlForMarketing = explorerToolsForMarketing.filter(t => t.name === "browse_url");
   const marketingToolEntries = createMarketingToolEntries({ credentialStore: opts?.credentialStore });
 
-  const marketing = defineAgent("marketing")
+  const marketing = withSkills(defineAgent("marketing"))
     .name("Marketing")
     .role("SEO & growth strategist — keyword research, competitor analysis, on-page audits, content strategy via Google Sheets.")
     .model("openrouter", "google/gemini-3.1-flash-lite-preview")
@@ -504,7 +514,7 @@ export function createAgentDefinitions(opts?: {
     credentialStore: opts?.credentialStore,
   });
 
-  const graphicDesigner = defineAgent("graphic-designer")
+  const graphicDesigner = withSkills(defineAgent("graphic-designer"))
     .name("Graphic Designer")
     .role(
       "Visual creative: generates images with Gemini ImageGen, creates Canva designs, reads and exports Figma assets.",
@@ -578,6 +588,7 @@ export function createSpecialistRegistry(opts?: {
   credentialStore?: CredentialStore;
   workspaceManager?: WorkspaceManager;
   orchestratorIds?: string[];
+  skills?: AgentSkillsConfig;
 }): SpecialistRegistry {
   const defs = createAgentDefinitions(opts);
   const registry: SpecialistRegistry = {};
@@ -600,6 +611,7 @@ export function createOrchestratorAgent(tools: AgentTool<any>[] = [], opts?: {
   credentialStore?: CredentialStore;
   workspaceManager?: WorkspaceManager;
   orchestratorIds?: string[];
+  skills?: AgentSkillsConfig;
   orchestratorId?: string;
 }) {
   const defs = createAgentDefinitions(opts);
