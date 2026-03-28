@@ -132,14 +132,14 @@ describe("defineAgent builder", () => {
       .systemPrompt("You can use skills.")
       .skills({
         enabled: true,
-        roots: [".agents/skills"],
+        roots: ["skills"],
         maxSkillsPerTurn: 2,
       })
       .build();
 
     expect(def.skillsConfig).toBeDefined();
     expect(def.skillsConfig?.enabled).toBe(true);
-    expect(def.skillsConfig?.roots).toEqual([".agents/skills"]);
+    expect(def.skillsConfig?.roots).toEqual(["skills"]);
     expect(def.skillsConfig?.maxSkillsPerTurn).toBe(2);
   });
 });

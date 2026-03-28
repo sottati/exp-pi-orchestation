@@ -72,7 +72,7 @@ describe("Agent definitions v2", () => {
     for (const def of defs) {
       expect(def.skillsConfig).toBeDefined();
       expect(def.skillsConfig?.enabled).toBe(true);
-      expect(def.skillsConfig?.roots).toEqual([".agents/skills", ".claude/skills"]);
+      expect(def.skillsConfig?.roots).toEqual(["skills"]);
     }
   });
 

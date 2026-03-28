@@ -5,7 +5,7 @@ import { errorMessage } from "./errors";
 
 const SKILL_FILE_NAME = "SKILL.md";
 const SKILL_CACHE_TTL_MS = 10_000;
-const DEFAULT_SKILL_ROOTS = [".agents/skills", ".claude/skills"];
+const DEFAULT_SKILL_ROOTS = ["skills"];
 const DEFAULT_MAX_SKILLS_PER_TURN = 2;
 const DEFAULT_MAX_CHARS_PER_SKILL = 3_500;
 const DEFAULT_MAX_TOTAL_CHARS = 7_000;

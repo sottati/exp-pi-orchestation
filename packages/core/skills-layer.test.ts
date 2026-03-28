@@ -18,7 +18,7 @@ async function writeSkill(
   description: string,
   body: string,
 ): Promise<void> {
-  const skillDir = join(cwd, ".agents", "skills", skillName);
+  const skillDir = join(cwd, "skills", skillName);
   await mkdir(skillDir, { recursive: true });
   const content = [
     "---",
@@ -60,7 +60,7 @@ describe("skills-layer", () => {
       userInput: "Necesito mejorar el copywriting de mi landing page",
       config: {
         enabled: true,
-        roots: [".agents/skills"],
+        roots: ["skills"],
         maxSkillsPerTurn: 2,
         maxCharsPerSkill: 1_500,
         maxTotalChars: 2_500,
@@ -87,7 +87,7 @@ describe("skills-layer", () => {
       userInput: "quiero ayuda con copywriting",
       config: {
         enabled: false,
-        roots: [".agents/skills"],
+        roots: ["skills"],
       },
     });
 
@@ -115,7 +115,7 @@ describe("skills-layer", () => {
       userInput: "quiero mejorar copywriting y page cro",
       config: {
         enabled: true,
-        roots: [".agents/skills"],
+        roots: ["skills"],
         maxSkillsPerTurn: 1,
       },
     });
@@ -123,4 +123,3 @@ describe("skills-layer", () => {
     expect(result.selectedSkills.length).toBe(1);
   });
 });
-
