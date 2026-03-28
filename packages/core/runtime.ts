@@ -1,5 +1,10 @@
 import type { Agent, AgentEvent, AgentMessage, AgentTool } from "@mariozechner/pi-agent-core";
-import { createSpecialistRegistry, createAgentDefinitions, ORCHESTRATOR_ID } from "./agents";
+import {
+    createSpecialistRegistry,
+    createAgentDefinitions,
+    ORCHESTRATOR_ID,
+    isOrchestratorAgentId,
+} from "./agents";
 import type { AgentChat, BaseAgentId, Initiator, RunContext, ThreadEnvelope, TraceEvent } from "./contracts";
 import { errorMessage } from "./errors";
 import { createId, now } from "./ids";
@@ -14,7 +19,7 @@ import { Scheduler } from "./scheduler";
 import { createSchedulerToolEntries } from "./scheduler-tools";
 import { CredentialStore } from "./credential-store";
 import { WorkspaceManager } from "./workspace-manager";
-import { delimiter } from "node:path";
+import { delimiter, join } from "node:path";
 
 interface RouteMessageInput {
     fromAgentId: BaseAgentId;
@@ -22,6 +27,7 @@ interface RouteMessageInput {
     content: string;
     initiator: Initiator;
     runContext: RunContext;
+    metadata?: Record<string, unknown>;
     chatId?: string;
     toolCallId?: string;
     onAgentEvent?: (event: AgentEvent) => void;
@@ -53,6 +59,11 @@ export interface ChatInput {
     toAgentId: string;
     content: string;
     fromAgentId?: BaseAgentId;
+    initiator?: Initiator;
+    metadata?: Record<string, unknown>;
+    channel?: RunContext["channel"];
+    contact?: string;
+    orchestratorId?: string;
     onAgentEvent?: (event: AgentEvent) => void;
 }
 
@@ -104,6 +115,22 @@ function isChatStatusText(text: string): boolean {
         normalized.startsWith("chat started with ") ||
         normalized.startsWith("chat queued for ") ||
         normalized.includes(" not found")
+    );
+}
+
+function isDelegationPlaceholderText(text: string): boolean {
+    const normalized = text.trim().toLowerCase();
+    if (!normalized) return true;
+    return (
+        isChatStatusText(text) ||
+        normalized.includes("chatid=") ||
+        normalized.includes("delegate") ||
+        normalized.includes("delegat") ||
+        normalized.includes("delego") ||
+        normalized.includes("delegué") ||
+        normalized.includes("en cola") ||
+        normalized.includes("queued") ||
+        normalized.includes("te aviso")
     );
 }
 
@@ -186,8 +213,13 @@ export function extractLastAssistantText(messages: AgentMessage[]): string {
 
 function resolveInitiator(fromAgentId: BaseAgentId): Initiator {
     if (fromAgentId === "user") return "user";
-    if (fromAgentId === ORCHESTRATOR_ID) return "orchestrator";
+    if (fromAgentId.startsWith("external:")) return "external";
+    if (isOrchestratorAgentId(fromAgentId)) return "orchestrator";
     return "specialist";
+}
+
+function isTopLevelHumanInitiator(initiator: Initiator): boolean {
+    return initiator === "user" || initiator === "external";
 }
 
 function createThreadId(sessionId: string, a: BaseAgentId, b: BaseAgentId): string {
@@ -196,7 +228,10 @@ function createThreadId(sessionId: string, a: BaseAgentId, b: BaseAgentId): stri
 
 export interface RuntimeOptions {
     sessionId?: string;
+    orgId?: string;
+    dataDir?: string;
     agents?: AgentDefinition[];
+    orchestratorIds?: string[];
     hitlHandler?: HITLHandler;
     schedules?: Array<{ id: string; cron: string; agentId: string; task: string }>;
     workspaceManager?: WorkspaceManager;
@@ -204,6 +239,13 @@ export interface RuntimeOptions {
 }
 
 const denyAllHandler: HITLHandler = async () => ({ approved: false });
+
+const DEFAULT_DELEGATION_TIMEOUT_MS = 180_000;
+const DELEGATION_TIMEOUT_BY_AGENT: Partial<Record<BaseAgentId, number>> = {
+    explorer: 300_000,
+    "web-designer": 300_000,
+    marketing: 300_000,
+};
 
 function parseAllowedRoots(raw?: string): string[] | undefined {
     if (!raw) return undefined;
@@ -217,6 +259,8 @@ function parseAllowedRoots(raw?: string): string[] | undefined {
 
 export class MultiAgentRuntime {
     readonly sessionId: string;
+    readonly orgId?: string;
+    readonly primaryOrchestratorId: string;
     readonly store: ThreadStore;
     readonly chatManager: ChatManager;
     readonly specialistRegistry: SpecialistRegistry;
@@ -233,29 +277,37 @@ export class MultiAgentRuntime {
             : optionsOrSessionId ?? {};
 
         this.sessionId = options.sessionId ?? "default";
-        this.store = new ThreadStore({ sessionId: this.sessionId });
+        this.orgId = options.orgId;
+        const dataDir = options.dataDir ?? ".runtime-data";
+        this.store = new ThreadStore({ sessionId: this.sessionId, baseDir: dataDir });
         this.hitlHandler = options.hitlHandler ?? denyAllHandler;
 
         // Credential store (shares base dir with thread store)
         this.credentialStore = new CredentialStore({
-            dataDir: ".runtime-data",
+            dataDir,
             masterPassword: process.env.MASTER_PASSWORD,
         });
 
         const workspaceAllowedRoots = options.workspaceAllowedRoots
             ?? parseAllowedRoots(process.env.WORKSPACE_ALLOWED_ROOTS);
         this.workspaceManager = options.workspaceManager ?? new WorkspaceManager({
+            dataDir,
             allowedRoots: workspaceAllowedRoots,
         });
 
         const sharedOpts = {
             credentialStore: this.credentialStore,
             workspaceManager: this.workspaceManager,
+            orchestratorIds: options.orchestratorIds,
         };
 
         // Agent definitions
         const agentDefList = options.agents ?? createAgentDefinitions(sharedOpts);
         this.agentDefs = new Map(agentDefList.map(d => [d.id, d]));
+        const configuredOrchestratorIds = agentDefList
+            .map((def) => def.id)
+            .filter((id) => isOrchestratorAgentId(id));
+        this.primaryOrchestratorId = configuredOrchestratorIds[0] ?? ORCHESTRATOR_ID;
 
         // Backward-compatible specialist registry (used by orchestrator tools)
         this.specialistRegistry = createSpecialistRegistry(sharedOpts);
@@ -415,8 +467,67 @@ export class MultiAgentRuntime {
         }));
     }
 
+    getPrimaryOrchestratorId(): string {
+        return this.primaryOrchestratorId;
+    }
+
     listChats(): AgentChat[] {
         return this.chatManager.listChats();
+    }
+
+    private listChatsForRun(runContext: RunContext): AgentChat[] {
+        return this.chatManager.listChats().filter((chat) =>
+            chat.parentRunId === runContext.runId &&
+            chat.parentTurnId === runContext.turnId
+        );
+    }
+
+    private async waitForRunChatsToClose(
+        runContext: RunContext,
+        timeoutMs = 5 * 60_000,
+    ): Promise<AgentChat[]> {
+        const startedAt = Date.now();
+        while (true) {
+            const chats = this.listChatsForRun(runContext);
+            if (chats.length === 0 || chats.every((chat) => chat.status === "closed")) {
+                return chats;
+            }
+            if (Date.now() - startedAt >= timeoutMs) {
+                return chats;
+            }
+            await Bun.sleep(200);
+        }
+    }
+
+    private getDelegationTimeoutMs(agentId: string): number {
+        const timeout = DELEGATION_TIMEOUT_BY_AGENT[agentId as BaseAgentId];
+        return timeout ?? DEFAULT_DELEGATION_TIMEOUT_MS;
+    }
+
+    private buildDelegationFallbackAnswer(chats: AgentChat[]): string | undefined {
+        if (chats.length === 0) return undefined;
+        if (chats.length === 1) {
+            const chat = chats[0]!;
+            if (chat.status === "closed" && chat.closeReason === "completed") {
+                const result = stripThoughtPrefix(chat.result ?? "");
+                return result || undefined;
+            }
+            if (chat.status === "closed") {
+                return `Delegation to ${chat.agentId} failed: ${chat.error ?? chat.closeReason ?? "unknown error"}.`;
+            }
+            return `Delegation to ${chat.agentId} is still ${chat.status}.`;
+        }
+
+        const lines = chats.map((chat) => {
+            if (chat.status === "closed" && chat.closeReason === "completed") {
+                return `${chat.agentId}: ${stripThoughtPrefix(chat.result ?? "") || "(completed with empty result)"}`;
+            }
+            if (chat.status === "closed") {
+                return `${chat.agentId}: failed (${chat.error ?? chat.closeReason ?? "unknown error"})`;
+            }
+            return `${chat.agentId}: ${chat.status}`;
+        });
+        return lines.join("\n");
     }
 
     getChat(chatId: string): AgentChat | undefined {
@@ -494,7 +605,10 @@ export class MultiAgentRuntime {
     async chat(input: ChatInput): Promise<ChatOutput> {
         const runContext = this.createRunContext();
         const fromAgentId = input.fromAgentId ?? "user";
-        const initiator = resolveInitiator(fromAgentId);
+        const initiator = input.initiator ?? resolveInitiator(fromAgentId);
+        runContext.channel = input.channel;
+        runContext.contact = input.contact;
+        runContext.orchestratorId = input.orchestratorId ?? (isOrchestratorAgentId(input.toAgentId) ? input.toAgentId : undefined);
 
         await this.trace({
             type: "run_started",
@@ -502,7 +616,14 @@ export class MultiAgentRuntime {
             runId: runContext.runId,
             turnId: runContext.turnId,
             agentId: input.toAgentId,
-            details: { fromAgentId, preview: input.content.slice(0, 120) },
+            details: {
+                fromAgentId,
+                preview: input.content.slice(0, 120),
+                ...(input.metadata ?? {}),
+                channel: runContext.channel,
+                contact: runContext.contact,
+                orchestratorId: runContext.orchestratorId,
+            },
         });
 
         try {
@@ -512,6 +633,7 @@ export class MultiAgentRuntime {
                 content: input.content,
                 initiator,
                 runContext,
+                metadata: input.metadata,
                 onAgentEvent: input.onAgentEvent,
             });
 
@@ -538,7 +660,7 @@ export class MultiAgentRuntime {
         }
     }
 
-    async runSmokeScenario(name: "math" | "code" | "orchestrator" | "explorer" | "writer" | "debugger" | "web-designer" | "marketing") {
+    async runSmokeScenario(name: "math" | "code" | "orchestrator" | "explorer" | "writer" | "debugger" | "web-designer" | "marketing" | "graphic-designer") {
         if (name === "math") {
             return this.chat({ toAgentId: "math", content: "Compute (8 * 5) - (6 / 2). Return one short sentence." });
         }
@@ -578,8 +700,14 @@ export class MultiAgentRuntime {
                 content: "Audit the SEO of https://example.com and list the top issues found.",
             });
         }
+        if (name === "graphic-designer") {
+            return this.chat({
+                toAgentId: "graphic-designer",
+                content: "List the tools you have available and describe in one sentence what you can create with each one.",
+            });
+        }
         return this.chat({
-            toAgentId: ORCHESTRATOR_ID,
+            toAgentId: this.primaryOrchestratorId,
             content: [
                 "Run a delegation demo.",
                 "You will have to solve a mathematical problem.",
@@ -593,29 +721,33 @@ export class MultiAgentRuntime {
             runId: createId("run"),
             turnId: createId("turn"),
             sessionId: this.sessionId,
+            orgId: this.orgId,
         };
     }
 
-    private createOrchestratorToolsForRun(runContext: RunContext) {
+    private createOrchestratorToolsForRun(runContext: RunContext, orchestratorAgentId: string) {
         return createOrchestratorTools({
             registry: this.specialistRegistry,
             getRunContext: () => runContext,
+            getOrchestratorAgentId: () => orchestratorAgentId,
             createDelegation: (input) => {
                 return this.chatManager.createChat(
                     {
                         sessionId: this.sessionId,
                         parentRunId: input.runContext.runId,
                         parentTurnId: input.runContext.turnId,
+                        orchestratorId: input.orchestratorId,
                         agentId: input.agentId,
                         task: input.task,
                         context: input.context,
+                        timeoutMs: this.getDelegationTimeoutMs(input.agentId),
                     },
                     async (_ctx, chat) => {
                         const content = chat.context
                             ? `Context:\n${chat.context}\n\nTask:\n${chat.task}`
                             : chat.task;
                         const output = await this.routeMessage({
-                            fromAgentId: ORCHESTRATOR_ID,
+                            fromAgentId: input.orchestratorId,
                             toAgentId: input.agentId,
                             content,
                             initiator: "orchestrator",
@@ -643,11 +775,11 @@ export class MultiAgentRuntime {
         });
     }
 
-    private createSchedulerToolsForRun(): AgentTool<any>[] {
+    private createSchedulerToolsForRun(orchestratorAgentId: string): AgentTool<any>[] {
         const entries = createSchedulerToolEntries({
             scheduler: this.scheduler,
             sessionId: this.sessionId,
-            callerAgentId: ORCHESTRATOR_ID,
+            callerAgentId: orchestratorAgentId,
             allowedTargets: null, // orchestrator can target any agent
         });
         return entries.map(entry => ({
@@ -663,6 +795,7 @@ export class MultiAgentRuntime {
         def: AgentDefinition,
         agentId: string,
         runContext: RunContext,
+        chatId?: string,
     ): AgentTool<any>[] {
         return (def.localTools ?? []).map(entry => {
             const permission = resolvePermission(
@@ -683,6 +816,12 @@ export class MultiAgentRuntime {
                     permission,
                     hitlHandler: this.hitlHandler,
                     agentId,
+                    onHitlStart: () => {
+                        if (chatId) this.chatManager.pauseTimeout(chatId);
+                    },
+                    onHitlEnd: () => {
+                        if (chatId) this.chatManager.resumeTimeout(chatId);
+                    },
                     tracePermission: async (info) => {
                         await this.trace({
                             type: "tool_start",
@@ -698,15 +837,15 @@ export class MultiAgentRuntime {
         });
     }
 
-    private createAgentForRoute(toAgentId: string, runContext: RunContext): Agent {
+    private createAgentForRoute(toAgentId: string, runContext: RunContext, chatId?: string): Agent {
         const def = this.agentDefs.get(toAgentId);
         if (!def) throw new Error(`Agent '${toAgentId}' is not registered.`);
 
         // Resolve localTools → AgentTool[] with middleware (permissions, HITL)
-        const localTools = this.resolveWrappedLocalTools(def, toAgentId, runContext);
+        const localTools = this.resolveWrappedLocalTools(def, toAgentId, runContext, chatId);
 
-        if (toAgentId === ORCHESTRATOR_ID) {
-            const orchTools = this.createOrchestratorToolsForRun(runContext);
+        if (isOrchestratorAgentId(toAgentId)) {
+            const orchTools = this.createOrchestratorToolsForRun(runContext, toAgentId);
             const orchestratorTools = [...orchTools, ...localTools];
             const systemPrompt = compileSystemPrompt(def, orchestratorTools);
             return def.createAgent(orchestratorTools, systemPrompt);
@@ -714,7 +853,8 @@ export class MultiAgentRuntime {
 
         // Inject scheduler tools into the secretary agent
         if (toAgentId === "secretary") {
-            const schedulerTools = this.createSchedulerToolsForRun();
+            const schedulerCaller = runContext.orchestratorId ?? this.primaryOrchestratorId;
+            const schedulerTools = this.createSchedulerToolsForRun(schedulerCaller);
             localTools.push(...schedulerTools);
         }
 
@@ -724,7 +864,7 @@ export class MultiAgentRuntime {
 
     private async routeMessage(input: RouteMessageInput): Promise<RouteMessageOutput> {
         const startedAt = now();
-        const agent = this.createAgentForRoute(input.toAgentId, input.runContext);
+        const agent = this.createAgentForRoute(input.toAgentId, input.runContext, input.chatId);
 
         const threadId = createThreadId(this.sessionId, input.fromAgentId, input.toAgentId);
         const history = await this.store.getThreadMessages(threadId);
@@ -769,7 +909,9 @@ export class MultiAgentRuntime {
                         ? input.toAgentId
                         : message.role === "user"
                             ? input.fromAgentId
-                            : "orchestrator",
+                            : isOrchestratorAgentId(input.toAgentId)
+                                ? input.toAgentId
+                                : this.primaryOrchestratorId,
                 toAgentId:
                     message.role === "assistant"
                         ? input.fromAgentId
@@ -779,6 +921,7 @@ export class MultiAgentRuntime {
                 initiator: input.initiator,
                 chatId: input.chatId,
                 toolCallId: input.toolCallId,
+                metadata: input.metadata,
                 message,
             };
             try {
@@ -792,7 +935,26 @@ export class MultiAgentRuntime {
             previousEnvelopeId = envelopeId;
         }
 
-        const answer = extractLastAssistantText(agent.state.messages);
+        let answer = extractLastAssistantText(agent.state.messages);
+
+        // For top-level human→orchestrator turns, don't return before delegated chats settle.
+        if (
+            isOrchestratorAgentId(input.toAgentId) &&
+            isTopLevelHumanInitiator(input.initiator) &&
+            !input.chatId
+        ) {
+            const runChatsAtPromptEnd = this.listChatsForRun(input.runContext);
+            const hadPendingDelegations = runChatsAtPromptEnd.some((chat) => chat.status !== "closed");
+            if (hadPendingDelegations) {
+                await this.waitForRunChatsToClose(input.runContext);
+            }
+
+            const settledRunChats = this.listChatsForRun(input.runContext);
+            const fallback = this.buildDelegationFallbackAnswer(settledRunChats);
+            if (fallback && isDelegationPlaceholderText(answer)) {
+                answer = fallback;
+            }
+        }
         const durationMs = now() - startedAt;
 
         await this.trace({
@@ -809,6 +971,10 @@ export class MultiAgentRuntime {
                 threadId,
                 durationMs,
                 messageCount: newMessages.length,
+                channel: input.runContext.channel,
+                contact: input.runContext.contact,
+                orchestratorId: input.runContext.orchestratorId,
+                ...(input.metadata ?? {}),
             },
         });
 
@@ -821,7 +987,8 @@ export class MultiAgentRuntime {
 
     private async appendChatStatusMessage(chat: AgentChat, text: string) {
         try {
-            const threadId = createThreadId(this.sessionId, ORCHESTRATOR_ID, chat.agentId as BaseAgentId);
+            const orchestratorId = chat.orchestratorId ?? this.primaryOrchestratorId;
+            const threadId = createThreadId(this.sessionId, orchestratorId, chat.agentId as BaseAgentId);
             const history = await this.store.getThreadMessages(threadId);
             const previousEnvelopeId = history.at(-1)?.envelopeId;
             const envelopeId = createId("env");
@@ -840,7 +1007,7 @@ export class MultiAgentRuntime {
                 runId: chat.parentRunId,
                 turnId: chat.parentTurnId,
                 timestamp: now(),
-                fromAgentId: ORCHESTRATOR_ID,
+                fromAgentId: orchestratorId,
                 toAgentId: chat.agentId as BaseAgentId,
                 initiator: "system",
                 chatId: chat.chatId,

@@ -8,7 +8,7 @@ import type { HITLHandler, HITLRequest } from "../../packages/core/tool-middlewa
 function cliError(err: unknown) { console.error("Error:", errorMessage(err)); }
 
 type ChatTarget = string;
-const VALID_SMOKES = ["math", "code", "orchestrator", "explorer", "writer", "debugger", "web-designer", "marketing"] as const;
+const VALID_SMOKES = ["math", "code", "orchestrator", "explorer", "writer", "debugger", "web-designer", "marketing", "graphic-designer"] as const;
 
 function parseArgs(args: string[]) {
     const parsed: { sessionId: string; smoke?: (typeof VALID_SMOKES)[number] } = {
@@ -33,10 +33,73 @@ function parseArgs(args: string[]) {
     return parsed;
 }
 
+interface CredentialPromptField {
+    key: string;
+    label: string;
+    required: boolean;
+}
+
+function parseCredentialPrompt(request: HITLRequest): { fields: CredentialPromptField[]; values: Record<string, string> } | undefined {
+    if (request.toolName !== "request_credentials") return undefined;
+    const rawFields = request.params.fields;
+    if (!Array.isArray(rawFields) || rawFields.length === 0) return undefined;
+
+    const fields: CredentialPromptField[] = [];
+    for (const rawField of rawFields) {
+        if (typeof rawField !== "object" || rawField === null) continue;
+        const field = rawField as { key?: unknown; label?: unknown; required?: unknown };
+        if (typeof field.key !== "string" || !field.key.trim()) continue;
+        fields.push({
+            key: field.key.trim(),
+            label: typeof field.label === "string" && field.label.trim() ? field.label.trim() : field.key.trim(),
+            required: typeof field.required === "boolean" ? field.required : true,
+        });
+    }
+    if (fields.length === 0) return undefined;
+
+    const values: Record<string, string> = {};
+    const rawValues = request.params.values;
+    if (typeof rawValues === "object" && rawValues !== null) {
+        for (const field of fields) {
+            const value = (rawValues as Record<string, unknown>)[field.key];
+            if (typeof value === "string") values[field.key] = value;
+        }
+    }
+
+    return { fields, values };
+}
+
 function createCliHitlHandler(rl: ReturnType<typeof createInterface>): HITLHandler {
     return async (request: HITLRequest): Promise<{ approved: boolean; modifiedParams?: Record<string, unknown> }> => {
         console.log(`\n[HITL] Agent '${request.agentId}' wants to use '${request.toolName}'`);
         console.log(`  Params: ${JSON.stringify(request.params, null, 2)}`);
+
+        const credentialPrompt = parseCredentialPrompt(request);
+        if (credentialPrompt) {
+            const values = { ...credentialPrompt.values };
+            for (const field of credentialPrompt.fields) {
+                const value = await rl.question(`  ${field.label}${field.required ? " *" : ""}: `);
+                if (value.trim()) values[field.key] = value;
+            }
+            const missing = credentialPrompt.fields
+                .filter((field) => field.required && !(values[field.key] ?? "").trim())
+                .map((field) => field.key);
+            if (missing.length > 0) {
+                console.log(`  Missing required fields: ${missing.join(", ")}`);
+                return { approved: false };
+            }
+            const answer = await rl.question("  Save credentials? [y/N]: ");
+            const approved = answer.trim().toLowerCase() === "y";
+            if (!approved) return { approved: false };
+            return {
+                approved: true,
+                modifiedParams: {
+                    ...request.params,
+                    values,
+                },
+            };
+        }
+
         const answer = await rl.question("  Approve? [y/N]: ");
         const approved = answer.trim().toLowerCase() === "y";
         return { approved };
@@ -56,7 +119,7 @@ function printHelp() {
     console.log("  /threads               lista threadIds");
     console.log("  /thread <threadId>     muestra mensajes del thread");
     console.log("  /traces [n]            muestra ultimos n eventos de traza (default 20)");
-    console.log("  /smoke <name>          corre smoke (math|code|orchestrator|explorer|writer|debugger|web-designer)");
+    console.log("  /smoke <name>          corre smoke (math|code|orchestrator|explorer|writer|debugger|web-designer|marketing|graphic-designer)");
     console.log("  /exit                  salir");
     console.log("  (aliases: /jobs=/chats, /job=/task=/chat, /cancel=/close)\n");
 }
@@ -256,7 +319,7 @@ async function runInteractiveCli(runtime: MultiAgentRuntime, rl?: ReturnType<typ
             if (command === "/smoke") {
                 const smokeName = args[0] as (typeof VALID_SMOKES)[number] | undefined;
                 if (!smokeName || !VALID_SMOKES.includes(smokeName)) {
-                    console.log("Uso: /smoke math|code|orchestrator|explorer|writer|debugger|web-designer|marketing");
+                    console.log("Uso: /smoke math|code|orchestrator|explorer|writer|debugger|web-designer|marketing|graphic-designer");
                     continue;
                 }
                 try {
