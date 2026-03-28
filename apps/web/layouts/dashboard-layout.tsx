@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { NavLink, Outlet } from "react-router-dom";
 import { DithieSprite } from "../dithie-sprite";
 import { useRuntime } from "../runtime-context";
-import { InputBar } from "../components/chat-ui";
 import { AppNav } from "../components/nav";
 
 function Header() {
@@ -35,8 +34,8 @@ function Header() {
         )}
         <span
           className={`select-none text-[10px] leading-none ${state.wsConnected
-              ? "text-theme-text-soft"
-              : "text-theme-text-muted"
+            ? "text-theme-text-soft"
+            : "text-theme-text-muted"
             }`}
         >
           {state.wsConnected ? "\u25CF connected" : "\u25CB disconnected"}
@@ -105,9 +104,7 @@ function parseCredentialPrompt(params: Record<string, unknown>): CredentialPromp
 }
 
 export function DashboardLayout() {
-  const location = useLocation();
   const { state, respondToHitl } = useRuntime();
-  const showChatInput = location.pathname === "/";
   const activeHitlRequest = state.hitlQueue[0];
   const credentialPrompt = useMemo(() => {
     if (!activeHitlRequest || activeHitlRequest.toolName !== "request_credentials") return null;
@@ -167,7 +164,6 @@ export function DashboardLayout() {
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <Outlet />
       </div>
-      {showChatInput && <InputBar />}
       {activeHitlRequest && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
           <div className="flex w-full max-w-2xl flex-col gap-3 border border-theme-border bg-theme-surface p-4 shadow-2xl">

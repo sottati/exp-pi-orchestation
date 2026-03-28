@@ -12,7 +12,7 @@ import type {
 import { errorMessage } from "../../packages/core/errors";
 import type { MultiAgentRuntime } from "../../packages/core/runtime";
 import { RuntimeManager } from "../../packages/core/runtime-manager";
-import type { HITLHandler, HITLRequest } from "../../packages/core/tool-middleware";
+import type { HITLHandler, HITLRequest, HITLRequest } from "../../packages/core/tool-middleware";
 import { buildHydratedUiState, getPrimaryThreadId } from "../web/ui-state";
 import { verifyWebhookSignature, WebhookIdempotencyWindow } from "./kapso-webhook-utils";
 

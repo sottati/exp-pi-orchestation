@@ -59,7 +59,7 @@ export function createAgentDefinitions(opts?: {
   const orchestrators = normalizedOrchestratorIds.map((agentId) => defineAgent(agentId)
     .name(agentId === ORCHESTRATOR_ID ? "Orchestrator" : `Orchestrator (${agentId.slice((ORCHESTRATOR_ID + ":").length)})`)
     .role("Routes and delegates tasks to specialists.")
-    .model("openrouter", "google/gemini-3-flash-preview")
+    .model("openrouter", "openai/gpt-5.4-mini")
     .systemPrompt([
       "You are an orchestrator agent.",
       "Use list_agents to discover available specialists.",
@@ -82,6 +82,7 @@ export function createAgentDefinitions(opts?: {
       "Be concise by default.",
     ].join(" "))
     .capabilities(["routing", "delegation", "credential-collection"])
+    .thinkingLevel("medium")
     .tools([])
     .localToolEntries([...orchestratorFileTools, ...orchestratorTerminalTool, ...orchestratorCredentialTool])
     .permissions({
@@ -97,7 +98,7 @@ export function createAgentDefinitions(opts?: {
   const code = defineAgent("code")
     .name("Code Specialist")
     .role("Creates, edits, and debugs backend code.")
-    .model("openrouter", "google/gemini-3.1-flash-lite-preview")
+    .model("openrouter", "openai/gpt-5.4-nano")
     .systemPrompt(
       "You are a coding specialist. Return concise, practical answers. "
       + "You can read, write, and edit files in the project. You can run build and "
@@ -145,7 +146,7 @@ export function createAgentDefinitions(opts?: {
   const math = defineAgent("math")
     .name("Math & Data Analyst")
     .role("Solves arithmetic, analyzes data from CSV, Excel, Google Sheets, SQLite, and Supabase.")
-    .model("openrouter", "google/gemini-3.1-flash-lite-preview")
+    .model("openrouter", "openai/gpt-5.4-nano")
     .systemPrompt([
       "You are a math and data analysis specialist.",
       "",
@@ -182,7 +183,7 @@ export function createAgentDefinitions(opts?: {
   const explorer = defineAgent("explorer")
     .name("Web Explorer")
     .role("Retrieves information from the web and Google Drive via browsing, searching, and file access.")
-    .model("openrouter", "google/gemini-3.1-flash-lite-preview")
+    .model("openrouter", "openai/gpt-5.4-nano")
     .systemPrompt([
       "You are a web explorer specialist. You retrieve information from the web and Google Drive.",
       "",
@@ -219,7 +220,7 @@ export function createAgentDefinitions(opts?: {
   const writer = defineAgent("writer")
     .name("Writer")
     .role("Drafts documents, summaries, translations, Word/Google Docs files, and sends emails via Gmail.")
-    .model("openrouter", "google/gemini-3.1-flash-lite-preview")
+    .model("openrouter", "openai/gpt-5.4-nano")
     .systemPrompt([
       "You are a professional writer specialist.",
       "",
@@ -262,7 +263,7 @@ export function createAgentDefinitions(opts?: {
   const debugger_ = defineAgent("debugger")
     .name("Debugger & Reviewer")
     .role("Reviews code, debugs errors, analyzes stack traces, and identifies security issues.")
-    .model("openrouter", "google/gemini-3.1-flash-lite-preview")
+    .model("openrouter", "openai/gpt-5.4-nano")
     .systemPrompt([
       "You are a debugger and code reviewer specialist.",
       "",
@@ -311,7 +312,7 @@ export function createAgentDefinitions(opts?: {
   const secretary = defineAgent("secretary")
     .name("Secretary")
     .role("Personal assistant: manages calendar, reads/summarizes emails, contacts, tasks, and scheduling (cron jobs, reminders).")
-    .model("openrouter", "google/gemini-3.1-flash-lite-preview")
+    .model("openrouter", "openai/gpt-5.4-nano")
     .systemPrompt([
       "You are a personal secretary/assistant specialist.",
       "",
@@ -389,7 +390,7 @@ export function createAgentDefinitions(opts?: {
     .role("Designs and builds frontend interfaces — HTML, CSS, React/TSX, Tailwind. "
       + "Reads/writes project files, previews in browser, validates accessibility. "
       + "Knows React, Next.js, Astro, shadcn, design systems.")
-    .model("openrouter", "google/gemini-3.1-flash-lite-preview")
+    .model("openrouter", "openai/gpt-5.4-nano")
     .systemPrompt("You are a frontend specialist. You build UI components, pages, "
       + "and layouts. You write clean, accessible, responsive code. You read existing "
       + "code to understand patterns before making changes. You preview your work in "
@@ -447,7 +448,7 @@ export function createAgentDefinitions(opts?: {
   const marketing = defineAgent("marketing")
     .name("Marketing")
     .role("SEO & growth strategist — keyword research, competitor analysis, on-page audits, content strategy via Google Sheets.")
-    .model("openrouter", "google/gemini-3.1-flash-lite-preview")
+    .model("openrouter", "openai/gpt-5.4-nano")
     .systemPrompt([
       "You are a virtual CMO focused on SEO and growth.",
       "",

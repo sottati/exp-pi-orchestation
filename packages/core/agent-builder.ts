@@ -38,6 +38,7 @@ export interface AgentDefinition {
   hooks: AgentHooks;
   maxConcurrency: number;
   scheduleConfig?: { schedule: ScheduledJob["schedule"]; task: string };
+  thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
   createAgent: (resolvedTools: AgentTool<any>[], compiledPrompt: string) => Agent;
 }
 
@@ -59,6 +60,7 @@ class AgentBuilder {
   private _hooks: AgentHooks = {};
   private _maxConcurrency: number = 1;
   private _scheduleConfig?: { schedule: ScheduledJob["schedule"]; task: string };
+  private _thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
   constructor(id: string) {
     this._id = id;
@@ -140,6 +142,11 @@ class AgentBuilder {
     return this;
   }
 
+  thinkingLevel(value: "off" | "minimal" | "low" | "medium" | "high" | "xhigh"): this {
+    this._thinkingLevel = value;
+    return this;
+  }
+
   build(): AgentDefinition {
     if (!this._id) {
       throw new Error("AgentDefinition requires a non-empty id");
@@ -169,6 +176,7 @@ class AgentBuilder {
         initialState: {
           systemPrompt: compiledPrompt,
           model,
+          thinkingLevel: this._thinkingLevel ?? "off",
           tools: resolvedTools,
           messages: [],
         },
@@ -191,6 +199,7 @@ class AgentBuilder {
       hooks: this._hooks,
       maxConcurrency: this._maxConcurrency,
       scheduleConfig: this._scheduleConfig,
+      thinkingLevel: this._thinkingLevel,
       createAgent,
     };
 

@@ -1,10 +1,18 @@
-import { ChatPanel } from "../components/chat-ui";
+import { ChatPanel } from "../components/chat-panel";
 import { TracePanel } from "../components/trace-ui";
+import { InputBar } from "../components/ui/chat-input";
 import { useRuntime } from "../runtime-context";
 import { useMemo, useState } from "react";
 
 export function ChatPage() {
-  const { state, toggleDelegation, toggleTrace, selectConversation } = useRuntime();
+  const {
+    state,
+    toggleDelegation,
+    toggleTrace,
+    selectConversation,
+    pendingAnchorUserMessageId,
+    clearPendingAnchorUserMessage,
+  } = useRuntime();
   const [manualContact, setManualContact] = useState("");
 
   const orchestratorOptions = useMemo(() => {
@@ -84,7 +92,13 @@ export function ChatPage() {
             </div>
           )}
         </div>
-        <ChatPanel state={state} onToggleDelegation={toggleDelegation} />
+        <ChatPanel
+          state={state}
+          onToggleDelegation={toggleDelegation}
+          pendingAnchorUserMessageId={pendingAnchorUserMessageId}
+          clearPendingAnchorUserMessage={clearPendingAnchorUserMessage}
+        />
+        <InputBar />
       </section>
       <section className="flex w-[var(--trace-w)] shrink-0 flex-col overflow-hidden border-l border-theme-border max-[980px]:min-h-[220px] max-[980px]:w-full max-[980px]:border-l-0 max-[980px]:border-t">
         <TracePanel

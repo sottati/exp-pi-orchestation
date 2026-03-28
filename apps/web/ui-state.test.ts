@@ -124,6 +124,7 @@ describe("buildHydratedUiState", () => {
     expect(state.chatItems).toEqual([
       { kind: "message", message: firstMessage },
       { kind: "delegation", delegationId: "tool-1" },
+      { kind: "thinking_trace", runId: "run-1" },
       { kind: "message", message: secondMessage },
     ]);
     expect(state.delegations["tool-1"]).toMatchObject({
@@ -134,7 +135,189 @@ describe("buildHydratedUiState", () => {
       durationMs: 100,
     });
     expect(state.traceDurations["evt-2"]).toBe(100);
+    expect(state.thinkingTraces["run-1"]).toMatchObject({
+      runId: "run-1",
+      lines: ["→ delegate → math: 2+2"],
+      status: "completed",
+      collapsed: true,
+      source: "tool",
+      hasModelThinking: false,
+    });
     expect(state.chats).toEqual(chats);
     expect(state.jobs).toEqual(jobs);
+  });
+
+  test("rebuilds persisted thinking traces and keeps order by first run activity", () => {
+    const sessionId = "demo";
+    const traces: TraceEvent[] = [
+      {
+        eventId: "evt-1",
+        sessionId,
+        runId: "run-1",
+        turnId: "turn-1",
+        timestamp: 100,
+        type: "tool_start",
+        status: "running",
+        agentId: "orchestrator",
+        toolName: "list_agents",
+      },
+      {
+        eventId: "evt-2",
+        sessionId,
+        runId: "run-1",
+        turnId: "turn-1",
+        timestamp: 110,
+        type: "tool_start",
+        status: "running",
+        agentId: "orchestrator",
+        toolName: "delegate",
+        details: { args: { agentId: "math", task: "2+2" } },
+      },
+      {
+        eventId: "evt-3",
+        sessionId,
+        runId: "run-1",
+        turnId: "turn-1",
+        timestamp: 130,
+        type: "run_failed",
+        status: "error",
+        agentId: "orchestrator",
+        details: { error: "boom" },
+      },
+      {
+        eventId: "evt-4",
+        sessionId,
+        runId: "run-2",
+        turnId: "turn-2",
+        timestamp: 200,
+        type: "tool_start",
+        status: "running",
+        agentId: "orchestrator",
+        toolName: "get_chat_status",
+        details: { args: { chatId: "chat-1" } },
+      },
+      {
+        eventId: "evt-5",
+        sessionId,
+        runId: "run-2",
+        turnId: "turn-2",
+        timestamp: 220,
+        type: "run_completed",
+        status: "completed",
+        agentId: "orchestrator",
+        details: { durationMs: 20 },
+      },
+    ];
+
+    const state = buildHydratedUiState({
+      agents: [],
+      sessionId,
+      threadMessages: [],
+      traces,
+      chats: [],
+      jobs: [],
+    });
+
+    expect(state.messages).toHaveLength(1);
+    expect(state.chatItems).toEqual([
+      { kind: "thinking_trace", runId: "run-1" },
+      { kind: "message", message: state.messages[0]! },
+      { kind: "thinking_trace", runId: "run-2" },
+    ]);
+    expect(state.thinkingTraces["run-1"]).toMatchObject({
+      status: "error",
+      collapsed: true,
+      lines: ["→ list_agents", "→ delegate → math: 2+2"],
+      source: "tool",
+      hasModelThinking: false,
+    });
+    expect(state.thinkingTraces["run-2"]).toMatchObject({
+      status: "completed",
+      collapsed: true,
+      lines: ["→ get_chat_status → chat-1"],
+      source: "tool",
+      hasModelThinking: false,
+    });
+  });
+
+  test("rebuilds model thinking from persisted assistant messages and prioritizes it over trace fallback", () => {
+    const sessionId = "demo";
+    const threadId = getPrimaryThreadId(sessionId);
+    const threadMessages: ThreadEnvelope[] = [
+      {
+        envelopeId: "env-user-1",
+        sessionId,
+        threadId,
+        runId: "run-1",
+        turnId: "turn-1",
+        timestamp: 100,
+        fromAgentId: "user",
+        toAgentId: "orchestrator",
+        initiator: "user",
+        message: { role: "user", content: "hola", timestamp: 100 },
+      },
+      {
+        envelopeId: "env-assistant-1",
+        sessionId,
+        threadId,
+        runId: "run-1",
+        turnId: "turn-1",
+        timestamp: 300,
+        fromAgentId: "orchestrator",
+        toAgentId: "user",
+        initiator: "user",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "linea 1\nlinea 2" },
+            { type: "text", text: "respuesta final" },
+          ],
+          timestamp: 300,
+        } as any,
+      },
+    ];
+
+    const traces: TraceEvent[] = [
+      {
+        eventId: "evt-1",
+        sessionId,
+        runId: "run-1",
+        turnId: "turn-1",
+        timestamp: 110,
+        type: "tool_start",
+        status: "running",
+        agentId: "orchestrator",
+        toolName: "delegate",
+        details: { args: { agentId: "math", task: "2+2" } },
+      },
+      {
+        eventId: "evt-2",
+        sessionId,
+        runId: "run-1",
+        turnId: "turn-1",
+        timestamp: 320,
+        type: "run_completed",
+        status: "completed",
+        agentId: "orchestrator",
+        details: { durationMs: 200 },
+      },
+    ];
+
+    const state = buildHydratedUiState({
+      agents: [],
+      sessionId,
+      threadMessages,
+      traces,
+      chats: [],
+      jobs: [],
+    });
+
+    expect(state.thinkingTraces["run-1"]).toMatchObject({
+      runId: "run-1",
+      lines: ["linea 1", "linea 2"],
+      status: "completed",
+      source: "model",
+      hasModelThinking: true,
+    });
   });
 });

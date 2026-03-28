@@ -378,6 +378,9 @@ Serves on <http://localhost:3000>.
 - **Sacred-inspired palette**: esquema basado en los tokens de `sacred.computer`/SRCL (`--theme-*`, tintes OKLCH y grises neutrales), manteniendo la UI existente pero con un sistema de color más rico.
 - **Dithie**: pixel-art spider character as orchestrator identity. States: idle (breathing + blink), thinking (eye movement cycle), delegating (eyes shifted), error (X eyes).
 - **Unified chat**: all conversation goes through Dithie (orchestrator). No agent switching. Delegations shown as collapsible inline blocks.
+- **Chat anchor-on-send**: in the main chat route (`/`), once Dithie starts streaming, the just-sent user message is smoothly aligned near the top of the message container and no post-stream jump-to-bottom is triggered.
+- **Inline thinking traces**: the chat feed consumes orchestrator `thinking_start/delta/end` events in real time (not sidebar-only), shows the full reasoning text for debugging in a lighter floating block, extracts a heading-like first line into the block header, highlights later heading-like lines inside the body, and keeps the block visible while the final answer streams; `stream_status` is fallback-only if model thinking is unavailable.
+- **Thinking hydration**: on `/api/ui-state` restore, thinking blocks are rebuilt from persisted orchestrator assistant messages (`content.type === "thinking"`) with trace fallback.
 - **Pre-stream**: while waiting for the first token after `chat_sending`, the chat shows a compact `thinking-row` (mascot + label) instead of an empty message bubble; streaming text uses the usual bubble + cursor.
 - **React Router UI**: shell persistente con rutas para `chat`, `traces`, `agents`, `chats` y `jobs`.
 - **Chat route**: mantiene el split principal Chat panel (flex:1) | Trace panel (280px fixed).
@@ -395,9 +398,10 @@ Serves on <http://localhost:3000>.
 - `apps/web/index.html`: HTML shell (title "dithie", JetBrains Mono font link).
 - `apps/web/app.tsx`: entrypoint React + `createBrowserRouter()` con rutas anidadas.
 - `apps/web/runtime-context.tsx`: estado global de la UI, reducer, bootstrap desde `/api/ui-state`, WebSocket persistente y preferencia de tema.
-- `apps/web/layouts/dashboard-layout.tsx`: shell persistente (header, nav, `Outlet`); barra de entrada solo en `/`.
-- `apps/web/pages/*.tsx`: páginas separadas para chat, traces, agents, chats y jobs.
-- `apps/web/components/chat-ui.tsx` / `trace-ui.tsx` / `nav.tsx`: componentes presentacionales reutilizables.
+- `apps/web/layouts/dashboard-layout.tsx`: shell persistente (header, nav, `Outlet`).
+- `apps/web/pages/*.tsx`: páginas separadas para chat, traces, agents, chats y jobs; en `chat-page` la barra de entrada queda dentro del panel izquierdo para que TRACES llegue al fondo.
+- `apps/web/components/chat-panel.tsx`: compositor del feed principal del chat (mensajes, thinking, delegaciones, scroll/anclaje).
+- `apps/web/components/ui/chat-*.tsx` / `trace-ui.tsx` / `nav.tsx`: componentes presentacionales reutilizables.
 - `apps/web/lib/utils.ts`: helper `cn()` para composición de clases Tailwind.
 - `apps/web/lib/agent-colors.ts`: asignación de tintes Sacred y badges/colores por agente/estado.
 - `components.json`: configuración manual de shadcn adaptada a esta codebase (root package + frontend en `apps/web`) para futuras altas de componentes vía CLI.
