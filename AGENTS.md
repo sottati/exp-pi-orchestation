@@ -131,6 +131,7 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Agents: `packages/core/agents.ts` (agent definitions via builder pattern)
 - Agent builder: `packages/core/agent-builder.ts` (`defineAgent().name().model().tools().skills(...).build()`)
 - Skills layer: `packages/core/skills-layer.ts` (loads local `SKILL.md` files from `./skills`, picks relevant skills per turn, and appends bounded context to prompts)
+- Project skills root: `skills/` (includes a vendored `marketingskills` snapshot at `skills/marketingskills`)
 - Tool registry: `packages/core/tool-registry.ts` (register/resolve tools with glob patterns, MCP lifecycle)
 - Tool middleware: `packages/core/tool-middleware.ts` (`wrapTool` with permission check, HITL approval, hooks)
 - Prompt compiler: `packages/core/prompt-compiler.ts` (5-layer system prompt assembly)

@@ -295,6 +295,7 @@ Cada envelope de hilo incluye metadatos de relación:
 - `packages/core/agents.ts`: definición de agentes via builder pattern (`defineAgent()`).
 - `packages/core/agent-builder.ts`: builder pattern para declarar agentes (incluye `.skills(...)` para configurar skills locales por agente).
 - `packages/core/skills-layer.ts`: capa de skills locales (`SKILL.md`) con descubrimiento en `./skills`, selección por relevancia por turno y anexado controlado al prompt.
+- `skills/`: raíz de skills del proyecto (incluye snapshot vendorizado de `marketingskills` en `skills/marketingskills`).
 - `packages/core/tool-registry.ts`: registro y resolución de tools con glob patterns, ciclo de vida MCP.
 - `packages/core/tool-middleware.ts`: `wrapTool` con permisos, HITL approval y hooks.
 - `packages/core/prompt-compiler.ts`: compilador de system prompt en 5 capas.
