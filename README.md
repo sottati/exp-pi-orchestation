@@ -28,6 +28,7 @@ Necesito un snippet en C para imprimir del 1 al 10
 - Error handling robusto: JSONL fault-tolerant, hooks con `safeAsync`, guards en CLI/trace/persistence.
 - Configuración de modelo por agente (`orchestrator`, `code`, `math`) via builder pattern en `packages/core/agents.ts`.
 - Sistema extensible de agentes: agent builder, tool registry, tool middleware con permisos y HITL.
+- Captura segura de credenciales: el `orchestrator` puede solicitar claves por HITL (`request_credentials`) y guardarlas cifradas en `CredentialStore`.
 - Office tools: `read_excel`/`write_excel` (exceljs) para el agente math/analyst; `read_docx`/`write_docx` (mammoth + docx) para el agente writer.
 - Google Workspace integration: Sheets, Docs, Drive, Gmail, Calendar, Tasks — autenticación OAuth2 via `googleapis`.
 - Agente `secretary`: asistente personal para calendar, email, contactos internos, tareas y cron jobs.
@@ -56,6 +57,7 @@ Hoy, los nueve agentes usan `openrouter/google/gemini-3.1-flash-lite-preview`.
 | `secretary` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
 | `web-designer` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
 | `marketing` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
+| `graphic-designer` | `openrouter` | `google/gemini-3.1-flash-lite-preview` |
 
 ## Requisitos
 
@@ -70,6 +72,7 @@ Hoy, los nueve agentes usan `openrouter/google/gemini-3.1-flash-lite-preview`.
 - Explorer web env: `PLAYWRIGHT_NODE_BRIDGE=1` fuerza bridge Node, `PLAYWRIGHT_NODE_BRIDGE=0` lo desactiva (default: auto en Bun).
 - Para PRs desde agentes: [GitHub CLI (`gh`)](https://cli.github.com/) autenticado (`gh auth login`)
 - Marketing: env var `MARKETING_SHEET_ID` o CredentialStore dominio `"marketing"` con el ID de la hoja de Google Sheets usada por `marketing_keywords`, `marketing_competitors`, `marketing_content_calendar`
+- Graphic designer: env vars `GEMINI_API_KEY`, `CANVA_API_KEY`, `FIGMA_ACCESS_TOKEN` o CredentialStore dominios `"gemini"` (field: `apiKey`), `"canva"` (field: `apiKey`), `"figma"` (field: `accessToken`)
 
 ## Instalación
 
@@ -92,6 +95,7 @@ bun run smoke:writer
 bun run smoke:debugger
 bun run smoke:web-designer
 bun run smoke:marketing
+bun run smoke:graphic-designer
 bun run ui:gate
 ```
 
@@ -123,7 +127,10 @@ Abre <http://localhost:3000> para ver el dashboard de Dithie:
 - **Color por agente**: la vista `/agents` asigna un tinte específico a cada agente usando una paleta compatible con Sacred.
 - **Theme switcher**: la barra de navegación permite alternar entre dark/light y persiste la preferencia en `localStorage`.
 - **WebSocket** en `/ws`: deltas de streaming, delegation events (`delegation_start`/`delegation_end`), lifecycle de chats y push de trazas.
-- **HITL en UI**: cuando una tool requiere aprobación, aparece un modal con `Allow` / `Don't Allow` y atajos `y` / `n`. El timeout empieza recién cuando la UI confirma recepción (`hitl_seen`), evitando timeouts “silenciosos” sin modal.
+- **HITL en UI**: cuando una tool requiere aprobación, aparece un modal con `Allow` / `Don't Allow` y atajos `y` / `n`. Para `request_credentials`, el modal muestra inputs (incluyendo campos `password`) y envía `modifiedParams` sin exponer valores en chat/trazas. El timeout empieza recién cuando la UI confirma recepción (`hitl_seen`), evitando timeouts “silenciosos” sin modal.
+- **HITL + delegación**: mientras una delegación está esperando aprobación HITL, el runtime pausa el timeout del chat delegado para evitar fallos prematuros.
+- **HITL + delegación (multi-step)**: si una misma delegación entra en varias aprobaciones HITL, el timeout acumula correctamente el tiempo restante entre cada `pause/resume` para evitar cancelaciones falsas.
+- **Timeouts de delegación**: por defecto los chats delegados usan `180s`; `explorer`, `web-designer` y `marketing` usan `300s` por sus flujos web más largos.
 - **Diagnóstico HITL (server logs)**: el backend imprime `"[hitl] request ... delivered=..."`, respuestas y timeouts para depurar por qué no aparece el modal.
 - **Acceso local con HITL**: Dithie/orchestrator puede usar `read_file`, `search_code` y `list_directory` sobre paths locales del PC, siempre con aprobación humana.
 - **Terminal con HITL**: Dithie/orchestrator puede ejecutar comandos via `run_command` en modo `powershell` o `bash`, con aprobación humana en cada ejecución.
@@ -173,6 +180,7 @@ Cuando un chat activo se cierra, el siguiente en la cola del mismo agente pasa a
 | `search_code` | Busca texto en archivos dentro de un directorio local (HITL) |
 | `list_directory` | Lista archivos/subdirectorios de un path local (HITL) |
 | `run_command` | Ejecuta comandos en terminal (directo o shell `powershell`/`bash`) con HITL |
+| `request_credentials` | Solicita claves al usuario via HITL y las guarda cifradas por dominio |
 
 ### Workspaces + Git (code/web-designer)
 
@@ -286,9 +294,10 @@ Cada envelope de hilo incluye metadatos de relación:
 - `packages/core/scheduler.ts`: cron parser, timer basado en setTimeout, persistencia JSONL.
 - `packages/core/scheduler-tools.ts`: tools de scheduling (`schedule_task`, `list_scheduled_jobs`, `cancel_scheduled_job`).
 - `packages/core/mcp-client.ts`: interfaz `McpConnector` para servidores de tools externos.
-- `packages/core/browser.ts`: `browseUrl`/`interactWithPage` con Playwright y `searchWeb` con fetch+parse de DuckDuckGo HTML.
+- `packages/core/browser.ts`: `browseUrl`/`interactWithPage` con Playwright (espera de hidratación SPA + snapshot DOM con texto/forms/inputs/buttons e iframes + fallback heurístico de selectores para `click`/`fill`/`select`) y `searchWeb` con fetch+parse de DuckDuckGo HTML.
 - `packages/core/browser-node-bridge.mjs`: bridge ejecutado con `node` para operaciones Playwright cuando el runtime corre en Bun.
 - `packages/core/explorer-tools.ts`: tool entries del explorer (`browse_url`, `search_web`, `interact_page`).
+- `packages/core/credential-tools.ts`: tool entry `request_credentials` para solicitar credenciales por HITL y guardarlas en `CredentialStore`.
 - `packages/core/analyst-tools.ts`: tool entries del data analyst (`query_sqlite`, `query_supabase`, `parse_csv`, `analyze_data`).
 - `packages/core/office-tools.ts`: tool entries de Office — `read_excel`, `write_excel` (exceljs) para math/analyst; `read_docx`, `write_docx` (mammoth + docx) para writer.
 - `packages/core/debugger-tools.ts`: tool entries del debugger (`read_file`, `search_code`, `list_directory`).
@@ -305,7 +314,7 @@ Cada envelope de hilo incluye metadatos de relación:
 - `packages/core/google-calendar-tools.ts`: tool entries de Google Calendar — `calendar_list`, `calendar_create`, `calendar_update`, `calendar_delete` (asignados a `secretary`).
 - `packages/core/local-contacts-tools.ts`: tool entries de contactos internos — `contacts_list`, `contacts_read`, `contacts_search`, `contacts_create`, `contacts_delete` (asignados a `secretary`).
 - `packages/core/google-tasks-tools.ts`: tool entries de Google Tasks — `tasks_list`, `tasks_create`, `tasks_complete` (asignados a `secretary`).
-- `packages/core/chat-manager.ts`: gestión de chats con per-agent concurrency, cola FIFO, timeout/retry y persistencia a disco.
+- `packages/core/chat-manager.ts`: gestión de chats con per-agent concurrency, cola FIFO, timeout/retry, pausa/reanudación de timeout para HITL multi-step y persistencia a disco.
 - `packages/core/thread-store.ts`: persistencia JSONL de hilos, trazas y chat records.
 - `packages/core/errors.ts`: utilidades de error handling (`errorMessage`, `safeAsync`, `safeParseLine`).
 - `packages/core/contracts.ts`: contratos de `ThreadEnvelope`, `AgentChat`, `TraceEvent`, `ScheduledJob`.
@@ -338,6 +347,7 @@ Cuando el permiso resuelve a `"hitl"`, se llama al `HITLHandler` para pedir apro
 
 - **CLI**: prompt via readline en terminal
 - **Web**: request/response via WebSocket con timeout configurable + modal de aprobación (`Allow` / `Don't Allow`, `y` / `n`)
+- **HITL con inputs**: tools como `request_credentials` usan el mismo flujo HITL pero con formulario de campos (texto/password) y `modifiedParams`.
 
 ## Google Workspace (Google Auth)
 
@@ -349,12 +359,14 @@ Las tools de Google usan OAuth2 via `googleapis`. Las credenciales se resuelven 
 Configura con CredentialStore:
 
 ```ts
-await credentialStore.set("google", {
+await credentialStore.save("google", {
   clientId: "...",
   clientSecret: "...",
   refreshToken: "...",
 });
 ```
+
+También podés pedirlas en UI desde el chat con el `orchestrator`: usará `request_credentials` y abrirá el modal HITL para completar los campos.
 
 O via `.env`:
 
@@ -391,6 +403,7 @@ El runtime incluye un `Scheduler` para ejecución cron, one-time y delayed:
 
 - Para mensajes triviales, el orquestador puede responder sin delegar.
 - Para tareas especializadas, debe aparecer `tool_start/tool_end` en `/traces`.
+- Cuando el orquestador delega durante un turno del usuario, espera a que esos chats delegados cierren antes de devolver la respuesta final.
 - Si no hay delegación, no verás eventos de `delegate` en la traza.
 - El especialista `math` responde corto por defecto (solo resultado, salvo pedido de pasos).
 
