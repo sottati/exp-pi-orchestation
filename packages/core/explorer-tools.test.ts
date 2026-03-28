@@ -1,6 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { createExplorerToolEntries, redactActions } from "./explorer-tools";
-import { CredentialStore } from "./credential-store";
+import { createExplorerToolEntries } from "./explorer-tools";
 
 describe("createExplorerToolEntries", () => {
   test("returns 3 tools with correct names", () => {
@@ -30,7 +29,7 @@ describe("createExplorerToolEntries", () => {
     }
   });
 
-  test("all tools have description and parameters", () => {
+  test("all tools have description, parameters, and execute function", () => {
     const entries = createExplorerToolEntries({});
     for (const entry of entries) {
       expect(entry.description).toBeTruthy();
@@ -38,20 +37,14 @@ describe("createExplorerToolEntries", () => {
       expect(typeof entry.execute).toBe("function");
     }
   });
-});
 
-describe("redactActions", () => {
-  test("masks password fill values", () => {
-    const actions = [
-      { type: "fill" as const, selector: "[name=username]", value: "alice" },
-      { type: "fill" as const, selector: "[type=password]", value: "secret123" },
-      { type: "fill" as const, selector: "#password-field", value: "hidden" },
-      { type: "click" as const, selector: "#submit" },
-    ];
-    const redacted = redactActions(actions);
-    expect(redacted[0]).toEqual({ type: "fill", selector: "[name=username]", value: "alice" });
-    expect(redacted[1]).toEqual({ type: "fill", selector: "[type=password]", value: "***REDACTED***" });
-    expect(redacted[2]).toEqual({ type: "fill", selector: "#password-field", value: "***REDACTED***" });
-    expect(redacted[3]).toEqual({ type: "click", selector: "#submit" });
+  test("interact_page parameters have url and task (not actions)", () => {
+    const entries = createExplorerToolEntries({});
+    const interactTool = entries.find(e => e.name === "interact_page")!;
+    const schema = interactTool.parameters as { properties?: Record<string, unknown> };
+    expect(schema.properties).toHaveProperty("url");
+    expect(schema.properties).toHaveProperty("task");
+    expect(schema.properties).not.toHaveProperty("actions");
+    expect(schema.properties).not.toHaveProperty("followUpUrls");
   });
 });
