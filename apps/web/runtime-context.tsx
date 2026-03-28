@@ -7,7 +7,7 @@ import type {
   ScheduledJob,
   TraceEvent,
 } from "../../packages/core/contracts";
-import type { AgentInfo, ChatItem, DelegationBlock, HydratedUiState, UIMessage } from "./ui-state";
+import type { AgentInfo, ChatItem, DelegationBlock, HydratedUiState, ThinkingTraceBlock, UIMessage } from "./ui-state";
 
 export type DithieState = "idle" | "thinking" | "delegating" | "error";
 export type ThemeMode = "light" | "dark";
@@ -61,17 +61,22 @@ export interface RuntimeState {
 }
 
 type ServerMsg =
-  | { type: "agents"; agents: AgentInfo[]; sessionId?: string }
-  | { type: "chat_sending"; runId: string; toAgentId: string }
-  | { type: "stream_delta"; runId: string; delta: string }
-  | { type: "stream_end"; runId: string; answer: string; durationMs: number }
-  | { type: "stream_error"; runId: string; error: string }
-  | { type: "stream_status"; runId: string; text: string }
-  | { type: "trace"; event: TraceEvent }
-  | { type: "chat_lifecycle"; chat: AgentChat }
-  | { type: "job_lifecycle"; job: ScheduledJob }
-  | { type: "delegation_start"; runId: string; delegationId: string; fromAgentId: string; toAgentId: string; task: string }
-  | { type: "delegation_end"; runId: string; delegationId: string; result: string; durationMs: number; status: "ok" | "error" }
+  | { type: "agents"; agents: AgentInfo[]; sessionId?: string; orgId?: string }
+  | { type: "chat_sending"; runId: string; toAgentId?: string; orgId?: string; orchestratorId?: string; contact?: string }
+  | { type: "stream_delta"; runId: string; delta: string; orgId?: string }
+  | { type: "stream_thinking_start"; runId: string }
+  | { type: "stream_thinking_delta"; runId: string; delta: string }
+  | { type: "stream_thinking_end"; runId: string; content: string }
+  | { type: "stream_end"; runId: string; answer: string; durationMs: number; orgId?: string }
+  | { type: "stream_error"; runId: string; error: string; orgId?: string }
+  | { type: "stream_status"; runId: string; text: string; orgId?: string }
+  | { type: "trace"; event: TraceEvent; orgId?: string }
+  | { type: "chat_lifecycle"; chat: AgentChat; orgId?: string }
+  | { type: "job_lifecycle"; job: ScheduledJob; orgId?: string }
+  | { type: "delegation_start"; runId: string; delegationId: string; fromAgentId: string; toAgentId: string; task: string; orgId?: string }
+  | { type: "delegation_end"; runId: string; delegationId: string; result: string; durationMs: number; status: "ok" | "error"; orgId?: string }
+  | { type: "channel_event"; event: ChannelDeliveryEvent }
+  | { type: "communication_intent"; intent: CommunicationIntentLog }
   | {
     type: "hitl_request";
     reqId: string;
@@ -96,7 +101,10 @@ type LocalAction =
 
 type Action = ServerMsg | LocalAction;
 
-const initialState: RuntimeState = {
+export type RuntimeAction = Action;
+
+export const initialRuntimeState: RuntimeState = {
+  orgId: "",
   agents: [],
   sessionId: "",
   selectedOrchestratorId: "",
@@ -172,6 +180,7 @@ function upsertConversationFromChannelEvent(
 function hasDelegationItem(chatItems: ChatItem[], delegationId: string): boolean {
   return chatItems.some((item) => item.kind === "delegation" && item.delegationId === delegationId);
 }
+
 
 function isEventForCurrentOrg(state: RuntimeState, eventOrgId?: string): boolean {
   if (!eventOrgId) return true;
@@ -269,6 +278,7 @@ export function runtimeReducer(state: RuntimeState, action: Action): RuntimeStat
       return { ...state, streamBuffer: state.streamBuffer + action.delta };
 
     case "stream_end": {
+      const existingThinkingTrace = state.thinkingTraces[action.runId];
       const msg: UIMessage = {
         id: `msg-${action.runId}`,
         role: "assistant",
@@ -299,6 +309,7 @@ export function runtimeReducer(state: RuntimeState, action: Action): RuntimeStat
     }
 
     case "stream_error": {
+      const existingThinkingTrace = action.runId ? state.thinkingTraces[action.runId] : undefined;
       const msg: UIMessage = {
         id: `err-${action.runId || "socket"}-${Date.now()}`,
         role: "error",
@@ -327,8 +338,123 @@ export function runtimeReducer(state: RuntimeState, action: Action): RuntimeStat
       };
     }
 
-    case "stream_status":
-      return state;
+    case "stream_status": {
+      const now = Date.now();
+      const existing = state.thinkingTraces[action.runId];
+      if (existing?.hasModelThinking) return state;
+      const nextLines = existing
+        ? existing.lines[existing.lines.length - 1] === action.text
+          ? existing.lines
+          : existing.lines.length === 1 && existing.lines[0] === "thinking..."
+            ? [action.text]
+            : [...existing.lines, action.text]
+        : [action.text];
+      const nextBlock: ThinkingTraceBlock = existing
+        ? {
+          ...existing,
+          lines: nextLines,
+          updatedAt: now,
+          status: "running",
+          source: "tool",
+        }
+        : {
+          runId: action.runId,
+          lines: [action.text],
+          status: "running",
+          startedAt: now,
+          updatedAt: now,
+          collapsed: true,
+          source: "tool",
+          hasModelThinking: false,
+        };
+
+      return {
+        ...state,
+        thinkingTraces: { ...state.thinkingTraces, [action.runId]: nextBlock },
+        chatItems: hasThinkingTraceItem(state.chatItems, action.runId)
+          ? state.chatItems
+          : [...state.chatItems, { kind: "thinking_trace", runId: action.runId }],
+      };
+    }
+
+    case "stream_thinking_start": {
+      const now = Date.now();
+      const existing = state.thinkingTraces[action.runId];
+      const nextBlock: ThinkingTraceBlock = existing
+        ? {
+          ...existing,
+          status: "running",
+          updatedAt: now,
+          hasModelThinking: true,
+          source: "model",
+          lines:
+            existing.lines.length === 0 || (existing.lines.length === 1 && existing.lines[0] === "thinking...")
+              ? ["thinking..."]
+              : existing.lines,
+          modelText: existing.modelText ?? "",
+        }
+        : {
+          ...createThinkingTraceBlock(action.runId, now),
+          hasModelThinking: true,
+          source: "model",
+          modelText: "",
+        };
+
+      return {
+        ...state,
+        thinkingTraces: { ...state.thinkingTraces, [action.runId]: nextBlock },
+        chatItems: hasThinkingTraceItem(state.chatItems, action.runId)
+          ? state.chatItems
+          : [...state.chatItems, { kind: "thinking_trace", runId: action.runId }],
+      };
+    }
+
+    case "stream_thinking_delta": {
+      const now = Date.now();
+      const existing = state.thinkingTraces[action.runId] ?? createThinkingTraceBlock(action.runId, now);
+      const modelText = (existing.modelText ?? "") + action.delta;
+      const lines = splitThinkingLines(modelText);
+      const nextBlock: ThinkingTraceBlock = {
+        ...existing,
+        status: "running",
+        updatedAt: now,
+        source: "model",
+        hasModelThinking: true,
+        modelText,
+        lines: lines.length > 0 ? lines : ["thinking..."],
+      };
+
+      return {
+        ...state,
+        thinkingTraces: { ...state.thinkingTraces, [action.runId]: nextBlock },
+        chatItems: hasThinkingTraceItem(state.chatItems, action.runId)
+          ? state.chatItems
+          : [...state.chatItems, { kind: "thinking_trace", runId: action.runId }],
+      };
+    }
+
+    case "stream_thinking_end": {
+      const now = Date.now();
+      const existing = state.thinkingTraces[action.runId] ?? createThinkingTraceBlock(action.runId, now);
+      const finalModelText = action.content || existing.modelText || "";
+      const lines = splitThinkingLines(finalModelText);
+      const nextBlock: ThinkingTraceBlock = {
+        ...existing,
+        status: "running",
+        updatedAt: now,
+        source: "model",
+        hasModelThinking: true,
+        modelText: finalModelText || existing.modelText,
+        lines: lines.length > 0 ? lines : existing.lines,
+      };
+      return {
+        ...state,
+        thinkingTraces: { ...state.thinkingTraces, [action.runId]: nextBlock },
+        chatItems: hasThinkingTraceItem(state.chatItems, action.runId)
+          ? state.chatItems
+          : [...state.chatItems, { kind: "thinking_trace", runId: action.runId }],
+      };
+    }
 
     case "chat_lifecycle":
       if (!isEventForCurrentOrg(state, action.orgId)) return state;
@@ -551,7 +677,10 @@ interface RuntimeContextValue {
   setThemeMode: (mode: ThemeMode) => void;
   toggleThemeMode: () => void;
   sendMessage: (content: string) => boolean;
-  respondToHitl: (reqId: string, approved: boolean) => void;
+  selectConversation: (orgId: string, orchestratorId: string, contact?: string) => Promise<void>;
+  pendingAnchorUserMessageId: string | null;
+  clearPendingAnchorUserMessage: () => void;
+  respondToHitl: (reqId: string, approved: boolean, modifiedParams?: Record<string, unknown>) => void;
   toggleTrace: (eventId: string) => void;
   toggleDelegation: (delegationId: string) => void;
   toggleThinkingTrace: (runId: string) => void;
@@ -785,10 +914,27 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
     setThemeMode,
     toggleThemeMode,
     sendMessage,
+    selectConversation,
+    pendingAnchorUserMessageId,
+    clearPendingAnchorUserMessage,
     respondToHitl,
     toggleTrace,
     toggleDelegation,
-  }), [state, themeMode, setThemeMode, toggleThemeMode, sendMessage, respondToHitl, toggleTrace, toggleDelegation]);
+    toggleThinkingTrace,
+  }), [
+    state,
+    themeMode,
+    setThemeMode,
+    toggleThemeMode,
+    sendMessage,
+    selectConversation,
+    pendingAnchorUserMessageId,
+    clearPendingAnchorUserMessage,
+    respondToHitl,
+    toggleTrace,
+    toggleDelegation,
+    toggleThinkingTrace,
+  ]);
 
   return (
     <RuntimeContext.Provider value={value}>
