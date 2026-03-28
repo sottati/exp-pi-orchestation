@@ -17,6 +17,7 @@
     "smoke:debugger": "bun run apps/cli/index.ts --smoke debugger",
     "smoke:web-designer": "bun run apps/cli/index.ts --smoke web-designer",
     "smoke:marketing": "bun run apps/cli/index.ts --smoke marketing",
+    "smoke:graphic-designer": "bun run apps/cli/index.ts --smoke graphic-designer",
     "ui:gate": "bun run apps/backend/ui-gate.ts"
   },
   "devDependencies": {
