@@ -8,9 +8,9 @@ export interface BrowseResult {
 }
 
 export type PageAction =
-  | { type: "click"; selector: string }
-  | { type: "fill"; selector: string; value: string }
-  | { type: "select"; selector: string; value: string }
+  | { type: "click"; selector: string; timeout?: number }
+  | { type: "fill"; selector: string; value: string; timeout?: number }
+  | { type: "select"; selector: string; value: string; timeout?: number }
   | { type: "wait"; selector?: string; timeout?: number };
 
 export interface SearchResult {
@@ -23,11 +23,20 @@ const MAX_CONTENT_LENGTH = 8000;
 const NAV_TIMEOUT = 30_000;
 const LAUNCH_TIMEOUT = 30_000;
 const OPERATION_TIMEOUT = 60_000;
+const CONTENT_WAIT_TIMEOUT = 12_000;
+const NETWORK_IDLE_TIMEOUT = 8_000;
 const BROWSER_UNAVAILABLE_MS = 5 * 60_000;
 const SEARCH_TIMEOUT = 20_000;
 const NODE_BRIDGE_TIMEOUT = 120_000;
 const NODE_BRIDGE_FORCE = "1";
 const NODE_BRIDGE_DISABLE = "0";
+const MAX_FRAME_COUNT = 4;
+const MAX_FIELD_COUNT = 12;
+const MAX_TEXT_SNIPPET = 2400;
+const MAX_HTML_SNIPPET = 1200;
+const BROWSER_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
 let browserUnavailableUntil = 0;
 let browserUnavailableReason = "";
@@ -89,9 +98,18 @@ export async function launchAndRun<T>(fn: (page: import("playwright").Page) => P
       OPERATION_TIMEOUT,
       "chromium.launch",
     );
-    const page = await browser.newPage();
     try {
-      return await withTimeout(fn(page), OPERATION_TIMEOUT, "browser operation");
+      const context = await browser.newContext({
+        userAgent: BROWSER_USER_AGENT,
+        locale: "en-US",
+        viewport: { width: 1366, height: 900 },
+      });
+      const page = await context.newPage();
+      try {
+        return await withTimeout(fn(page), OPERATION_TIMEOUT, "browser operation");
+      } finally {
+        await withTimeout(context.close(), 10_000, "browser.context.close").catch(() => {});
+      }
     } finally {
       await withTimeout(browser.close(), 10_000, "browser.close").catch(() => {});
     }
@@ -352,6 +370,373 @@ async function searchWebViaHttp(query: string, maxResults: number): Promise<Sear
   }
 }
 
+interface DomFieldSummary {
+  tag: string;
+  type?: string;
+  id?: string;
+  name?: string;
+  placeholder?: string;
+  label?: string;
+  text?: string;
+}
+
+interface DomFrameSummary {
+  frameUrl: string;
+  frameName: string;
+  isMainFrame: boolean;
+  readyState: string;
+  appRootDetected: boolean;
+  iframeCount: number;
+  scriptCount: number;
+  linkCount: number;
+  text: string;
+  htmlSnippet: string;
+  forms: DomFieldSummary[];
+  inputs: DomFieldSummary[];
+  buttons: DomFieldSummary[];
+}
+
+async function waitForPageHydration(page: import("playwright").Page, waitFor?: string): Promise<void> {
+  if (waitFor) {
+    await page.waitForSelector(waitFor, { timeout: CONTENT_WAIT_TIMEOUT }).catch(() => {});
+  }
+
+  await page.waitForLoadState("networkidle", { timeout: NETWORK_IDLE_TIMEOUT }).catch(() => {});
+  await page.waitForFunction(
+    () => {
+      const body = document.body;
+      if (!body) return false;
+      const textLength = (body.innerText ?? "").trim().length;
+      const interactiveCount = document.querySelectorAll("form,input,textarea,select,button").length;
+      const iframeCount = document.querySelectorAll("iframe").length;
+      return (
+        document.readyState === "complete" ||
+        textLength > 120 ||
+        interactiveCount > 0 ||
+        iframeCount > 0
+      );
+    },
+    { timeout: CONTENT_WAIT_TIMEOUT },
+  ).catch(() => {});
+}
+
+function summarizeField(field: DomFieldSummary): string {
+  const parts = [
+    field.tag,
+    field.type ? `type=${field.type}` : "",
+    field.id ? `id=${field.id}` : "",
+    field.name ? `name=${field.name}` : "",
+    field.placeholder ? `placeholder=${field.placeholder}` : "",
+    field.label ? `label=${field.label}` : "",
+    field.text ? `text=${field.text}` : "",
+  ].filter(Boolean);
+  return parts.join(", ");
+}
+
+function formatFrameSummary(summary: DomFrameSummary): string {
+  const lines: string[] = [];
+  const frameHeader = summary.isMainFrame
+    ? `Frame: main (${summary.frameUrl || "about:blank"})`
+    : `Frame: child (${summary.frameUrl || "about:blank"}) name=${summary.frameName || "-"}`;
+  lines.push(frameHeader);
+  lines.push(
+    [
+      `readyState=${summary.readyState || "unknown"}`,
+      `forms=${summary.forms.length}`,
+      `inputs=${summary.inputs.length}`,
+      `buttons=${summary.buttons.length}`,
+      `iframes=${summary.iframeCount}`,
+      `scripts=${summary.scriptCount}`,
+      `links=${summary.linkCount}`,
+      `appRoot=${summary.appRootDetected ? "yes" : "no"}`,
+    ].join(", "),
+  );
+
+  if (summary.text) {
+    lines.push(`Text: ${truncateContent(summary.text, MAX_TEXT_SNIPPET)}`);
+  } else if (summary.htmlSnippet) {
+    lines.push(`HTML snippet: ${summary.htmlSnippet}`);
+  } else {
+    lines.push("Text: (empty)");
+  }
+
+  if (summary.forms.length > 0) {
+    lines.push(`Forms: ${summary.forms.map(summarizeField).join(" | ")}`);
+  }
+  if (summary.inputs.length > 0) {
+    lines.push(`Inputs: ${summary.inputs.map(summarizeField).join(" | ")}`);
+  }
+  if (summary.buttons.length > 0) {
+    lines.push(`Buttons: ${summary.buttons.map(summarizeField).join(" | ")}`);
+  }
+
+  return lines.join("\n");
+}
+
+async function captureFrameSummary(
+  frame: import("playwright").Frame,
+  isMainFrame: boolean,
+): Promise<DomFrameSummary | undefined> {
+  const frameUrl = frame.url();
+  const frameName = frame.name();
+  try {
+    const data = await frame.evaluate(
+      ({ maxFieldCount, maxHtmlLength }) => {
+        const clean = (value: unknown, max = 120): string => {
+          if (typeof value !== "string") return "";
+          return value.replace(/\s+/g, " ").trim().slice(0, max);
+        };
+
+        const readLabel = (el: Element): string => {
+          const id = (el as HTMLInputElement).id;
+          if (!id) return "";
+          const label = document.querySelector(`label[for="${CSS.escape(id)}"]`);
+          return clean(label?.textContent ?? "");
+        };
+
+        const toFieldSummary = (el: Element): DomFieldSummary => {
+          const node = el as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement;
+          const tag = node.tagName.toLowerCase();
+          const type = "type" in node && typeof node.type === "string" ? clean(node.type, 40) : "";
+          const id = "id" in node ? clean(node.id, 80) : "";
+          const name = "name" in node ? clean(node.name, 80) : "";
+          const placeholder = "placeholder" in node ? clean(node.placeholder, 120) : "";
+          const ariaLabel = clean(node.getAttribute("aria-label") ?? "", 120);
+          const label = clean(readLabel(node), 120) || ariaLabel;
+          const text = clean((node as HTMLButtonElement).innerText ?? node.textContent ?? "", 120);
+          return { tag, type, id, name, placeholder, label, text };
+        };
+
+        const forms = Array.from(document.querySelectorAll("form"))
+          .slice(0, maxFieldCount)
+          .map((form) => {
+            const formElement = form as HTMLFormElement;
+            return {
+              tag: "form",
+              id: clean(formElement.id, 80),
+              name: clean(formElement.name, 80),
+              type: clean(formElement.method || "get", 40),
+              placeholder: clean(formElement.getAttribute("action") ?? "", 120),
+              label: clean(formElement.getAttribute("aria-label") ?? "", 120),
+              text: "",
+            };
+          });
+
+        const inputs = Array.from(
+          document.querySelectorAll("input,textarea,select"),
+        )
+          .slice(0, maxFieldCount)
+          .map((input) => toFieldSummary(input));
+
+        const buttons = Array.from(
+          document.querySelectorAll("button,input[type=button],input[type=submit],input[type=reset]"),
+        )
+          .slice(0, maxFieldCount)
+          .map((button) => toFieldSummary(button));
+
+        const bodyText = clean(document.body?.innerText ?? "", 100_000);
+        const htmlSnippet = clean(document.body?.innerHTML ?? "", maxHtmlLength);
+
+        return {
+          readyState: clean(document.readyState, 40),
+          appRootDetected: Boolean(
+            document.querySelector("#root, #app, [data-reactroot], [data-v-app], [ng-app]"),
+          ),
+          iframeCount: document.querySelectorAll("iframe").length,
+          scriptCount: document.querySelectorAll("script").length,
+          linkCount: document.querySelectorAll("a[href]").length,
+          text: bodyText,
+          htmlSnippet,
+          forms,
+          inputs,
+          buttons,
+        };
+      },
+      { maxFieldCount: MAX_FIELD_COUNT, maxHtmlLength: MAX_HTML_SNIPPET },
+    );
+
+    return {
+      frameUrl,
+      frameName,
+      isMainFrame,
+      readyState: data.readyState,
+      appRootDetected: data.appRootDetected,
+      iframeCount: data.iframeCount,
+      scriptCount: data.scriptCount,
+      linkCount: data.linkCount,
+      text: data.text,
+      htmlSnippet: data.htmlSnippet,
+      forms: data.forms,
+      inputs: data.inputs,
+      buttons: data.buttons,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+async function captureDomSnapshot(page: import("playwright").Page): Promise<string> {
+  const mainFrame = page.mainFrame();
+  const frameSummaries: DomFrameSummary[] = [];
+
+  const mainSummary = await captureFrameSummary(mainFrame, true);
+  if (mainSummary) frameSummaries.push(mainSummary);
+
+  for (const frame of page.frames()) {
+    if (frame === mainFrame) continue;
+    if (frameSummaries.length >= MAX_FRAME_COUNT) break;
+    const summary = await captureFrameSummary(frame, false);
+    if (!summary) continue;
+    const hasSignal =
+      summary.text.length > 0 ||
+      summary.forms.length > 0 ||
+      summary.inputs.length > 0 ||
+      summary.buttons.length > 0;
+    if (!hasSignal) continue;
+    frameSummaries.push(summary);
+  }
+
+  if (frameSummaries.length === 0) return "(empty DOM snapshot)";
+
+  return frameSummaries.map((summary) => formatFrameSummary(summary)).join("\n\n---\n\n");
+}
+
+function splitSelectorCandidates(selector: string): string[] {
+  return selector
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function extractQuotedText(selector: string): string | undefined {
+  const match = selector.match(/["']([^"']{2,})["']/);
+  return match?.[1]?.trim();
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function hasAnyMatch(locator: import("playwright").Locator): Promise<boolean> {
+  try {
+    return (await locator.count()) > 0;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveActionLocator(
+  page: import("playwright").Page,
+  selector: string,
+  actionType: "click" | "fill" | "select",
+): Promise<import("playwright").Locator> {
+  const direct = page.locator(selector).first();
+  if (await hasAnyMatch(direct)) return direct;
+
+  for (const candidate of splitSelectorCandidates(selector)) {
+    const locator = page.locator(candidate).first();
+    if (await hasAnyMatch(locator)) return locator;
+  }
+
+  const lowered = selector.toLowerCase();
+
+  if (actionType === "fill") {
+    if (lowered.includes("pass")) {
+      const password = page.locator("input[type='password']").first();
+      if (await hasAnyMatch(password)) return password;
+    }
+    if (lowered.includes("user") || lowered.includes("email") || lowered.includes("login")) {
+      const userField = page.locator("input[type='text'],input[type='email'],input:not([type]),textarea").first();
+      if (await hasAnyMatch(userField)) return userField;
+    }
+    const genericField = page.locator("input,textarea").first();
+    if (await hasAnyMatch(genericField)) return genericField;
+  }
+
+  if (actionType === "select") {
+    const selectField = page.locator("select").first();
+    if (await hasAnyMatch(selectField)) return selectField;
+  }
+
+  if (actionType === "click") {
+    const quoted = extractQuotedText(selector);
+    if (quoted) {
+      const buttonByRole = page.getByRole("button", { name: new RegExp(escapeRegex(quoted), "i") }).first();
+      if (await hasAnyMatch(buttonByRole)) return buttonByRole;
+    }
+    const submit = page.locator("button[type='submit'],input[type='submit']").first();
+    if (await hasAnyMatch(submit)) return submit;
+    const generic = page.locator("button,[role='button'],a[role='button']").first();
+    if (await hasAnyMatch(generic)) return generic;
+  }
+
+  return direct;
+}
+
+async function performClick(
+  page: import("playwright").Page,
+  selector: string,
+  timeoutMs: number,
+): Promise<void> {
+  const locator = await resolveActionLocator(page, selector, "click");
+  await locator.scrollIntoViewIfNeeded().catch(() => {});
+  try {
+    await locator.click({ timeout: timeoutMs });
+    return;
+  } catch (firstError) {
+    try {
+      await locator.click({ timeout: Math.min(2_500, timeoutMs), force: true });
+      return;
+    } catch {
+      const handle = await locator.elementHandle({ timeout: Math.min(2_500, timeoutMs) }).catch(() => null);
+      if (handle) {
+        try {
+          await handle.evaluate((el) => (el as HTMLElement).click());
+          await handle.dispose();
+          return;
+        } catch {
+          await handle.dispose().catch(() => {});
+        }
+      }
+      throw firstError;
+    }
+  }
+}
+
+async function performFill(
+  page: import("playwright").Page,
+  selector: string,
+  value: string,
+  timeoutMs: number,
+): Promise<void> {
+  const locator = await resolveActionLocator(page, selector, "fill");
+  await locator.scrollIntoViewIfNeeded().catch(() => {});
+  try {
+    await locator.fill(value, { timeout: timeoutMs });
+    return;
+  } catch (firstError) {
+    try {
+      await locator.click({ timeout: Math.min(2_500, timeoutMs), force: true });
+      await locator.press("Control+A").catch(() => {});
+      await locator.type(value, { timeout: timeoutMs, delay: 15 });
+      return;
+    } catch {
+      throw firstError;
+    }
+  }
+}
+
+async function performSelect(
+  page: import("playwright").Page,
+  selector: string,
+  value: string,
+  timeoutMs: number,
+): Promise<void> {
+  const locator = await resolveActionLocator(page, selector, "select");
+  await locator.scrollIntoViewIfNeeded().catch(() => {});
+  await locator.selectOption(value, { timeout: timeoutMs });
+}
+
 export async function browseUrl(url: string, waitFor?: string): Promise<BrowseResult> {
   try {
     const targetUrl = validateHttpUrl(url);
@@ -376,18 +761,10 @@ export async function browseUrl(url: string, waitFor?: string): Promise<BrowseRe
     try {
       return await safeLaunchAndRun(async (page) => {
         await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
-        if (waitFor) {
-          await page.waitForSelector(waitFor, { timeout: 10_000 }).catch(() => {});
-        }
+        await waitForPageHydration(page, waitFor);
         const title = await page.title();
-        const content = await page.evaluate(() => {
-          const selectors = ["nav", "header", "footer", "[role=navigation]", "[role=banner]", ".ad", ".ads", "#cookie-banner"];
-          for (const sel of selectors) {
-            document.querySelectorAll(sel).forEach(el => el.remove());
-          }
-          return document.body?.innerText ?? "";
-        });
-        return { content: truncateContent(content), title, url: page.url() };
+        const snapshot = await captureDomSnapshot(page);
+        return { content: truncateContent(snapshot), title, url: page.url() };
       });
     } catch (err) {
       if (!shouldUseNodeBridgeForError(err)) throw err;
@@ -442,36 +819,45 @@ export async function interactWithPage(
     try {
       return await safeLaunchAndRun(async (page) => {
         await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
+        await waitForPageHydration(page);
         for (const action of actions) {
-          switch (action.type) {
-            case "click":
-              await page.click(action.selector, { timeout: 10_000 });
-              break;
-            case "fill":
-              await page.fill(action.selector, action.value, { timeout: 10_000 });
-              break;
-            case "select":
-              await page.selectOption(action.selector, action.value, { timeout: 10_000 });
-              break;
-            case "wait":
-              if (action.selector) {
-                await page.waitForSelector(action.selector, { timeout: action.timeout ?? 10_000 }).catch(() => {});
-              } else {
-                await page.waitForTimeout(action.timeout ?? 3000);
-              }
-              break;
+          try {
+            switch (action.type) {
+              case "click":
+                await performClick(page, action.selector, action.timeout ?? 10_000);
+                break;
+              case "fill":
+                await performFill(page, action.selector, action.value, action.timeout ?? 10_000);
+                break;
+              case "select":
+                await performSelect(page, action.selector, action.value, action.timeout ?? 10_000);
+                break;
+              case "wait":
+                if (action.selector) {
+                  await page.waitForSelector(action.selector, { timeout: action.timeout ?? 10_000 }).catch(() => {});
+                } else {
+                  await page.waitForTimeout(action.timeout ?? 3000);
+                }
+                break;
+            }
+          } catch (actionError) {
+            throw new Error(
+              `Action ${action.type} failed for selector "${"selector" in action ? action.selector ?? "" : ""}": ${errorMessage(actionError)}`,
+            );
           }
         }
+        await waitForPageHydration(page);
         const parts: string[] = [];
-        const mainContent = await page.evaluate(() => document.body?.innerText ?? "");
-        parts.push(truncateContent(mainContent, 4000));
+        const mainSnapshot = await captureDomSnapshot(page);
+        parts.push(truncateContent(mainSnapshot, 4000));
         if (followUpUrls) {
           for (const followUrl of followUpUrls) {
             try {
               const nextUrl = validateHttpUrl(followUrl);
               await page.goto(nextUrl, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
-              const followContent = await page.evaluate(() => document.body?.innerText ?? "");
-              parts.push(`\n--- ${nextUrl} ---\n${truncateContent(followContent, 4000)}`);
+              await waitForPageHydration(page);
+              const followSnapshot = await captureDomSnapshot(page);
+              parts.push(`\n--- ${nextUrl} ---\n${truncateContent(followSnapshot, 4000)}`);
             } catch (err) {
               parts.push(`\n--- ${followUrl} ---\nError: ${errorMessage(err)}`);
             }

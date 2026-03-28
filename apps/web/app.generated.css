@@ -830,6 +830,11 @@
       }
     }
   }
+  .focus\:border-theme-text {
+    &:focus {
+      border-color: var(--color-theme-text);
+    }
+  }
   .disabled\:cursor-not-allowed {
     &:disabled {
       cursor: not-allowed;

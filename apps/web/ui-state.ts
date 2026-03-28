@@ -34,6 +34,9 @@ export type ChatItem =
 export interface HydratedUiState {
   agents: AgentInfo[];
   sessionId: string;
+  orgId?: string;
+  selectedOrchestratorId?: string;
+  selectedContact?: string;
   messages: UIMessage[];
   chatItems: ChatItem[];
   traces: TraceEvent[];
@@ -41,15 +44,48 @@ export interface HydratedUiState {
   traceDurations: Record<string, number>;
   chats: AgentChat[];
   jobs: ScheduledJob[];
+  orchestrators?: Array<{
+    orchestratorId: string;
+    ownerNumber: string;
+    active: boolean;
+    phoneNumberId?: string;
+  }>;
+  conversations?: Array<{
+    orgId: string;
+    orchestratorId: string;
+    contact: string;
+    lastDirection: "inbound" | "outbound";
+    lastStatus: "received" | "sent" | "delivered" | "read" | "failed";
+    lastTimestamp: number;
+    preview?: string;
+  }>;
 }
 
 interface BuildUiStateInput {
   agents: AgentInfo[];
   sessionId: string;
+  orgId?: string;
+  selectedOrchestratorId?: string;
+  selectedContact?: string;
   threadMessages: ThreadEnvelope[];
   traces: TraceEvent[];
   chats: AgentChat[];
   jobs: ScheduledJob[];
+  orchestrators?: HydratedUiState["orchestrators"];
+  conversations?: HydratedUiState["conversations"];
+}
+
+interface PrimaryThreadOptions {
+  orchestratorId?: string;
+  contact?: string;
+}
+
+function isOrchestratorAgentId(agentId: string): boolean {
+  return agentId === "orchestrator" || agentId.startsWith("orchestrator:");
+}
+
+function isHumanInboundAgentId(agentId: string): boolean {
+  return agentId === "user" || agentId.startsWith("external:");
 }
 
 function contentToText(content: unknown): string {
@@ -111,8 +147,12 @@ export function buildHydratedUiState(input: BuildUiStateInput): HydratedUiState 
 
   const messages: UIMessage[] = input.threadMessages
     .filter((envelope) => {
-      if (envelope.message.role === "assistant") return envelope.fromAgentId === "orchestrator";
-      if (envelope.message.role === "user") return envelope.fromAgentId === "user";
+      if (envelope.message.role === "assistant") {
+        return isOrchestratorAgentId(envelope.fromAgentId) && isHumanInboundAgentId(envelope.toAgentId);
+      }
+      if (envelope.message.role === "user") {
+        return isHumanInboundAgentId(envelope.fromAgentId) && isOrchestratorAgentId(envelope.toAgentId);
+      }
       return false;
     })
     .map((envelope) => ({
@@ -121,6 +161,7 @@ export function buildHydratedUiState(input: BuildUiStateInput): HydratedUiState 
       content: contentToText(envelope.message.content).trim(),
       timestamp: envelope.timestamp,
       runId: envelope.runId,
+      agentId: envelope.fromAgentId,
       durationMs:
         envelope.message.role === "assistant"
           ? runDurations.get(envelope.runId)
@@ -129,7 +170,7 @@ export function buildHydratedUiState(input: BuildUiStateInput): HydratedUiState 
 
   const erroredRunIds = new Set(messages.map((message) => message.runId).filter((runId): runId is string => Boolean(runId)));
   for (const trace of allTraces) {
-    if (trace.type !== "run_failed" || trace.agentId !== "orchestrator" || trace.chatId) continue;
+    if (trace.type !== "run_failed" || !trace.agentId || !isOrchestratorAgentId(trace.agentId) || trace.chatId) continue;
     if (erroredRunIds.has(trace.runId)) continue;
     const error = typeof trace.details?.error === "string" ? trace.details.error : "Unknown error";
     messages.push({
@@ -188,6 +229,9 @@ export function buildHydratedUiState(input: BuildUiStateInput): HydratedUiState 
   return {
     agents: input.agents,
     sessionId: input.sessionId,
+    orgId: input.orgId,
+    selectedOrchestratorId: input.selectedOrchestratorId,
+    selectedContact: input.selectedContact,
     messages,
     chatItems: chatItemsWithTime.map(({ item }) => item),
     traces,
@@ -195,9 +239,13 @@ export function buildHydratedUiState(input: BuildUiStateInput): HydratedUiState 
     traceDurations,
     chats,
     jobs,
+    orchestrators: input.orchestrators ?? [],
+    conversations: input.conversations ?? [],
   };
 }
 
-export function getPrimaryThreadId(sessionId: string): string {
-  return `${sessionId}::${["user", "orchestrator"].sort().join("<->")}`;
+export function getPrimaryThreadId(sessionId: string, opts?: PrimaryThreadOptions): string {
+  const orchestratorId = opts?.orchestratorId?.trim() || "orchestrator";
+  const peerId = opts?.contact?.trim() ? `external:${opts.contact.trim()}` : "user";
+  return `${sessionId}::${[peerId, orchestratorId].sort().join("<->")}`;
 }

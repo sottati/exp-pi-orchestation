@@ -419,3 +419,64 @@ El runtime incluye un `Scheduler` para ejecución cron, one-time y delayed:
 ## Nota
 
 Este repo está en modo MPV terminal-first. La UI se activa cuando el gate indique fricción operativa real (concurrencia, HITL frecuente o volumen alto de trazas).
+
+## Multi-org + WhatsApp (Kapso) update (2026-03)
+
+Esta implementacion ya no asume un `orchestrator` unico en backend/UI.
+
+- Se agrego `packages/core/runtime-manager.ts` para manejar `orgId -> OrgRuntime` con carga lazy.
+- Cada org persiste aislada en `.runtime-data/orgs/<orgId>/`.
+- Cada orchestrator puede existir como `orchestrator:<id>` (dinamico por organizacion).
+- Especialistas (`code`, `math`, etc.) se comparten por org con su cola FIFO global por agente.
+- El runtime soporta `initiator: "external"` y metadatos de canal (`channel`, `contact`, `orchestratorId`) en trazas/envelopes.
+
+Canal WhatsApp (Kapso) v1:
+
+- Webhook project-level: `POST /api/kapso/webhooks/project` para `whatsapp.phone_number.created` y bind automatico de `phone_number_id`.
+- Webhook phone-number-level: `POST /api/kapso/webhooks/phone-number/:phoneNumberId` para `whatsapp.message.*` y `whatsapp.conversation.*`.
+- Verificacion de firma: `X-Webhook-Signature` (HMAC SHA-256 sobre raw body).
+- Deduplicacion: `X-Idempotency-Key` (ventana temporal en memoria del backend).
+- Regla estricta `owner_number`: mensajes de numeros no-owner se bloquean antes del runtime, no se enrutan y no se persisten en chat; se registra `communication_intent`.
+- Cola FIFO por conversacion (`orgId + orchestratorId + owner_number`) para preservar orden ping-pong.
+
+UI y conversacion unificada:
+
+- `GET /api/ui-state` acepta `orgId`, `orchestratorId` y `contact`.
+- Inbox por orchestrator con hilos por contacto (conversaciones WPP).
+- El hilo muestra inbound/outbound de WhatsApp y mensajes internos de UI.
+- Mensajes enviados desde UI no se despachan a WhatsApp; solo afectan el contexto conversacional interno.
+- Nuevos eventos WS: `channel_event` (sent/delivered/read/failed) y `communication_intent`.
+
+Nuevos endpoints internos:
+
+- `GET /api/orgs/:orgId/orchestrators`
+- `POST /api/orgs/:orgId/orchestrators/:orchestratorId/setup-link`
+- `GET /api/conversations`
+- `GET /api/channel-events`
+- `GET /api/communication-intents`
+
+Variables de entorno Kapso:
+
+- `KAPSO_API_KEY` (requerida para onboarding/envio)
+- `KAPSO_API_BASE_URL` (opcional, default `https://api.kapso.ai`)
+- `KAPSO_PROJECT_WEBHOOK_SECRET` y `KAPSO_PHONE_WEBHOOK_SECRET` (o `KAPSO_WEBHOOK_SECRET`)
+- `DEFAULT_ORG_ID` para backend/UI
+
+## Modelo de negocio y despliegue cloud (multi-tenant)
+
+Este producto se opera como un servicio en la nube con un unico backend que atiende multiples organizaciones.
+
+- Un servidor cloud ejecuta el runtime y la UI/API.
+- Cada cliente corresponde a una `organization` (`orgId`) aislada en datos y configuracion.
+- Cada organizacion puede tener uno o varios orchestrators (`orchestrator:<id>`).
+- Cada orchestrator puede tener su propio numero de WhatsApp (Kapso customer + `phoneNumberId`).
+- Los especialistas viven dentro de cada organizacion y son compartidos entre orchestrators de esa org.
+- La cola de trabajo se mantiene por especialista (FIFO) y por conversacion de canal (FIFO por `orgId + orchestratorId + contact`).
+
+Implicancias de producto/comercial:
+
+- Onboarding por organizacion (alta de org + alta de orchestrators + setup links de WhatsApp).
+- Escalado horizontal por capacidad del servidor; el aislamiento logico esta en `RuntimeManager` por `orgId`.
+- Trazabilidad y auditoria por org (threads, traces, chats, channel-events, communication-intents).
+- Seguridad de canal por `owner_number` (solo el numero autorizado conversa con ese orchestrator).
+- Un mismo producto/SaaS sirve a multiples clientes sin mezclar contexto entre organizaciones.

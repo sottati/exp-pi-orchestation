@@ -123,4 +123,20 @@ describe("wrapTool", () => {
     const result = await wrapped.execute("tc1", { input: "hello" });
     expect(getText(result)).toBe("after-hooked");
   });
+
+  test("hitl lifecycle callbacks run around approval flow", async () => {
+    const calls: string[] = [];
+    const wrapped = wrapTool(fakeTool(), {
+      permission: "hitl",
+      hitlHandler: async () => ({ approved: true }),
+      agentId: "code",
+      tracePermission: noopTrace,
+      onHitlStart: async () => { calls.push("start"); },
+      onHitlEnd: async () => { calls.push("end"); },
+    });
+
+    const result = await wrapped.execute("tc1", { input: "hello" });
+    expect(getText(result)).toBe("result:hello");
+    expect(calls).toEqual(["start", "end"]);
+  });
 });

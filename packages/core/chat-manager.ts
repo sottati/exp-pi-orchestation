@@ -17,12 +17,14 @@ interface ChatRuntimeData {
     timeoutReject?: (err: Error) => void;
     timeoutRemainingMs?: number;
     timeoutPausedAt?: number;
+    timeoutStartedAt?: number;
 }
 
 export interface CreateChatInput {
     sessionId: string;
     parentRunId: string;
     parentTurnId: string;
+    orchestratorId?: string;
     agentId: string;
     task: string;
     context?: string;
@@ -46,7 +48,7 @@ export interface ChatManagerOptions {
     getMaxConcurrency?: (agentId: string) => number;
 }
 
-const DEFAULT_TIMEOUT_MS = 20_000;
+const DEFAULT_TIMEOUT_MS = 180_000;
 const DEFAULT_MAX_RETRIES = 1;
 
 export class ChatManager {
@@ -108,6 +110,7 @@ export class ChatManager {
             sessionId: input.sessionId,
             parentRunId: input.parentRunId,
             parentTurnId: input.parentTurnId,
+            orchestratorId: input.orchestratorId,
             agentId: input.agentId,
             task: input.task,
             context: input.context,
@@ -165,6 +168,7 @@ export class ChatManager {
         }
 
         const changed = this.markCancelled(runtime.record);
+        this.clearTimeoutState(runtime);
         runtime.controller?.abort();
         if (changed) {
             void this.safePersist(runtime.record);
@@ -190,14 +194,48 @@ export class ChatManager {
         return index >= 0 ? index + 1 : undefined;
     }
 
+    private clearTimeoutHandle(runtime: ChatRuntimeData): void {
+        if (runtime.timeoutHandle) {
+            clearTimeout(runtime.timeoutHandle);
+            runtime.timeoutHandle = undefined;
+        }
+    }
+
+    private clearTimeoutState(runtime: ChatRuntimeData): void {
+        this.clearTimeoutHandle(runtime);
+        runtime.timeoutReject = undefined;
+        runtime.timeoutPausedAt = undefined;
+        runtime.timeoutStartedAt = undefined;
+        runtime.timeoutRemainingMs = runtime.record.timeoutMs;
+    }
+
+    private armTimeout(runtime: ChatRuntimeData): Promise<string> {
+        const remainingMs = Math.max(0, runtime.timeoutRemainingMs ?? runtime.record.timeoutMs);
+        runtime.timeoutRemainingMs = remainingMs;
+
+        return new Promise<string>((_, reject) => {
+            runtime.timeoutReject = reject;
+            runtime.timeoutStartedAt = Date.now();
+            runtime.timeoutHandle = setTimeout(() => {
+                runtime.timeoutHandle = undefined;
+                runtime.timeoutStartedAt = undefined;
+                runtime.timeoutRemainingMs = 0;
+                runtime.controller?.abort();
+                reject(new Error(`Chat timeout after ${runtime.record.timeoutMs}ms`));
+            }, remainingMs);
+        });
+    }
+
     pauseTimeout(chatId: string): void {
         const runtime = this.chats.get(chatId);
         if (!runtime || !runtime.timeoutHandle) return;
-        clearTimeout(runtime.timeoutHandle);
-        runtime.timeoutHandle = undefined;
-        const elapsed = Date.now() - (runtime.record.startedAt ?? Date.now());
-        runtime.timeoutRemainingMs = Math.max(0, runtime.record.timeoutMs - elapsed);
+        this.clearTimeoutHandle(runtime);
+        const startedAt = runtime.timeoutStartedAt ?? Date.now();
+        const elapsed = Math.max(0, Date.now() - startedAt);
+        const remainingBeforePause = runtime.timeoutRemainingMs ?? runtime.record.timeoutMs;
+        runtime.timeoutRemainingMs = Math.max(0, remainingBeforePause - elapsed);
         runtime.timeoutPausedAt = Date.now();
+        runtime.timeoutStartedAt = undefined;
     }
 
     resumeTimeout(chatId: string): void {
@@ -207,7 +245,11 @@ export class ChatManager {
         runtime.timeoutPausedAt = undefined;
         const reject = runtime.timeoutReject;
         if (!reject) return;
+        runtime.timeoutStartedAt = Date.now();
         runtime.timeoutHandle = setTimeout(() => {
+            runtime.timeoutHandle = undefined;
+            runtime.timeoutStartedAt = undefined;
+            runtime.timeoutRemainingMs = 0;
             runtime.controller?.abort();
             reject(new Error(`Chat timeout after ${runtime.record.timeoutMs}ms`));
         }, remainingMs);
@@ -251,28 +293,21 @@ export class ChatManager {
             runtime.record.updatedAt = now();
             runtime.record.startedAt ??= now();
             runtime.controller = new AbortController();
+            runtime.timeoutRemainingMs = runtime.record.timeoutMs;
+            runtime.timeoutPausedAt = undefined;
+            runtime.timeoutStartedAt = undefined;
             await this.safePersist(runtime.record);
             await this.safeHook("onStarted", runtime.record);
 
             try {
-                const timeoutMs = runtime.timeoutRemainingMs ?? runtime.record.timeoutMs;
-                const timeoutPromise = new Promise<string>((_, reject) => {
-                    runtime.timeoutReject = reject;
-                    runtime.timeoutHandle = setTimeout(() => {
-                        runtime.controller?.abort();
-                        reject(new Error(`Chat timeout after ${runtime.record.timeoutMs}ms`));
-                    }, timeoutMs);
-                });
+                const timeoutPromise = this.armTimeout(runtime);
 
                 const result = await Promise.race([
                     runner({ signal: runtime.controller.signal, attempt: runtime.record.attempts }, runtime.record),
                     timeoutPromise,
                 ]);
 
-                if (runtime.timeoutHandle) {
-                    clearTimeout(runtime.timeoutHandle);
-                    runtime.timeoutHandle = undefined;
-                }
+                this.clearTimeoutState(runtime);
 
                 runtime.record.result = result;
                 runtime.record.status = "closed";
@@ -284,10 +319,7 @@ export class ChatManager {
                 this.dequeueNext(runtime.record.agentId);
                 return;
             } catch (error) {
-                if (runtime.timeoutHandle) {
-                    clearTimeout(runtime.timeoutHandle);
-                    runtime.timeoutHandle = undefined;
-                }
+                this.clearTimeoutState(runtime);
 
                 if (runtime.controller.signal.aborted) {
                     const changed = this.markCancelled(runtime.record);

@@ -49,7 +49,7 @@ export function createExplorerToolEntries(opts: ExplorerToolOptions): ToolEntry[
   const browseUrl: ToolEntry = {
     name: "browse_url",
     source: "local",
-    description: "Navigate to a URL and extract readable page content as text. Returns the page title, final URL, and body text.",
+    description: "Navigate to a URL and extract a DOM snapshot (text + forms/inputs/buttons + iframe summaries). Returns the page title and final URL.",
     parameters: Type.Object({
       url: Type.String({ description: "URL to browse." }),
       waitFor: Type.Optional(Type.String({ description: "CSS selector to wait for before extracting content." })),
@@ -97,7 +97,7 @@ export function createExplorerToolEntries(opts: ExplorerToolOptions): ToolEntry[
   const interactPage: ToolEntry = {
     name: "interact_page",
     source: "local",
-    description: "Navigate to a URL, perform actions (click, fill, select, wait), and optionally follow up to other URLs. Supports credential auto-injection via {{credential:username}} and {{credential:password}} placeholders. Returns the final page content.",
+    description: "Navigate to a URL, perform actions (click, fill, select, wait), and optionally follow up to other URLs. Supports credential auto-injection via {{credential:username}} and {{credential:password}} placeholders. Returns a DOM snapshot of the final page(s).",
     parameters: Type.Object({
       url: Type.String({ description: "URL to navigate to." }),
       actions: Type.Array(

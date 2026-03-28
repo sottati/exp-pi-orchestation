@@ -29,6 +29,7 @@ export function isOrchestratorAgentId(agentId: string): boolean {
 export function makeOrchestratorAgentId(orchestratorId?: string): string {
   const normalized = orchestratorId?.trim();
   if (!normalized || normalized === ORCHESTRATOR_ID) return ORCHESTRATOR_ID;
+  if (normalized.startsWith(`${ORCHESTRATOR_ID}:`)) return normalized;
   return `${ORCHESTRATOR_ID}:${normalized}`;
 }
 

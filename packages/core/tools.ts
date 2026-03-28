@@ -52,6 +52,7 @@ interface DelegationInput {
     task: string;
     context?: string;
     runContext: RunContext;
+    orchestratorId: string;
 }
 
 interface ToolTraceInput {
@@ -66,6 +67,7 @@ interface ToolTraceInput {
 export interface OrchestratorToolDeps {
     registry: SpecialistRegistry;
     getRunContext: () => RunContext;
+    getOrchestratorAgentId: () => string;
     createDelegation: (input: DelegationInput) => AgentChat;
     getChat: (chatId: string) => AgentChat | undefined;
     closeChat: (chatId: string) => AgentChat | undefined;
@@ -135,6 +137,7 @@ export function createOrchestratorTools(deps: OrchestratorToolDeps): AgentTool<a
             if (!specialist) throw new Error(`Unknown agentId '${params.agentId}'. Use list_agents first.`);
 
             const runContext = deps.getRunContext();
+            const orchestratorId = deps.getOrchestratorAgentId();
             const task = validateTask(params.task);
 
             await deps.traceToolEvent({
@@ -155,6 +158,7 @@ export function createOrchestratorTools(deps: OrchestratorToolDeps): AgentTool<a
                 task,
                 context: params.context,
                 runContext,
+                orchestratorId,
             });
 
             const queuePosition = deps.getQueuePosition(chat.chatId);

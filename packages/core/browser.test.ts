@@ -16,9 +16,9 @@ describe("browser types", () => {
 
   test("PageAction types are valid", () => {
     const actions: PageAction[] = [
-      { type: "click", selector: "#btn" },
-      { type: "fill", selector: "#email", value: "a@b.com" },
-      { type: "select", selector: "#country", value: "AR" },
+      { type: "click", selector: "#btn", timeout: 1500 },
+      { type: "fill", selector: "#email", value: "a@b.com", timeout: 1500 },
+      { type: "select", selector: "#country", value: "AR", timeout: 1500 },
       { type: "wait", timeout: 1000 },
       { type: "wait", selector: "#loaded" },
     ];

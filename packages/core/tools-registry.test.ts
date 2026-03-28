@@ -6,6 +6,7 @@ function makeDeps(): OrchestratorToolDeps {
   return {
     registry: {},
     getRunContext: () => ({ runId: "r1", turnId: "t1", sessionId: "s1" }),
+    getOrchestratorAgentId: () => "orchestrator",
     createDelegation: () => ({
       chatId: "c1", sessionId: "s1", parentRunId: "r1", parentTurnId: "t1",
       agentId: "code", task: "x", status: "active" as const,

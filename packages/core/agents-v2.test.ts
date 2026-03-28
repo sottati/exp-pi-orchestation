@@ -38,11 +38,12 @@ describe("Agent definitions v2", () => {
     const defs = createAgentDefinitions();
     const orch = defs.find((d) => d.id === ORCHESTRATOR_ID)!;
     const localToolNames = (orch.localTools ?? []).map((tool) => tool.name).sort();
-    expect(localToolNames).toEqual(["list_directory", "read_file", "run_command", "search_code"]);
+    expect(localToolNames).toEqual(["list_directory", "read_file", "request_credentials", "run_command", "search_code"]);
     expect(orch.permissions["read_file"]).toBe("hitl");
     expect(orch.permissions["search_code"]).toBe("hitl");
     expect(orch.permissions["list_directory"]).toBe("hitl");
     expect(orch.permissions["run_command"]).toBe("hitl");
+    expect(orch.permissions["request_credentials"]).toBe("hitl");
   });
 
   test("code, debugger, and web-designer require HITL for list_directory", () => {
@@ -51,6 +52,13 @@ describe("Agent definitions v2", () => {
     expect(byId["code"]!.permissions["list_directory"]).toBe("hitl");
     expect(byId["debugger"]!.permissions["list_directory"]).toBe("hitl");
     expect(byId["web-designer"]!.permissions["list_directory"]).toBe("hitl");
+  });
+
+  test("explorer requires HITL for page access", () => {
+    const defs = createAgentDefinitions();
+    const explorer = defs.find((d) => d.id === "explorer")!;
+    expect(explorer.permissions["browse_url"]).toBe("hitl");
+    expect(explorer.permissions["interact_page"]).toBe("hitl");
   });
 
   test("math specialist has maxConcurrency 1", () => {

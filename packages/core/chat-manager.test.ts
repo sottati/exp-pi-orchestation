@@ -185,3 +185,30 @@ test("pauseTimeout prevents chat timeout during HITL", async () => {
   expect(hitlResolved).toBe(true);
   expect(manager.getChat(chat.chatId)?.closeReason).toBe("completed");
 });
+
+test("pauseTimeout handles multiple HITL pause/resume cycles", async () => {
+  const manager = new ChatManager();
+
+  const chat = manager.createChat(
+    { ...baseInput({ task: "hitl-multi-cycle" }), timeoutMs: 180 },
+    async (_ctx, chatRecord) => {
+      await Bun.sleep(20);
+
+      manager.pauseTimeout(chatRecord.chatId);
+      await Bun.sleep(120);
+      manager.resumeTimeout(chatRecord.chatId);
+
+      await Bun.sleep(20);
+
+      manager.pauseTimeout(chatRecord.chatId);
+      await Bun.sleep(120);
+      manager.resumeTimeout(chatRecord.chatId);
+
+      await Bun.sleep(20);
+      return "done";
+    }
+  );
+
+  await waitUntil(() => manager.getChat(chat.chatId)?.status === "closed", 1500);
+  expect(manager.getChat(chat.chatId)?.closeReason).toBe("completed");
+});

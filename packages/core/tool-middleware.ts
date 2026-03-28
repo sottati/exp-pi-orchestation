@@ -23,6 +23,8 @@ export interface WrapToolOptions {
   hooks?: AgentHooks;
   agentId: string;
   hitlTimeout?: number;
+  onHitlStart?: (request: HITLRequest) => Promise<void> | void;
+  onHitlEnd?: (request: HITLRequest) => Promise<void> | void;
   tracePermission: (info: { toolName: string; permission: Permission; resolved: string }) => Promise<void>;
 }
 
@@ -52,7 +54,16 @@ export function wrapTool(
   tool: AgentTool<any>,
   options: WrapToolOptions,
 ): AgentTool<any> {
-  const { permission, hitlHandler, hooks, agentId, hitlTimeout = 60_000, tracePermission } = options;
+  const {
+    permission,
+    hitlHandler,
+    hooks,
+    agentId,
+    hitlTimeout = 60_000,
+    onHitlStart,
+    onHitlEnd,
+    tracePermission,
+  } = options;
 
   return {
     ...tool,
@@ -81,6 +92,7 @@ export function wrapTool(
 
         let response: HITLResponse;
         try {
+          await onHitlStart?.(request);
           response = await Promise.race([
             hitlHandler(request),
             new Promise<HITLResponse>((_, reject) =>
@@ -95,6 +107,8 @@ export function wrapTool(
             };
           }
           throw err;
+        } finally {
+          await onHitlEnd?.(request);
         }
 
         if (!response.approved) {

@@ -446,3 +446,73 @@ Serves on <http://localhost:3000>.
 | `/chat`, `/traces`, `/agents`, `/chats`, `/jobs` | GET | SPA fallback routes served with the web shell |
 | `/api/jobs` | GET | List scheduled jobs |
 | `/api/jobs/:id` | GET/DELETE | Inspect or cancel scheduled job |
+
+## Multi-org + WhatsApp (Kapso) addendum (2026-03)
+
+This section supersedes older single-orchestrator assumptions for backend/UI runtime behavior.
+
+Architecture updates:
+
+- New `RuntimeManager` (`packages/core/runtime-manager.ts`) manages `orgId -> OrgRuntime` with lazy load.
+- Persisted data for backend/UI is isolated per org under `.runtime-data/orgs/<orgId>/`.
+- Orchestrators are dynamic per org (`orchestrator:<id>`), not only `orchestrator`.
+- Specialists remain shared per org, with FIFO queueing enforced by chat manager per specialist.
+- Runtime turn context includes external channel metadata (`initiator: "external"`, `channel`, `contact`, `orchestratorId`).
+
+Kapso adapter updates:
+
+- `POST /api/kapso/webhooks/project`: handles `whatsapp.phone_number.created` and binds `phone_number_id` to orchestrator channel config.
+- `POST /api/kapso/webhooks/phone-number/:phoneNumberId`: handles `whatsapp.message.*` and `whatsapp.conversation.*`.
+- Webhook signature verification via `X-Webhook-Signature` (HMAC SHA-256 over raw body).
+- Idempotency dedupe via `X-Idempotency-Key`.
+
+Strict owner routing rule:
+
+- `owner_number` is mandatory for active WhatsApp orchestrator channels.
+- If inbound number != configured owner: message is blocked before runtime, not routed, not persisted in chat thread.
+- A technical `communication_intent` record is appended for audit/debug.
+
+UI + channel behavior:
+
+- Conversation context is `orgId + orchestratorId + contact`.
+- Inbox supports filter by orchestrator.
+- Unified thread shows WhatsApp inbound/outbound plus internal UI messages.
+- UI-originated messages must stay internal (do not dispatch to WhatsApp transport).
+- WS events include channel activity and delivery states (`sent`, `delivered`, `read`, `failed`) plus `communication_intent`.
+
+New/updated backend routes:
+
+- `GET /api/orgs/:orgId/orchestrators`
+- `POST /api/orgs/:orgId/orchestrators/:orchestratorId/setup-link`
+- `POST /api/kapso/webhooks/project`
+- `POST /api/kapso/webhooks/phone-number/:phoneNumberId`
+- `GET /api/conversations`
+- `GET /api/channel-events`
+- `GET /api/communication-intents`
+- `GET /api/ui-state` with `orgId`, `orchestratorId`, `contact`
+
+Kapso env vars:
+
+- `KAPSO_API_KEY` (required for setup link and outbound send)
+- `KAPSO_API_BASE_URL` (optional, default `https://api.kapso.ai`)
+- `KAPSO_PROJECT_WEBHOOK_SECRET`, `KAPSO_PHONE_WEBHOOK_SECRET` (or fallback `KAPSO_WEBHOOK_SECRET`)
+- `DEFAULT_ORG_ID` for backend/UI default org selection
+
+## Business + deployment model (cloud multi-tenant)
+
+The intended product model is a cloud-hosted multi-tenant service.
+
+- One cloud backend process can host many organizations (`orgId`) through `RuntimeManager`.
+- Each organization has isolated runtime data and channel configuration.
+- Each organization can have multiple orchestrators (`orchestrator:<id>`), and each orchestrator can map to its own WhatsApp number.
+- Specialists are shared within an organization (not across organizations).
+- Queueing guarantees:
+  - FIFO per specialist (chat manager)
+  - FIFO per channel conversation (`orgId + orchestratorId + contact`)
+
+Product/business implications:
+
+- Org-level onboarding (org creation, orchestrator provisioning, Kapso setup-link flow).
+- Multi-customer SaaS operation with strict tenant isolation by org.
+- Org-level auditability (`threads`, `traces`, `chats`, `channel-events`, `communication-intents`).
+- Strict channel ownership gate (`owner_number`) to prevent cross-contact misuse.

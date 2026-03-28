@@ -1,13 +1,18 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 
 export type BaseAgentId = string;
-export type Initiator = "user" | "orchestrator" | "specialist" | "system";
+export type Initiator = "user" | "external" | "orchestrator" | "specialist" | "system";
 export type Permission = "allow" | "deny" | "hitl";
+export type ChannelKind = "ui" | "cli" | "whatsapp";
 
 export interface RunContext {
     runId: string;
     turnId: string;
     sessionId: string;
+    orgId?: string;
+    channel?: ChannelKind;
+    contact?: string;
+    orchestratorId?: string;
     delegationDepth?: number;
     delegationChain?: string[];
 }
@@ -26,6 +31,7 @@ export interface ThreadEnvelope {
     initiator: Initiator;
     chatId?: string;
     toolCallId?: string;
+    metadata?: Record<string, unknown>;
     message: AgentMessage;
 }
 
@@ -37,6 +43,7 @@ export interface AgentChat {
     sessionId: string;
     parentRunId: string;
     parentTurnId: string;
+    orchestratorId?: string;
     agentId: string;
     task: string;
     context?: string;
@@ -94,6 +101,53 @@ export interface TraceEvent {
     toolCallId?: string;
     chatId?: string;
     details?: Record<string, unknown>;
+}
+
+export interface OrchestratorChannelConfig {
+    orgId: string;
+    orchestratorId: string;
+    kapsoCustomerId: string;
+    phoneNumberId?: string;
+    ownerNumber: string;
+    active: boolean;
+    createdAt: number;
+    updatedAt: number;
+}
+
+export interface ExternalMessageEnvelope {
+    orgId: string;
+    orchestratorId: string;
+    channel: ChannelKind;
+    contact: string;
+    content: string;
+    messageId?: string;
+    timestamp: number;
+    metadata?: Record<string, unknown>;
+}
+
+export interface ChannelDeliveryEvent {
+    eventId: string;
+    orgId: string;
+    orchestratorId: string;
+    channel: ChannelKind;
+    contact: string;
+    direction: "inbound" | "outbound";
+    status: "received" | "sent" | "delivered" | "read" | "failed";
+    timestamp: number;
+    messageId?: string;
+    error?: string;
+    metadata?: Record<string, unknown>;
+}
+
+export interface CommunicationIntentLog {
+    intentId: string;
+    orgId: string;
+    orchestratorId: string;
+    fromNumber: string;
+    expectedOwnerNumber: string;
+    reason: string;
+    timestamp: number;
+    metadata?: Record<string, unknown>;
 }
 
 export interface ScheduledJob {
