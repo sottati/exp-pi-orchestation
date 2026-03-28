@@ -27,9 +27,24 @@ export interface DelegationBlock {
   durationMs?: number;
 }
 
+export type ThinkingTraceStatus = "running" | "completed" | "error";
+
+export interface ThinkingTraceBlock {
+  runId: string;
+  lines: string[];
+  status: ThinkingTraceStatus;
+  startedAt: number;
+  updatedAt: number;
+  collapsed: boolean;
+  source: "model" | "tool";
+  hasModelThinking: boolean;
+  modelText?: string;
+}
+
 export type ChatItem =
   | { kind: "message"; message: UIMessage }
-  | { kind: "delegation"; delegationId: string };
+  | { kind: "delegation"; delegationId: string }
+  | { kind: "thinking_trace"; runId: string };
 
 export interface HydratedUiState {
   agents: AgentInfo[];
@@ -41,6 +56,7 @@ export interface HydratedUiState {
   chatItems: ChatItem[];
   traces: TraceEvent[];
   delegations: Record<string, DelegationBlock>;
+  thinkingTraces: Record<string, ThinkingTraceBlock>;
   traceDurations: Record<string, number>;
   chats: AgentChat[];
   jobs: ScheduledJob[];
@@ -103,6 +119,27 @@ function contentToText(content: unknown): string {
     .join("");
 }
 
+function contentToThinkingText(content: unknown): string {
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter(
+      (item): item is { type: "thinking"; thinking: string } =>
+        typeof item === "object" &&
+        item !== null &&
+        (item as { type?: string }).type === "thinking" &&
+        typeof (item as { thinking?: unknown }).thinking === "string",
+    )
+    .map((item) => item.thinking)
+    .join("\n");
+}
+
+function thinkingTextToLines(text: string): string[] {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
 function getRunDurationMap(traces: TraceEvent[]): Map<string, number> {
   const out = new Map<string, number>();
   for (const trace of traces) {
@@ -135,6 +172,26 @@ function buildTraceDurations(traces: TraceEvent[]): Record<string, number> {
 
 function isDelegateTrace(trace: TraceEvent): boolean {
   return trace.toolName === "delegate" || trace.toolName === "delegate_task";
+}
+
+function formatThinkingLineFromTrace(trace: TraceEvent): string | undefined {
+  if (trace.type !== "tool_start" || !trace.toolName) return undefined;
+
+  const details = trace.details as Record<string, unknown> | undefined;
+  const args = details?.args as Record<string, unknown> | undefined;
+  let label = `→ ${trace.toolName}`;
+
+  if (trace.toolName === "delegate" || trace.toolName === "delegate_task") {
+    label = `→ delegate → ${String(details?.agentId ?? args?.agentId ?? "unknown")}: ${String(details?.task ?? args?.task ?? "").slice(0, 80)}`;
+  } else if (trace.toolName === "get_chat_result" || trace.toolName === "get_chat_status") {
+    label = `→ ${trace.toolName} → ${String(args?.chatId ?? "")}`;
+  }
+
+  return label;
+}
+
+function hasThinkingTraceItem(chatItems: Array<{ timestamp: number; order: number; item: ChatItem }>, runId: string): boolean {
+  return chatItems.some((entry) => entry.item.kind === "thinking_trace" && entry.item.runId === runId);
 }
 
 export function buildHydratedUiState(input: BuildUiStateInput): HydratedUiState {
@@ -184,7 +241,10 @@ export function buildHydratedUiState(input: BuildUiStateInput): HydratedUiState 
 
   messages.sort((a, b) => a.timestamp - b.timestamp);
 
+  const sortedThreadMessages = [...input.threadMessages].sort((a, b) => a.timestamp - b.timestamp);
   const delegations: Record<string, DelegationBlock> = {};
+  const thinkingTraces: Record<string, ThinkingTraceBlock> = {};
+  const runTerminalStatus = new Map<string, ThinkingTraceStatus>();
   const chatItemsWithTime: Array<{ timestamp: number; order: number; item: ChatItem }> = [];
   let order = 0;
 
@@ -192,7 +252,58 @@ export function buildHydratedUiState(input: BuildUiStateInput): HydratedUiState 
     chatItemsWithTime.push({ timestamp: message.timestamp, order: order++, item: { kind: "message", message } });
   }
 
+  for (const envelope of sortedThreadMessages) {
+    if (envelope.fromAgentId !== "orchestrator" || envelope.message.role !== "assistant") continue;
+    const runId = envelope.runId;
+    if (!runId) continue;
+    const thinkingText = contentToThinkingText(envelope.message.content);
+    if (!thinkingText) continue;
+    const lines = thinkingTextToLines(thinkingText);
+    if (lines.length === 0) continue;
+
+    const existing = thinkingTraces[runId];
+    if (!existing) {
+      thinkingTraces[runId] = {
+        runId,
+        lines,
+        status: "running",
+        startedAt: envelope.timestamp,
+        updatedAt: envelope.timestamp,
+        collapsed: true,
+        source: "model",
+        hasModelThinking: true,
+        modelText: thinkingText,
+      };
+      if (!hasThinkingTraceItem(chatItemsWithTime, runId)) {
+        chatItemsWithTime.push({
+          timestamp: envelope.timestamp,
+          order: order++,
+          item: { kind: "thinking_trace", runId },
+        });
+      }
+      continue;
+    }
+
+    for (const line of lines) {
+      if (existing.lines[existing.lines.length - 1] !== line) {
+        existing.lines = [...existing.lines, line];
+      }
+    }
+    existing.updatedAt = envelope.timestamp;
+    existing.source = "model";
+    existing.hasModelThinking = true;
+    existing.modelText = existing.modelText ? `${existing.modelText}\n${thinkingText}` : thinkingText;
+  }
+
   for (const trace of allTraces) {
+    if (
+      trace.agentId === "orchestrator" &&
+      !trace.chatId &&
+      (trace.type === "run_completed" || trace.type === "run_failed")
+    ) {
+      runTerminalStatus.set(trace.runId, trace.type === "run_failed" ? "error" : "completed");
+    }
+
     if (trace.type === "tool_start" && trace.toolCallId && isDelegateTrace(trace)) {
       const args = trace.details?.args as Record<string, unknown> | undefined;
       const task = trace.details?.task ?? args?.task;
@@ -222,6 +333,46 @@ export function buildHydratedUiState(input: BuildUiStateInput): HydratedUiState 
         durationMs: traceDurations[trace.eventId],
       };
     }
+
+    const line = formatThinkingLineFromTrace(trace);
+    if (line && trace.agentId === "orchestrator" && !trace.chatId) {
+      const existing = thinkingTraces[trace.runId];
+      if (existing?.hasModelThinking) continue;
+      if (!existing) {
+        thinkingTraces[trace.runId] = {
+          runId: trace.runId,
+          lines: [line],
+          status: "running",
+          startedAt: trace.timestamp,
+          updatedAt: trace.timestamp,
+          collapsed: true,
+          source: "tool",
+          hasModelThinking: false,
+        };
+        if (!hasThinkingTraceItem(chatItemsWithTime, trace.runId)) {
+          chatItemsWithTime.push({
+            timestamp: trace.timestamp,
+            order: order++,
+            item: { kind: "thinking_trace", runId: trace.runId },
+          });
+        }
+      } else {
+        if (existing.lines[existing.lines.length - 1] !== line) {
+          existing.lines = [...existing.lines, line];
+        }
+        existing.updatedAt = trace.timestamp;
+      }
+    }
+  }
+
+  for (const [runId, block] of Object.entries(thinkingTraces)) {
+    const terminalStatus = runTerminalStatus.get(runId);
+    if (terminalStatus) {
+      block.status = terminalStatus;
+      continue;
+    }
+    if (!messages.some((message) => message.runId === runId)) continue;
+    block.status = "completed";
   }
 
   chatItemsWithTime.sort((a, b) => a.timestamp - b.timestamp || a.order - b.order);
@@ -236,6 +387,7 @@ export function buildHydratedUiState(input: BuildUiStateInput): HydratedUiState 
     chatItems: chatItemsWithTime.map(({ item }) => item),
     traces,
     delegations,
+    thinkingTraces,
     traceDurations,
     chats,
     jobs,

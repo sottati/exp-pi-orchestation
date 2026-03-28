@@ -164,7 +164,7 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Persistence: `packages/core/thread-store.ts` (threads, traces, chat records — atomic append, fault-tolerant JSONL)
 - Web UI state hydration: `apps/web/ui-state.ts` (rebuilds persisted chat/delegation/trace view, plus chats/jobs, so F5/Ctrl+R keeps session context)
 - Web UI runtime state: `apps/web/runtime-context.tsx` (shared reducer + REST hydration + WebSocket lifecycle, kept stable across route changes)
-- Web UI router shell: `apps/web/app.tsx` mounts `react-router-dom`; `apps/web/layouts/dashboard-layout.tsx` keeps the persistent header/nav around routed pages; the chat input bar is shown only on `/` (chat route)
+- Web UI router shell: `apps/web/app.tsx` mounts `react-router-dom`; `apps/web/layouts/dashboard-layout.tsx` keeps the persistent header/nav around routed pages while `apps/web/pages/chat-page.tsx` owns the chat input bar
  - Web UI styling: `apps/web/app.css` now defines Sacred-inspired theme tokens + Tailwind entrypoint; dark theme is the default and a nav switcher persists the user's preference; `apps/web/app.generated.css` is the compiled stylesheet served by `index.html`
  - Web UI utilities: `apps/web/lib/utils.ts` (`cn`) and `apps/web/lib/agent-colors.ts` (per-agent Sacred tint mapping + shared status badge styles)
  - shadcn/ui config: root `components.json` + TS path aliases are configured so the CLI can target `apps/web`; in this cloud environment, `shadcn add` still fails unless `bun` is available in PATH because the CLI shells out to `bun add`
@@ -391,7 +391,10 @@ Serves on http://localhost:3000.
 ### Design
 - **B&W monochromatic palette**: `#000` bg, `#fff` text, grey surfaces/borders. No colors.
 - **Dithie**: pixel-art spider character as orchestrator identity. States: idle (breathing + blink), thinking (eye movement cycle), delegating (eyes shifted), error (X eyes).
-- **Persistent shell + router**: header and top nav stay mounted while React Router swaps pages; the chat input bar appears only on `/` (conversation route).
+- **Persistent shell + router**: header and top nav stay mounted while React Router swaps pages; the chat input bar is rendered by the chat page (`/`) so the trace sidebar reaches the screen bottom.
+- **Chat anchor-on-send**: in `/`, once Dithie starts streaming, the latest user message is smoothly aligned near the top of the chat container and no post-stream jump-to-bottom is triggered.
+- **Inline thinking traces**: chat feed consumes `thinking_start/delta/end` from orchestrator in real time, shows full reasoning text for debugging in a lighter floating block, extracts heading-like first lines into the block header, highlights later heading-like lines inside the body, and keeps the block visible while the final answer streams (`stream_status` remains fallback-only when model thinking is absent).
+- **Thinking persistence**: `/api/ui-state` rebuilds thinking blocks from persisted orchestrator messages (`assistant.content` entries of type `thinking`) with trace fallback.
 - **Routes**: `/` (chat), `/traces`, `/agents`, `/chats`, `/jobs`.
 - **Refresh restore**: F5/Ctrl+R rehydrates persisted chat, delegations, traces, chats and jobs via REST before WS reconnect.
 - **SPA fallback**: `apps/backend/server.ts` serves the HTML shell for all client routes above, so direct navigation and reloads work outside `/`.
@@ -400,13 +403,14 @@ Serves on http://localhost:3000.
 - `apps/backend/server.ts`: `Bun.serve()` with REST routes + WebSocket at `/ws`. Also serves the SPA shell for `/`, `/chat`, `/traces`, `/agents`, `/chats`, `/jobs`.
 - `apps/web/app.tsx`: React Router bootstrap with `createBrowserRouter`.
 - `apps/web/runtime-context.tsx`: shared reducer, `/api/ui-state` hydration, WebSocket lifecycle, live updates for traces/chats/jobs.
-- `apps/web/layouts/dashboard-layout.tsx`: persistent shell with header and nav; input bar only on `/`.
-- `apps/web/pages/chat-page.tsx`: conversation view + trace sidebar.
+- `apps/web/layouts/dashboard-layout.tsx`: persistent shell with header and nav.
+- `apps/web/pages/chat-page.tsx`: conversation view + trace sidebar, and owns the input bar so the trace sidebar reaches screen bottom.
 - `apps/web/pages/traces-page.tsx`: full trace explorer page.
 - `apps/web/pages/agents-page.tsx`: runtime agent catalog.
 - `apps/web/pages/chats-page.tsx`: delegated chat inspector.
 - `apps/web/pages/jobs-page.tsx`: scheduler job overview.
-- `apps/web/components/chat-ui.tsx`: input + message/delegation feed components.
+- `apps/web/components/chat-panel.tsx`: feed principal del chat (mensajes, thinking, delegaciones, scroll/anclaje).
+- `apps/web/components/ui/chat-input.tsx`, `apps/web/components/ui/chat-message.tsx`, `apps/web/components/ui/chat-thinking.tsx`, `apps/web/components/ui/chat-delegation.tsx`: componentes UI del chat.
 - `apps/web/components/trace-ui.tsx`: reusable trace list/panel.
 - `apps/web/components/nav.tsx`: top-level route navigation.
 

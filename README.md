@@ -119,12 +119,16 @@ Abre <http://localhost:3000> para ver el dashboard de Dithie:
 - **Estética Sacred-inspired**: paleta derivada del sistema de tokens de `sacred.computer`, con tema dark por defecto, superficies/contrastes terminales y fuente JetBrains Mono.
 - **Dithie**: pixel-art spider (16x16) como identidad del orchestrator, con estados animados (idle, thinking, delegating, error).
 - **Chat unificado**: toda la conversación pasa por Dithie (orchestrator). Las delegaciones se muestran como bloques colapsables inline.
+- **Anclaje de envío**: al enviar un mensaje en el chat principal (`/`), cuando comienza el streaming de Dithie ese mensaje del usuario se alinea cerca del tope del contenedor (smooth) y al finalizar el stream no hace salto automático al fondo.
+- **Thinking inline**: el chat consume `thinking_start/delta/end` en tiempo real y los muestra completos dentro del feed para debugging del reasoning. El bloque usa una presentacion flotante, con icono/loader de estado, etiqueta `thinking`, y un titulo extraido de la primera linea si viene como heading markdown; headings markdown posteriores tambien se resaltan dentro del cuerpo. El bloque permanece visible mientras streamea la respuesta final. `stream_status` queda como fallback cuando no llega thinking del modelo.
+- **Thinking persistente**: al recargar (F5/Ctrl+R), el bloque de thinking se reconstruye desde mensajes persistidos del orchestrator (`assistant.content[type=thinking]`) con fallback a trazas.
 - **React Router**: la UI usa layout persistente + rutas para `/`, `/traces`, `/agents`, `/chats` y `/jobs`.
 - **Tailwind UI**: el layout y los componentes usan utilidades Tailwind; `app.css` quedó como capa global de tokens, tema y animaciones, y se compila a `apps/web/app.generated.css`.
 - **Antes del primer token**: fila compacta con la mascota y la etiqueta `thinking` (sin burbuja vacía); al empezar el stream aparece la burbuja con el cursor.
 - **HITL en UI**: cuando una tool requiere aprobación, aparece un modal con `Allow` / `Don't Allow` y atajos `y` / `n`.
 - **Panel de trazas**: trazas en tiempo real (newest-last) con items expandibles y duración calculada client-side.
 - **Reload seguro**: al refrescar con F5/Ctrl+R, la UI rehidrata chat, delegaciones, trazas, chats internos y jobs persistidos de la sesión activa.
+- **Layout del chat**: la barra de entrada vive dentro del panel izquierdo en `/`, por lo que la columna derecha de TRACES llega hasta el borde inferior de la pantalla.
 - **Color por agente**: la vista `/agents` asigna un tinte específico a cada agente usando una paleta compatible con Sacred.
 - **Theme switcher**: la barra de navegación permite alternar entre dark/light y persiste la preferencia en `localStorage`.
 - **WebSocket** en `/ws`: deltas de streaming, delegation events (`delegation_start`/`delegation_end`), lifecycle de chats y push de trazas.
@@ -273,9 +277,11 @@ Cada envelope de hilo incluye metadatos de relación:
 - `apps/web/index.html`: shell HTML de la UI (title "dithie", JetBrains Mono font).
 - `apps/web/app.tsx`: entrypoint React que monta `RouterProvider` + `RuntimeProvider`.
 - `apps/web/runtime-context.tsx`: estado global de la UI, hidratación desde `/api/ui-state`, conexión WebSocket, acciones compartidas y cola HITL.
-- `apps/web/layouts/dashboard-layout.tsx`: shell persistente con header y navegación; la barra de entrada de chat solo en `/` (ruta de conversación) y modal global de aprobaciones.
+- `apps/web/layouts/dashboard-layout.tsx`: shell persistente con header y navegación, más modal global de aprobaciones.
 - `apps/web/pages/*.tsx`: páginas de router para chat, trazas, agentes, chats y jobs.
-- `apps/web/components/*.tsx`: componentes presentacionales reutilizables para chat, navegación y trazas.
+- `apps/web/components/chat-panel.tsx`: compositor del feed principal del chat.
+- `apps/web/components/ui/chat-*.tsx`: componentes presentacionales del chat (input, mensajes, thinking, delegaciones).
+- `apps/web/components/*.tsx`: componentes reutilizables para navegación y trazas.
 - `apps/web/app.css`: capa global de Tailwind + tokens/tema inspirados en Sacred.
 - `apps/web/app.generated.css`: CSS compilado de Tailwind que consume la HTML servida por Bun.
 - `components.json`: configuración de shadcn/ui adaptada a esta estructura para que futuras altas de componentes apunten a `apps/web`.

@@ -28,6 +28,8 @@ export interface DelegationBlock {
   durationMs?: number;
 }
 
+export type { ThinkingTraceStatus, ThinkingTraceBlock } from "./ui-state";
+
 export type DithieState = "idle" | "thinking" | "delegating" | "error";
 
 export interface UIMessage {
@@ -77,7 +79,8 @@ export interface ThreadEnvelopeInfo {
 
 export type ChatItem =
   | { kind: "message"; message: UIMessage }
-  | { kind: "delegation"; delegationId: string };
+  | { kind: "delegation"; delegationId: string }
+  | { kind: "thinking_trace"; runId: string };
 
 export type ViewTarget = "home" | string;
 
@@ -89,13 +92,12 @@ export interface AgentPersonality {
 
 export const AGENT_PERSONALITIES: Record<string, AgentPersonality> = {
   orchestrator: { accent: "#ffffff", badge: "D", tagline: "i delegate, therefore i am" },
-  code:         { accent: "#8be9fd", badge: "C", tagline: "snippets, not speeches" },
-  math:         { accent: "#f1fa8c", badge: "M", tagline: "numbers don't lie" },
-  explorer:     { accent: "#50fa7b", badge: "E", tagline: "browsing the infinite" },
-  writer:       { accent: "#ff79c6", badge: "W", tagline: "words are my craft" },
-  debugger:     { accent: "#ffb86c", badge: "B", tagline: "finding bugs since boot" },
-  secretary:    { accent: "#bd93f9", badge: "S", tagline: "your agenda, organized" },
+  code: { accent: "#8be9fd", badge: "C", tagline: "snippets, not speeches" },
+  math: { accent: "#f1fa8c", badge: "M", tagline: "numbers don't lie" },
+  explorer: { accent: "#50fa7b", badge: "E", tagline: "browsing the infinite" },
+  writer: { accent: "#ff79c6", badge: "W", tagline: "words are my craft" },
+  debugger: { accent: "#ffb86c", badge: "B", tagline: "finding bugs since boot" },
+  secretary: { accent: "#bd93f9", badge: "S", tagline: "your agenda, organized" },
   "web-designer": { accent: "#ff5555", badge: "F", tagline: "pixels with purpose" },
-  marketing:      { accent: "#69ff94", badge: "K", tagline: "growth is the game" },
-  "graphic-designer": { accent: "#ffd700", badge: "G", tagline: "art meets strategy" },
+  marketing: { accent: "#69ff94", badge: "K", tagline: "growth is the game" },
 };
