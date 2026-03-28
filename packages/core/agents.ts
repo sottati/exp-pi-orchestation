@@ -14,15 +14,28 @@ import { createLocalContactsToolEntries } from "./local-contacts-tools";
 import { createDevToolEntries } from "./dev-tools";
 import { createFrontendToolEntries } from "./frontend-tools";
 import { createMarketingToolEntries } from "./marketing-tools";
+import { createGraphicDesignerToolEntries } from "./graphic-designer-tools";
 import type { WorkspaceManager } from "./workspace-manager";
 import { createWorkspaceToolEntries } from "./workspace-tools";
 import { createGitToolEntries } from "./git-tools";
+import { createCredentialToolEntries } from "./credential-tools";
 
 export const ORCHESTRATOR_ID = "orchestrator" as const;
+
+export function isOrchestratorAgentId(agentId: string): boolean {
+  return agentId === ORCHESTRATOR_ID || agentId.startsWith(`${ORCHESTRATOR_ID}:`);
+}
+
+export function makeOrchestratorAgentId(orchestratorId?: string): string {
+  const normalized = orchestratorId?.trim();
+  if (!normalized || normalized === ORCHESTRATOR_ID) return ORCHESTRATOR_ID;
+  return `${ORCHESTRATOR_ID}:${normalized}`;
+}
 
 export function createAgentDefinitions(opts?: {
   credentialStore?: CredentialStore;
   workspaceManager?: WorkspaceManager;
+  orchestratorIds?: string[];
 }): AgentDefinition[] {
   const workspaceManager = opts?.workspaceManager;
   const getWorkspaceBasePath = () => workspaceManager?.getActiveWorkspacePath();
@@ -37,9 +50,13 @@ export function createAgentDefinitions(opts?: {
   const orchestratorTerminalTool = createDevToolEntries({
     commandWhitelist: ["powershell -NoProfile -Command", "bash -lc"],
   }).filter((tool) => tool.name === "run_command");
+  const orchestratorCredentialTool = createCredentialToolEntries({
+    credentialStore: opts?.credentialStore,
+  });
+  const normalizedOrchestratorIds = [...new Set((opts?.orchestratorIds ?? [ORCHESTRATOR_ID]).map((id) => makeOrchestratorAgentId(id)))];
 
-  const orchestrator = defineAgent(ORCHESTRATOR_ID)
-    .name("Orchestrator")
+  const orchestrators = normalizedOrchestratorIds.map((agentId) => defineAgent(agentId)
+    .name(agentId === ORCHESTRATOR_ID ? "Orchestrator" : `Orchestrator (${agentId.slice((ORCHESTRATOR_ID + ":").length)})`)
     .role("Routes and delegates tasks to specialists.")
     .model("openrouter", "google/gemini-3-flash-preview")
     .systemPrompt([
@@ -54,24 +71,27 @@ export function createAgentDefinitions(opts?: {
       "The secretary specialist manages the user's personal organization: Google Calendar, Gmail reading/summaries, an internal contact list, Google Tasks, and scheduling (cron jobs, recurring tasks, reminders). Delegate scheduling and agenda tasks to her.",
       "The web-designer specialist builds frontend interfaces (HTML, CSS, React, Tailwind), previews pages, and validates accessibility.",
       "The marketing specialist handles SEO audits, keyword research, competitor analysis, and content calendar management via Google Sheets. It can delegate to writer/explorer/secretary.",
+      "The graphic-designer specialist creates visual content: generates images with Gemini ImageGen, creates and exports Canva designs (poster, social_media, banner, presentation), and reads/exports Figma assets. It can delegate to explorer.",
       "You can also directly inspect local files on the user's computer with read_file, search_code, and list_directory.",
       "You can run terminal commands with run_command in powershell or bash mode when needed.",
+      "When credentials are missing, use request_credentials to ask the user for secrets through HITL instead of asking for secrets in plain chat.",
       "For shell commands, prefer run_command with shell + shellCommand parameters.",
       "For local filesystem and terminal requests, prefer your direct tools first; delegate only when specialist reasoning is needed.",
       "After tool results, produce a direct final answer for the user.",
       "Be concise by default.",
     ].join(" "))
-    .capabilities(["routing", "delegation"])
+    .capabilities(["routing", "delegation", "credential-collection"])
     .tools([])
-    .localToolEntries([...orchestratorFileTools, ...orchestratorTerminalTool])
+    .localToolEntries([...orchestratorFileTools, ...orchestratorTerminalTool, ...orchestratorCredentialTool])
     .permissions({
       "read_file": "hitl",
       "search_code": "hitl",
       "list_directory": "hitl",
       "run_command": "hitl",
+      "request_credentials": "hitl",
     })
     .maxConcurrency(Infinity)
-    .build();
+    .build());
 
   const code = defineAgent("code")
     .name("Code Specialist")
@@ -187,7 +207,7 @@ export function createAgentDefinitions(opts?: {
     ].join("\n"))
     .capabilities(["browse", "search", "interact", "extract", "drive-list", "drive-search", "drive-download"])
     .localToolEntries([...explorerTools, ...gDriveTools])
-    .permissions({ "interact_page": "hitl", "drive_download": "hitl" })
+    .permissions({ "browse_url": "hitl", "interact_page": "hitl", "drive_download": "hitl" })
     .maxConcurrency(1)
     .build();
 
@@ -466,11 +486,85 @@ export function createAgentDefinitions(opts?: {
       search_web: "allow",
       browse_url: "allow",
     })
-    .canDelegateTo(["writer", "explorer", "secretary"], { maxDepth: 2 })
+    .canDelegateTo(["writer", "explorer", "secretary", "graphic-designer"], { maxDepth: 2 })
     .maxConcurrency(1)
     .build();
 
-  return [orchestrator, code, math, explorer, writer, debugger_, secretary, webDesigner, marketing];
+  const explorerToolsForGraphicDesigner = createExplorerToolEntries({
+    credentialStore: opts?.credentialStore,
+  });
+  const searchWebForGraphicDesigner = explorerToolsForGraphicDesigner.filter(
+    (t) => t.name === "search_web",
+  );
+  const browseUrlForGraphicDesigner = explorerToolsForGraphicDesigner.filter(
+    (t) => t.name === "browse_url",
+  );
+  const graphicDesignerTools = createGraphicDesignerToolEntries({
+    credentialStore: opts?.credentialStore,
+  });
+
+  const graphicDesigner = defineAgent("graphic-designer")
+    .name("Graphic Designer")
+    .role(
+      "Visual creative: generates images with Gemini ImageGen, creates Canva designs, reads and exports Figma assets.",
+    )
+    .model("openrouter", "google/gemini-3.1-flash-lite-preview")
+    .systemPrompt(
+      [
+        "You are a graphic designer agent — a virtual creative director.",
+        "You create visual content: generate images with AI, build designs in Canva, and extract assets from Figma.",
+        "",
+        "Your tools:",
+        "- generate_image: Generate an image from a text prompt using Gemini ImageGen (Imagen 3). Supports style hints and aspect ratios (1:1, 16:9, 9:16, 4:3).",
+        "- canva_create: Create a new Canva design (poster, social_media, banner, presentation). Returns designId and edit URL.",
+        "- canva_get: Get details of an existing Canva design (title, thumbnail, edit/view URLs).",
+        "- canva_export: Export a Canva design to PDF, PNG, or JPG. Polls until ready (60s timeout).",
+        "- figma_get: Read a Figma file's structure — pages, frames, and components. Read-only.",
+        "- figma_export: Export Figma nodes as PNG, SVG, or PDF URLs.",
+        "- search_web: Search the web for visual references and inspiration.",
+        "- browse_url: Fetch page content for reference imagery and competitor visual analysis.",
+        "",
+        "Delegation:",
+        "- Delegate to 'explorer' for deep multi-page visual research or when you need to navigate complex sites for references.",
+        "",
+        "Workflow:",
+        "1. Clarify the format and dimensions if not specified.",
+        "2. Choose the right tool: generate_image for pure AI generation, canva_* for designed pieces, figma_* for design system assets.",
+        "3. Use search_web or browse_url to gather visual references when helpful.",
+        "4. Always return a usable URL or link to the created asset in your final answer.",
+        "",
+        "Be concise. Return the output link/URL prominently in your final answer.",
+      ].join("\n"),
+    )
+    .capabilities([
+      "image-generation",
+      "canva-design",
+      "figma-export",
+      "visual-research",
+      "poster",
+      "banner",
+      "social-media",
+    ])
+    .localToolEntries([
+      ...graphicDesignerTools,
+      ...searchWebForGraphicDesigner,
+      ...browseUrlForGraphicDesigner,
+    ])
+    .permissions({
+      generate_image: "allow",
+      canva_create: "allow",
+      canva_get: "allow",
+      canva_export: "allow",
+      figma_get: "allow",
+      figma_export: "allow",
+      search_web: "allow",
+      browse_url: "allow",
+    })
+    .canDelegateTo(["explorer"], { maxDepth: 2 })
+    .maxConcurrency(1)
+    .build();
+
+  return [...orchestrators, code, math, explorer, writer, debugger_, secretary, webDesigner, marketing, graphicDesigner];
 }
 
 // Deprecated — kept for backward compatibility until runtime migration (Task 15)
@@ -482,11 +576,12 @@ import type { SpecialistRegistry } from "./tools";
 export function createSpecialistRegistry(opts?: {
   credentialStore?: CredentialStore;
   workspaceManager?: WorkspaceManager;
+  orchestratorIds?: string[];
 }): SpecialistRegistry {
   const defs = createAgentDefinitions(opts);
   const registry: SpecialistRegistry = {};
   for (const def of defs) {
-    if (def.id === ORCHESTRATOR_ID) continue;
+    if (isOrchestratorAgentId(def.id)) continue;
     registry[def.id] = {
       id: def.id,
       name: def.name,
@@ -503,8 +598,12 @@ export function createSpecialistRegistry(opts?: {
 export function createOrchestratorAgent(tools: AgentTool<any>[] = [], opts?: {
   credentialStore?: CredentialStore;
   workspaceManager?: WorkspaceManager;
+  orchestratorIds?: string[];
+  orchestratorId?: string;
 }) {
   const defs = createAgentDefinitions(opts);
-  const orch = defs.find(d => d.id === ORCHESTRATOR_ID)!;
+  const preferredId = opts?.orchestratorId ? makeOrchestratorAgentId(opts.orchestratorId) : ORCHESTRATOR_ID;
+  const orch = defs.find((d) => d.id === preferredId) ?? defs.find((d) => isOrchestratorAgentId(d.id));
+  if (!orch) throw new Error("Orchestrator definition not found.");
   return orch.createAgent(tools, orch.systemPrompt);
 }
