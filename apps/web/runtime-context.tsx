@@ -894,6 +894,8 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.repeat) return;
+      const activeTag = document.activeElement?.tagName;
+      if (activeTag === "INPUT" || activeTag === "TEXTAREA") return;
       const key = event.key.toLowerCase();
       if (key === "y" && !hasInputs) {
         event.preventDefault();
