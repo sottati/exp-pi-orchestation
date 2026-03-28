@@ -14,8 +14,8 @@ function textResult(text: string, details?: Record<string, unknown>) {
 async function getGeminiApiKey(credentialStore?: CredentialStore): Promise<string> {
   if (credentialStore) {
     const cred = await credentialStore.get("gemini");
-    const key = (cred as Record<string, unknown> | null)?.["apiKey"];
-    if (typeof key === "string" && key) return key;
+    const key = cred?.["apiKey"];
+    if (key) return key;
   }
   const key = process.env.GEMINI_API_KEY;
   if (!key) {
@@ -29,8 +29,8 @@ async function getGeminiApiKey(credentialStore?: CredentialStore): Promise<strin
 async function getCanvaApiKey(credentialStore?: CredentialStore): Promise<string> {
   if (credentialStore) {
     const cred = await credentialStore.get("canva");
-    const key = (cred as Record<string, unknown> | null)?.["apiKey"];
-    if (typeof key === "string" && key) return key;
+    const key = cred?.["apiKey"];
+    if (key) return key;
   }
   const key = process.env.CANVA_API_KEY;
   if (!key) {
@@ -44,8 +44,8 @@ async function getCanvaApiKey(credentialStore?: CredentialStore): Promise<string
 async function getFigmaAccessToken(credentialStore?: CredentialStore): Promise<string> {
   if (credentialStore) {
     const cred = await credentialStore.get("figma");
-    const token = (cred as Record<string, unknown> | null)?.["accessToken"];
-    if (typeof token === "string" && token) return token;
+    const token = cred?.["accessToken"];
+    if (token) return token;
   }
   const token = process.env.FIGMA_ACCESS_TOKEN;
   if (!token) {
@@ -142,7 +142,7 @@ export function createGraphicDesignerToolEntries(opts?: GraphicDesignerToolOptio
   const canvaCreate: ToolEntry = {
     name: "canva_create",
     source: "local",
-    description: "Create a new Canva design. Returns the design ID and edit URL.",
+    description: "Create a new Canva design (blank or from a design type). Returns the design ID and edit URL.",
     parameters: Type.Object({
       title: Type.String({ description: "Title for the design" }),
       designType: Type.Union(
@@ -154,9 +154,6 @@ export function createGraphicDesignerToolEntries(opts?: GraphicDesignerToolOptio
         ],
         { description: "Type of design to create" },
       ),
-      templateId: Type.Optional(
-        Type.String({ description: "Optional Canva template ID to base the design on" }),
-      ),
     }),
     defaultPermission: "allow",
     available: true,
@@ -165,13 +162,11 @@ export function createGraphicDesignerToolEntries(opts?: GraphicDesignerToolOptio
         const apiKey = await getCanvaApiKey(credentialStore);
         const title = params.title as string;
         const designType = params.designType as string;
-        const templateId = params.templateId as string | undefined;
 
         const body: Record<string, unknown> = {
           title,
           design_type: { type: designType },
         };
-        if (templateId) body.asset_id = templateId;
 
         const response = await fetch("https://api.canva.com/rest/v1/designs", {
           method: "POST",
@@ -313,7 +308,13 @@ export function createGraphicDesignerToolEntries(opts?: GraphicDesignerToolOptio
             { headers: { Authorization: `Bearer ${apiKey}` } },
           );
 
-          if (!pollResponse.ok) continue;
+          if (!pollResponse.ok) {
+            if (pollResponse.status < 500) {
+              const errBody = await pollResponse.text();
+              return textResult(`Canva poll error (${pollResponse.status}): ${errBody}`);
+            }
+            continue;
+          }
 
           const pollData = (await pollResponse.json()) as {
             job?: { status?: string; urls?: string[] };
@@ -391,16 +392,18 @@ export function createGraphicDesignerToolEntries(opts?: GraphicDesignerToolOptio
         }
 
         const children = data.document?.children ?? [];
-        const frames = children.filter((c) => c.type === "FRAME" || c.type === "CANVAS");
+        const pages = children.filter((c) => c.type === "CANVAS");
+        const frames = children.filter((c) => c.type === "FRAME");
         const components = children.filter((c) => c.type === "COMPONENT");
 
         return textResult(
           [
             `File: ${data.name ?? "(untitled)"}`,
+            `Pages (${pages.length}): ${pages.map((f) => `${f.name} (${f.id})`).join(", ") || "(none)"}`,
             `Frames (${frames.length}): ${frames.map((f) => `${f.name} (${f.id})`).join(", ") || "(none)"}`,
             `Components (${components.length}): ${components.map((c) => `${c.name} (${c.id})`).join(", ") || "(none)"}`,
           ].join("\n"),
-          { name: data.name, frames, components },
+          { name: data.name, pages, frames, components },
         );
       } catch (err) {
         return textResult(`Error fetching Figma file: ${errorMessage(err)}`);
