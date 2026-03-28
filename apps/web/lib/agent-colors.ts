@@ -18,6 +18,7 @@ const AGENT_TINTS: Record<string, AgentTint> = {
   writer: "pink",
   debugger: "red",
   secretary: "purple",
+  "graphic-designer": "pink",
 };
 
 export function getAgentTint(agentId: string): AgentTint {

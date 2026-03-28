@@ -245,6 +245,7 @@ const DELEGATION_TIMEOUT_BY_AGENT: Partial<Record<BaseAgentId, number>> = {
     explorer: 300_000,
     "web-designer": 300_000,
     marketing: 300_000,
+    "graphic-designer": 300_000,
 };
 
 function parseAllowedRoots(raw?: string): string[] | undefined {

@@ -97,5 +97,5 @@ export const AGENT_PERSONALITIES: Record<string, AgentPersonality> = {
   secretary:    { accent: "#bd93f9", badge: "S", tagline: "your agenda, organized" },
   "web-designer": { accent: "#ff5555", badge: "F", tagline: "pixels with purpose" },
   marketing:      { accent: "#69ff94", badge: "K", tagline: "growth is the game" },
-  "graphic-designer": { accent: "#ffd700", badge: "G", tagline: "pixels with purpose" },
+  "graphic-designer": { accent: "#ffd700", badge: "G", tagline: "art meets strategy" },
 };
