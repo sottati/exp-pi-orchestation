@@ -1,0 +1,45 @@
+services:
+  pi-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      SEARXNG_URL: http://searxng:8080
+      BROWSE_SERVICE_URL: http://pi-browse-service:8001
+    depends_on:
+      searxng:
+        condition: service_healthy
+      pi-browse-service:
+        condition: service_healthy
+    env_file:
+      - .env
+
+  pi-browse-service:
+    build:
+      context: ./services/browse-service
+    ports:
+      - "8001:8001"
+    environment:
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      BROWSE_LLM_MODEL: ${BROWSE_LLM_MODEL:-openrouter/google/gemini-3.1-flash-lite-preview}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 15s
+      timeout: 5s
+      start_period: 90s
+      retries: 5
+
+  searxng:
+    image: searxng/searxng:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./services/searxng:/etc/searxng:ro
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5

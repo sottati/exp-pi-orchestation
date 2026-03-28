@@ -1,0 +1,35 @@
+use_default_settings: true
+
+general:
+  instance_name: "pi-searxng"
+  debug: false
+
+search:
+  safe_search: 0
+  formats:
+    - html
+    - json
+
+server:
+  secret_key: "pi-searxng-local-dev-secret-key-change-in-prod"
+  bind_address: "0.0.0.0"
+  port: 8080
+  http_protocol_version: "1.0"
+  method: "GET"
+
+ui:
+  default_theme: simple
+
+engines:
+  - name: google
+    engine: google
+    shortcut: g
+    disabled: false
+  - name: bing
+    engine: bing
+    shortcut: b
+    disabled: false
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: d
+    disabled: false
