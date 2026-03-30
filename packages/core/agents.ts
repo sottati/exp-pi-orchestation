@@ -19,6 +19,8 @@ import type { WorkspaceManager } from "./workspace-manager";
 import { createWorkspaceToolEntries } from "./workspace-tools";
 import { createGitToolEntries } from "./git-tools";
 import { createCredentialToolEntries } from "./credential-tools";
+import { createMemoryToolEntries } from "./memory-tools";
+import { MemoryClient } from "./memory-client";
 
 export const ORCHESTRATOR_ID = "orchestrator" as const;
 
@@ -64,6 +66,11 @@ export function createAgentDefinitions(opts?: {
   const orchestratorCredentialTool = createCredentialToolEntries({
     credentialStore: opts?.credentialStore,
   });
+
+  const memoryClient = new MemoryClient();
+  const memoryTools = createMemoryToolEntries(memoryClient); // [mem_save, mem_get]
+  const memGetOnly = memoryTools.filter((t) => t.name === "mem_get");
+
   const normalizedOrchestratorIds = [...new Set((opts?.orchestratorIds ?? [ORCHESTRATOR_ID]).map((id) => makeOrchestratorAgentId(id)))];
 
   const orchestrators = normalizedOrchestratorIds.map((agentId) => withSkills(defineAgent(agentId))
@@ -94,13 +101,15 @@ export function createAgentDefinitions(opts?: {
     .capabilities(["routing", "delegation", "credential-collection"])
     .thinkingLevel("medium")
     .tools([])
-    .localToolEntries([...orchestratorFileTools, ...orchestratorTerminalTool, ...orchestratorCredentialTool])
+    .localToolEntries([...orchestratorFileTools, ...orchestratorTerminalTool, ...orchestratorCredentialTool, ...memoryTools])
     .permissions({
       "read_file": "hitl",
       "search_code": "hitl",
       "list_directory": "hitl",
       "run_command": "hitl",
       "request_credentials": "hitl",
+      "mem_save": "allow",
+      "mem_get": "allow",
     })
     .maxConcurrency(Infinity)
     .build());
@@ -124,6 +133,7 @@ export function createAgentDefinitions(opts?: {
       }),
       ...workspaceToolEntries,
       ...gitToolEntries,
+      ...memoryTools,
     ])
     .permissions({
       "read_file": "hitl",
@@ -144,6 +154,8 @@ export function createAgentDefinitions(opts?: {
       "git_fetch": "allow",
       "git_*": "hitl",
       "github_*": "hitl",
+      "mem_save": "allow",
+      "mem_get": "allow",
     })
     .canDelegateTo(["web-designer"], { maxDepth: 2 })
     .maxConcurrency(1)
@@ -180,8 +192,8 @@ export function createAgentDefinitions(opts?: {
       "- Be concise. Focus on insights, not raw data dumps.",
     ].join("\n"))
     .capabilities(["add", "subtract", "multiply", "divide", "query-sqlite", "query-supabase", "parse-csv", "analyze-data", "read-excel", "write-excel", "read-gsheet", "write-gsheet", "create-gsheet"])
-    .localToolEntries([...analystTools, ...excelTools, ...gSheetsTools])
-    .permissions({ "query_sqlite": "hitl", "query_supabase": "hitl", "write_excel": "hitl", "write_gsheet": "hitl", "create_gsheet": "hitl" })
+    .localToolEntries([...analystTools, ...excelTools, ...gSheetsTools, ...memGetOnly])
+    .permissions({ "query_sqlite": "hitl", "query_supabase": "hitl", "write_excel": "hitl", "write_gsheet": "hitl", "create_gsheet": "hitl", "mem_get": "allow" })
     .maxConcurrency(1)
     .build();
 
@@ -218,8 +230,8 @@ export function createAgentDefinitions(opts?: {
       "- Be concise. Prefer structured output (lists, key-value) over prose.",
     ].join("\n"))
     .capabilities(["browse", "search", "interact", "extract", "drive-list", "drive-search", "drive-download"])
-    .localToolEntries([...explorerTools, ...gDriveTools])
-    .permissions({ "browse_url": "hitl", "interact_page": "hitl", "drive_download": "hitl" })
+    .localToolEntries([...explorerTools, ...gDriveTools, ...memGetOnly])
+    .permissions({ "browse_url": "hitl", "interact_page": "hitl", "drive_download": "hitl", "mem_get": "allow" })
     .maxConcurrency(1)
     .build();
 
@@ -263,8 +275,8 @@ export function createAgentDefinitions(opts?: {
       "- For emails, always confirm recipients and content before sending. Prefer gmail_draft over gmail_send when uncertain.",
     ].join("\n"))
     .capabilities(["write", "summarize", "translate", "edit", "document", "read-docx", "write-docx", "read-gdoc", "write-gdoc", "create-gdoc", "gmail-send", "gmail-draft"])
-    .localToolEntries([...wordTools, ...gDocsTools, ...gmailWriteTools])
-    .permissions({ "write_docx": "hitl", "write_gdoc": "hitl", "create_gdoc": "hitl", "gmail_send": "hitl", "gmail_draft": "hitl" })
+    .localToolEntries([...wordTools, ...gDocsTools, ...gmailWriteTools, ...memGetOnly])
+    .permissions({ "write_docx": "hitl", "write_gdoc": "hitl", "create_gdoc": "hitl", "gmail_send": "hitl", "gmail_draft": "hitl", "mem_get": "allow" })
     .maxConcurrency(1)
     .build();
 
@@ -308,8 +320,8 @@ export function createAgentDefinitions(opts?: {
       "- If no issues found, say so clearly — don't invent problems.",
     ].join("\n"))
     .capabilities(["debug", "review", "analyze", "security", "read-file", "search-code"])
-    .localToolEntries(debuggerTools)
-    .permissions({ "read_file": "hitl", "search_code": "hitl", "list_directory": "hitl" })
+    .localToolEntries([...debuggerTools, ...memGetOnly])
+    .permissions({ "read_file": "hitl", "search_code": "hitl", "list_directory": "hitl", "mem_get": "allow" })
     .maxConcurrency(1)
     .build();
 
@@ -381,11 +393,12 @@ export function createAgentDefinitions(opts?: {
       "tasks-list", "tasks-create", "tasks-complete",
       "schedule", "cron", "reminders", "briefing",
     ])
-    .localToolEntries([...gmailReadTools, ...calendarTools, ...contactsTools, ...tasksTools])
+    .localToolEntries([...gmailReadTools, ...calendarTools, ...contactsTools, ...tasksTools, ...memoryTools])
     .permissions({
       "calendar_create": "hitl", "calendar_update": "hitl", "calendar_delete": "hitl",
       "contacts_create": "hitl", "contacts_delete": "hitl",
       "tasks_create": "hitl", "tasks_complete": "hitl",
+      "mem_save": "allow", "mem_get": "allow",
     })
     .maxConcurrency(1)
     .build();
@@ -423,6 +436,7 @@ export function createAgentDefinitions(opts?: {
       ...gitToolEntries,
       ...createFrontendToolEntries(),
       ...browseUrlEntry,
+      ...memoryTools,
     ])
     .permissions({
       "read_file": "hitl",
@@ -443,6 +457,8 @@ export function createAgentDefinitions(opts?: {
       "git_fetch": "allow",
       "git_*": "hitl",
       "github_*": "hitl",
+      "mem_save": "allow",
+      "mem_get": "allow",
     })
     .canDelegateTo(["code"], { maxDepth: 2 })
     .maxConcurrency(1)
@@ -489,6 +505,7 @@ export function createAgentDefinitions(opts?: {
       ...marketingToolEntries,
       ...searchWebEntry,
       ...browseUrlForMarketing,
+      ...memGetOnly,
     ])
     .permissions({
       seo_audit: "allow",
@@ -497,6 +514,7 @@ export function createAgentDefinitions(opts?: {
       marketing_content_calendar: "allow",
       search_web: "allow",
       browse_url: "allow",
+      mem_get: "allow",
     })
     .canDelegateTo(["writer", "explorer", "secretary", "graphic-designer"], { maxDepth: 2 })
     .maxConcurrency(1)
@@ -561,6 +579,7 @@ export function createAgentDefinitions(opts?: {
       ...graphicDesignerTools,
       ...searchWebForGraphicDesigner,
       ...browseUrlForGraphicDesigner,
+      ...memGetOnly,
     ])
     .permissions({
       generate_image: "allow",
@@ -571,6 +590,7 @@ export function createAgentDefinitions(opts?: {
       figma_export: "allow",
       search_web: "allow",
       browse_url: "allow",
+      mem_get: "allow",
     })
     .canDelegateTo(["explorer"], { maxDepth: 2 })
     .maxConcurrency(1)

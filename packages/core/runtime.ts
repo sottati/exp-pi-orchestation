@@ -21,6 +21,8 @@ import { CredentialStore } from "./credential-store";
 import { WorkspaceManager } from "./workspace-manager";
 import { delimiter, join } from "node:path";
 import { buildSkillContextSection } from "./skills-layer";
+import { MemoryClient } from "./memory-client";
+import { maybeCompact } from "./compaction";
 
 interface RouteMessageInput {
     fromAgentId: BaseAgentId;
@@ -349,6 +351,7 @@ export class MultiAgentRuntime {
     readonly scheduler: Scheduler;
     readonly credentialStore: CredentialStore;
     readonly workspaceManager: WorkspaceManager;
+    private readonly memoryClient: MemoryClient;
 
     constructor(optionsOrSessionId?: RuntimeOptions | string) {
         const options: RuntimeOptions = typeof optionsOrSessionId === "string"
@@ -373,6 +376,8 @@ export class MultiAgentRuntime {
             dataDir,
             allowedRoots: workspaceAllowedRoots,
         });
+
+        this.memoryClient = new MemoryClient();
 
         const sharedOpts = {
             credentialStore: this.credentialStore,
@@ -1114,6 +1119,38 @@ export class MultiAgentRuntime {
                 answer = fallback;
             }
         }
+
+        // Post-turn compaction: summarize old messages for orchestrator threads
+        if (isOrchestratorAgentId(input.toAgentId)) {
+            await safeAsync(async () => {
+                const compacted = await maybeCompact({
+                    messages: agent.state.messages,
+                    model: agent.state.model,
+                    client: this.memoryClient,
+                });
+                if (compacted !== null) {
+                    agent.replaceMessages(compacted);
+                    const keepCount = compacted.length - 1;
+                    const fullHistory = await this.store.getThreadMessages(threadId);
+                    const keptEnvelopes = fullHistory.slice(-keepCount);
+                    const summaryEnvelope: ThreadEnvelope = {
+                        envelopeId: createId("env"),
+                        parentEnvelopeId: keptEnvelopes[0]?.envelopeId,
+                        sessionId: this.sessionId,
+                        threadId,
+                        runId: input.runContext.runId,
+                        turnId: input.runContext.turnId,
+                        timestamp: now(),
+                        fromAgentId: input.fromAgentId,
+                        toAgentId: input.toAgentId,
+                        initiator: input.initiator,
+                        message: compacted[0]!,
+                    };
+                    await this.store.overwriteThread(threadId, [summaryEnvelope, ...keptEnvelopes]);
+                }
+            }, "runtime:compaction");
+        }
+
         const durationMs = now() - startedAt;
 
         await this.trace({

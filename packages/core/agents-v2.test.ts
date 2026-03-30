@@ -38,7 +38,7 @@ describe("Agent definitions v2", () => {
     const defs = createAgentDefinitions();
     const orch = defs.find((d) => d.id === ORCHESTRATOR_ID)!;
     const localToolNames = (orch.localTools ?? []).map((tool) => tool.name).sort();
-    expect(localToolNames).toEqual(["list_directory", "read_file", "request_credentials", "run_command", "search_code"]);
+    expect(localToolNames).toEqual(["list_directory", "mem_get", "mem_save", "read_file", "request_credentials", "run_command", "search_code"]);
     expect(orch.permissions["read_file"]).toBe("hitl");
     expect(orch.permissions["search_code"]).toBe("hitl");
     expect(orch.permissions["list_directory"]).toBe("hitl");

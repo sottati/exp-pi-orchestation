@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { appendFile, mkdir, readdir } from "node:fs/promises";
+import { appendFile, mkdir, readdir, rename } from "node:fs/promises";
 import { join } from "node:path";
 import type { AgentChat, ScheduledJob, ThreadEnvelope, TraceEvent } from "./contracts";
 import { errorMessage, safeParseLine } from "./errors";
@@ -30,6 +30,7 @@ export class ThreadStore {
     private readonly chatsFile: string;
     private readonly jobsFile: string;
     private readonly ready: Promise<void>;
+    private traceLineCount = 0;
 
     constructor(opts: ThreadStoreOptions) {
         this.sessionId = opts.sessionId;
@@ -94,7 +95,19 @@ export class ThreadStore {
     }
 
     async appendTrace(event: TraceEvent) {
+        const maxLines = parseInt(process.env.TRACES_MAX_LINES ?? "5000", 10);
+        this.traceLineCount++;
         await this.appendJsonl(this.tracesFile, event);
+        if (this.traceLineCount >= maxLines) {
+            const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+            const rotatedPath = join(this.sessionDir, `traces.${stamp}.jsonl`);
+            try {
+                await rename(this.tracesFile, rotatedPath);
+            } catch (err) {
+                console.error(`[thread-store] trace rotation failed: ${errorMessage(err)}`);
+            }
+            this.traceLineCount = 0;
+        }
     }
 
     async getTraces(): Promise<TraceEvent[]> {
@@ -104,7 +117,11 @@ export class ThreadStore {
     }
 
     async appendChatRecord(chat: AgentChat) {
-        await this.appendJsonl(this.chatsFile, chat);
+        if (chat.status === "closed") {
+            await this.appendJsonl(this.chatsFile, chat);
+        } else {
+            await this.appendJsonl(this.chatsFile, { chatId: chat.chatId, status: chat.status, ts: Date.now() });
+        }
     }
 
     async getChatRecords(): Promise<AgentChat[]> {
@@ -129,5 +146,12 @@ export class ThreadStore {
             byJobId.set(row.jobId, row);
         }
         return [...byJobId.values()];
+    }
+
+    async overwriteThread(threadId: string, envelopes: ThreadEnvelope[]): Promise<void> {
+        await this.ready;
+        const path = this.threadPath(threadId);
+        const content = envelopes.map(e => JSON.stringify(e)).join("\n") + (envelopes.length > 0 ? "\n" : "");
+        await Bun.write(path, content);
     }
 }
