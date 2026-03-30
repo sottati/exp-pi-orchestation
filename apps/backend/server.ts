@@ -19,6 +19,12 @@ import { verifyWebhookSignature, WebhookIdempotencyWindow } from "./kapso-webhoo
 const DEFAULT_ORG_ID = process.env.DEFAULT_ORG_ID ?? "default";
 const KAPSO_PROJECT_WEBHOOK_SECRET = process.env.KAPSO_PROJECT_WEBHOOK_SECRET ?? process.env.KAPSO_WEBHOOK_SECRET;
 const KAPSO_PHONE_WEBHOOK_SECRET = process.env.KAPSO_PHONE_WEBHOOK_SECRET ?? process.env.KAPSO_WEBHOOK_SECRET;
+const KAPSO_BOOTSTRAP_ORG_ID = process.env.KAPSO_BOOTSTRAP_ORG_ID ?? DEFAULT_ORG_ID;
+const KAPSO_BOOTSTRAP_ORCHESTRATOR_ID = process.env.KAPSO_BOOTSTRAP_ORCHESTRATOR_ID ?? "main";
+const KAPSO_BOOTSTRAP_OWNER_NUMBER = process.env.KAPSO_BOOTSTRAP_OWNER_NUMBER;
+const KAPSO_BOOTSTRAP_CUSTOMER_ID = process.env.KAPSO_BOOTSTRAP_CUSTOMER_ID;
+const KAPSO_BOOTSTRAP_PHONE_NUMBER_ID = process.env.KAPSO_BOOTSTRAP_PHONE_NUMBER_ID;
+const KAPSO_BOOTSTRAP_ACTIVE = process.env.KAPSO_BOOTSTRAP_ACTIVE;
 
 type WsClient = import("bun").ServerWebSocket<unknown>;
 const wsClients = new Set<WsClient>();
@@ -116,6 +122,15 @@ function getThreadContextFromRequest(req: Request): { orchestratorId?: string; c
 
 function makeDelegationKey(orgId: string, toolCallId: string): string {
   return `${orgId}:${toolCallId}`;
+}
+
+function parseOptionalBoolean(value: string | undefined): boolean | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return undefined;
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return undefined;
 }
 
 function broadcastHitlRequest(pending: PendingHitlRequest): number {
@@ -223,6 +238,29 @@ async function getRuntime(orgId: string): Promise<MultiAgentRuntime> {
   return runtime;
 }
 
+async function applyKapsoChannelBootstrapFromEnv(): Promise<void> {
+  const ownerNumber = KAPSO_BOOTSTRAP_OWNER_NUMBER?.trim();
+  const kapsoCustomerId = KAPSO_BOOTSTRAP_CUSTOMER_ID?.trim();
+  if (!ownerNumber || !kapsoCustomerId) return;
+
+  try {
+    const config = await runtimeManager.upsertOrchestratorChannel({
+      orgId: KAPSO_BOOTSTRAP_ORG_ID,
+      orchestratorId: KAPSO_BOOTSTRAP_ORCHESTRATOR_ID,
+      ownerNumber,
+      kapsoCustomerId,
+      phoneNumberId: KAPSO_BOOTSTRAP_PHONE_NUMBER_ID?.trim() || undefined,
+      active: parseOptionalBoolean(KAPSO_BOOTSTRAP_ACTIVE),
+    });
+    await getRuntime(config.orgId);
+    console.error(
+      `[kapso] bootstrap channel upserted org=${config.orgId} orchestrator=${config.orchestratorId} customer=${config.kapsoCustomerId} phone=${config.phoneNumberId ?? "none"}`,
+    );
+  } catch (err) {
+    console.error("[kapso] bootstrap channel failed:", errorMessage(err));
+  }
+}
+
 function patchRuntime(orgId: string, runtime: MultiAgentRuntime): void {
   const appendTrace = runtime.store.appendTrace.bind(runtime.store);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -292,6 +330,7 @@ function patchRuntime(orgId: string, runtime: MultiAgentRuntime): void {
 }
 
 const PORT = 3000;
+await applyKapsoChannelBootstrapFromEnv();
 
 Bun.serve({
   port: PORT,
@@ -323,6 +362,29 @@ Bun.serve({
           });
           await getRuntime(req.params.orgId);
           return Response.json(result);
+        } catch (err) {
+          return Response.json({ error: errorMessage(err) }, { status: 400 });
+        }
+      },
+    },
+    "/api/orgs/:orgId/orchestrators/:orchestratorId/channel": {
+      POST: async (req) => {
+        try {
+          const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+          const ownerNumber = typeof body.ownerNumber === "string" ? body.ownerNumber : "";
+          const kapsoCustomerId = typeof body.kapsoCustomerId === "string" ? body.kapsoCustomerId : "";
+          const phoneNumberId = typeof body.phoneNumberId === "string" ? body.phoneNumberId : undefined;
+          const active = typeof body.active === "boolean" ? body.active : undefined;
+          const channel = await runtimeManager.upsertOrchestratorChannel({
+            orgId: req.params.orgId,
+            orchestratorId: req.params.orchestratorId,
+            ownerNumber,
+            kapsoCustomerId,
+            phoneNumberId,
+            active,
+          });
+          await getRuntime(req.params.orgId);
+          return Response.json(channel);
         } catch (err) {
           return Response.json({ error: errorMessage(err) }, { status: 400 });
         }

@@ -39,7 +39,8 @@
     ],
     "additionalDirectories": [
       "c:\\Users\\gerog\\source\\exp-pi-orchestation\\.worktrees\\extensible-agents\\docs\\superpowers",
-      "c:\\Users\\gerog\\source\\exp-pi-orchestation\\docs"
+      "c:\\Users\\gerog\\source\\exp-pi-orchestation\\docs",
+      "c:\\Users\\gerog\\source\\exp-pi-orchestation\\.worktrees\\extensible-agents"
     ]
   }
 }

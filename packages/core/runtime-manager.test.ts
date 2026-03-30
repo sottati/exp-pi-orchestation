@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RuntimeManager } from "./runtime-manager";
@@ -88,6 +88,66 @@ describe("RuntimeManager", () => {
     expect(conversations[0]?.contact).toBe("+5491111111111");
     expect(conversations[0]?.preview).toBe("Hola desde WhatsApp");
     expect(conversations[0]?.lastStatus).toBe("received");
+  });
+
+  test("upsertOrchestratorChannel stores reusable sandbox mapping", async () => {
+    const manager = new RuntimeManager({ baseDataDir });
+
+    const created = await manager.upsertOrchestratorChannel({
+      orgId: "default",
+      orchestratorId: "main",
+      ownerNumber: "+54 9 11 6606-6821",
+      kapsoCustomerId: "cust_sandbox",
+      phoneNumberId: "pn_1",
+    });
+
+    expect(created.orgId).toBe("default");
+    expect(created.orchestratorId).toBe("orchestrator:main");
+    expect(created.ownerNumber).toBe("+5491166066821");
+    expect(created.kapsoCustomerId).toBe("cust_sandbox");
+    expect(created.phoneNumberId).toBe("pn_1");
+
+    const updated = await manager.upsertOrchestratorChannel({
+      orgId: "default",
+      orchestratorId: "main",
+      ownerNumber: "+5491166066821",
+      kapsoCustomerId: "cust_sandbox_2",
+      active: false,
+    });
+
+    expect(updated.kapsoCustomerId).toBe("cust_sandbox_2");
+    expect(updated.phoneNumberId).toBe("pn_1");
+    expect(updated.active).toBe(false);
+    expect(updated.createdAt).toBe(created.createdAt);
+
+    const orchestrators = await manager.listOrchestrators("default");
+    expect(orchestrators.length).toBe(1);
+    expect(orchestrators[0]?.kapsoCustomerId).toBe("cust_sandbox_2");
+    expect(orchestrators[0]?.phoneNumberId).toBe("pn_1");
+  });
+
+  test("listOrchestrators tolerates legacy single-object channel file", async () => {
+    const orgDir = join(baseDataDir, "default");
+    mkdirSync(orgDir, { recursive: true });
+    writeFileSync(
+      join(orgDir, "orchestrator-channels.json"),
+      JSON.stringify({
+        orgId: "default",
+        orchestratorId: "orchestrator:main",
+        kapsoCustomerId: "cust_legacy",
+        ownerNumber: "+54 9 11 6606-6821",
+        active: true,
+        createdAt: 1,
+        updatedAt: 2,
+      }, null, 2),
+      "utf-8",
+    );
+
+    const manager = new RuntimeManager({ baseDataDir });
+    const orchestrators = await manager.listOrchestrators("default");
+    expect(orchestrators.length).toBe(1);
+    expect(orchestrators[0]?.kapsoCustomerId).toBe("cust_legacy");
+    expect(orchestrators[0]?.ownerNumber).toBe("+5491166066821");
   });
 
   test("processExternalMessage preserves FIFO order per conversation", async () => {

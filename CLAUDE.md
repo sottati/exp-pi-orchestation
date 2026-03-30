@@ -498,6 +498,7 @@ New/updated backend routes:
 
 - `GET /api/orgs/:orgId/orchestrators`
 - `POST /api/orgs/:orgId/orchestrators/:orchestratorId/setup-link`
+- `POST /api/orgs/:orgId/orchestrators/:orchestratorId/channel` (manual upsert for `ownerNumber`, `kapsoCustomerId`, `phoneNumberId?`; useful for sandbox/local)
 - `POST /api/kapso/webhooks/project`
 - `POST /api/kapso/webhooks/phone-number/:phoneNumberId`
 - `GET /api/conversations`
@@ -511,6 +512,13 @@ Kapso env vars:
 - `KAPSO_API_BASE_URL` (optional, default `https://api.kapso.ai`)
 - `KAPSO_PROJECT_WEBHOOK_SECRET`, `KAPSO_PHONE_WEBHOOK_SECRET` (or fallback `KAPSO_WEBHOOK_SECRET`)
 - `DEFAULT_ORG_ID` for backend/UI default org selection
+- Optional local/sandbox bootstrap (persisted channel upsert at backend start):
+  - `KAPSO_BOOTSTRAP_ORG_ID` (default `DEFAULT_ORG_ID`)
+  - `KAPSO_BOOTSTRAP_ORCHESTRATOR_ID` (default `main`)
+  - `KAPSO_BOOTSTRAP_OWNER_NUMBER`
+  - `KAPSO_BOOTSTRAP_CUSTOMER_ID`
+  - `KAPSO_BOOTSTRAP_PHONE_NUMBER_ID` (optional)
+  - `KAPSO_BOOTSTRAP_ACTIVE` (`true`/`false`, optional)
 
 ## Business + deployment model (cloud multi-tenant)
 

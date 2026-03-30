@@ -257,7 +257,10 @@ export class RuntimeManager {
   }
 
   private async loadChannels(orgId: string): Promise<OrchestratorChannelConfig[]> {
-    const rows = await readJsonFile<OrchestratorChannelConfig[]>(this.channelsFile(orgId), []);
+    const raw = await readJsonFile<OrchestratorChannelConfig[] | OrchestratorChannelConfig>(this.channelsFile(orgId), []);
+    const rows = Array.isArray(raw)
+      ? raw
+      : (raw && typeof raw === "object" ? [raw] : []);
     return rows
       .filter((row) => row && typeof row.orchestratorId === "string")
       .map((row) => ({
@@ -410,6 +413,45 @@ export class RuntimeManager {
     await this.ensureOrgRuntime(orgId);
 
     return { setupLinkUrl: setupLink.url, channelConfig: config };
+  }
+
+  async upsertOrchestratorChannel(input: {
+    orgId: string;
+    orchestratorId: string;
+    ownerNumber: string;
+    kapsoCustomerId: string;
+    phoneNumberId?: string;
+    active?: boolean;
+  }): Promise<OrchestratorChannelConfig> {
+    const orgId = input.orgId.trim();
+    const orchestratorId = makeOrchestratorAgentId(input.orchestratorId);
+    const ownerNumber = normalizePhoneNumber(input.ownerNumber);
+    const kapsoCustomerId = input.kapsoCustomerId.trim();
+    const nextPhoneNumberId = input.phoneNumberId?.trim();
+    const active = input.active ?? true;
+    if (!orgId || !orchestratorId || !ownerNumber || !kapsoCustomerId) {
+      throw new Error("orgId, orchestratorId, ownerNumber, and kapsoCustomerId are required.");
+    }
+
+    const state = await this.ensureOrgRuntime(orgId);
+    const existing = state.channels.find((row) => row.orchestratorId === orchestratorId);
+    const nowTs = now();
+    const config: OrchestratorChannelConfig = {
+      orgId,
+      orchestratorId,
+      kapsoCustomerId,
+      phoneNumberId: nextPhoneNumberId ?? existing?.phoneNumberId,
+      ownerNumber,
+      active,
+      createdAt: existing?.createdAt ?? nowTs,
+      updatedAt: nowTs,
+    };
+
+    const nextChannels = state.channels.filter((row) => row.orchestratorId !== orchestratorId);
+    nextChannels.push(config);
+    await this.saveChannels(orgId, nextChannels);
+    await this.ensureOrgRuntime(orgId);
+    return config;
   }
 
   async bindPhoneNumberByCustomer(customerId: string, phoneNumberId: string): Promise<OrchestratorChannelConfig | undefined> {

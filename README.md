@@ -463,6 +463,7 @@ Nuevos endpoints internos:
 
 - `GET /api/orgs/:orgId/orchestrators`
 - `POST /api/orgs/:orgId/orchestrators/:orchestratorId/setup-link`
+- `POST /api/orgs/:orgId/orchestrators/:orchestratorId/channel` (upsert manual de `ownerNumber` + `kapsoCustomerId` + `phoneNumberId?`; util para sandbox/local sin rehacer onboarding)
 - `GET /api/conversations`
 - `GET /api/channel-events`
 - `GET /api/communication-intents`
@@ -473,6 +474,13 @@ Variables de entorno Kapso:
 - `KAPSO_API_BASE_URL` (opcional, default `https://api.kapso.ai`)
 - `KAPSO_PROJECT_WEBHOOK_SECRET` y `KAPSO_PHONE_WEBHOOK_SECRET` (o `KAPSO_WEBHOOK_SECRET`)
 - `DEFAULT_ORG_ID` para backend/UI
+- Bootstrap opcional para pruebas repetibles en local/sandbox:
+  - `KAPSO_BOOTSTRAP_ORG_ID` (default `DEFAULT_ORG_ID`)
+  - `KAPSO_BOOTSTRAP_ORCHESTRATOR_ID` (default `main`)
+  - `KAPSO_BOOTSTRAP_OWNER_NUMBER`
+  - `KAPSO_BOOTSTRAP_CUSTOMER_ID`
+  - `KAPSO_BOOTSTRAP_PHONE_NUMBER_ID` (opcional)
+  - `KAPSO_BOOTSTRAP_ACTIVE` (`true`/`false`, opcional)
 
 ## Modelo de negocio y despliegue cloud (multi-tenant)
 
