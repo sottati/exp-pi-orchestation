@@ -10,6 +10,7 @@ import type {
 } from "./contracts";
 import { errorMessage } from "./errors";
 import { createId, now } from "./ids";
+import { normalizePhoneNumber } from "./phone-utils";
 import { type ChatOutput, MultiAgentRuntime } from "./runtime";
 import type { HITLHandler } from "./tool-middleware";
 
@@ -161,10 +162,6 @@ class KapsoClient {
     );
     return { messageId: result.messages?.[0]?.id };
   }
-}
-
-function normalizePhoneNumber(phone: string): string {
-  return phone.replace(/[^\d+]/g, "").trim();
 }
 
 function tryParseJson<T>(raw: string): T | undefined {

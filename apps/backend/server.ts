@@ -10,6 +10,7 @@ import type {
   TraceEvent,
 } from "../../packages/core/contracts";
 import { errorMessage } from "../../packages/core/errors";
+import { normalizePhoneNumber } from "../../packages/core/phone-utils";
 import type { MultiAgentRuntime } from "../../packages/core/runtime";
 import { RuntimeManager } from "../../packages/core/runtime-manager";
 import type { HITLHandler, HITLRequest } from "../../packages/core/tool-middleware";
@@ -88,7 +89,8 @@ function getThreadContextFromRequest(req: Request): { orchestratorId?: string; c
   try {
     const url = new URL(req.url);
     const orchestratorId = url.searchParams.get("orchestratorId")?.trim() || undefined;
-    const contact = url.searchParams.get("contact")?.trim() || undefined;
+    const rawContact = url.searchParams.get("contact")?.trim() || undefined;
+    const contact = rawContact ? normalizePhoneNumber(rawContact) : undefined;
     return { orchestratorId, contact };
   } catch {
     return {};
@@ -547,7 +549,10 @@ Bun.serve({
           contact: selectedContact,
         });
         const threadMessages = await runtime.getThread(threadId);
-        const traces = await runtime.getTraces();
+        const threadRunIds = new Set(threadMessages.map((message) => message.runId).filter((runId): runId is string => Boolean(runId)));
+        const traces = threadRunIds.size === 0
+          ? []
+          : (await runtime.getTraces()).filter((trace) => threadRunIds.has(trace.runId));
         const conversations = await runtimeManager.listConversations(orgId, selectedOrchestratorId);
         return Response.json(buildHydratedUiState({
           agents: runtime.listAgents(),
@@ -607,7 +612,6 @@ Bun.serve({
             type: "agents",
             agents: runtime.listAgents(),
             sessionId: runtime.sessionId,
-            orgId: DEFAULT_ORG_ID,
           }));
           replayPendingHitlToClient(ws);
         } catch (err) {
@@ -650,19 +654,38 @@ Bun.serve({
           contact,
           content,
           onAgentEvent: (event: AgentEvent) => {
-            if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
+            if (event.type !== "message_update") return;
+
+            if (event.assistantMessageEvent.type === "text_delta") {
               const delta = sanitizeThoughtPrefix(event.assistantMessageEvent.delta);
               if (!delta) return;
               ws.send(JSON.stringify({ type: "stream_delta", runId, orgId, delta }));
-            } else if (event.type === "tool_execution_start") {
-              const args = event.args as Record<string, unknown>;
-              let label = `→ ${event.toolName}`;
-              if (event.toolName === "delegate" || event.toolName === "delegate_task") {
-                label = `→ delegate → ${args.agentId}: ${String(args.task ?? "").slice(0, 80)}`;
-              } else if (event.toolName === "get_chat_result" || event.toolName === "get_chat_status") {
-                label = `→ ${event.toolName} → ${String(args.chatId ?? "")}`;
-              }
-              ws.send(JSON.stringify({ type: "stream_status", runId, orgId, text: label }));
+              return;
+            }
+
+            if (event.assistantMessageEvent.type === "thinking_start") {
+              ws.send(JSON.stringify({ type: "stream_thinking_start", runId, orgId }));
+              return;
+            }
+
+            if (event.assistantMessageEvent.type === "thinking_delta") {
+              if (!event.assistantMessageEvent.delta) return;
+              ws.send(JSON.stringify({
+                type: "stream_thinking_delta",
+                runId,
+                orgId,
+                delta: event.assistantMessageEvent.delta,
+              }));
+              return;
+            }
+
+            if (event.assistantMessageEvent.type === "thinking_end") {
+              ws.send(JSON.stringify({
+                type: "stream_thinking_end",
+                runId,
+                orgId,
+                content: event.assistantMessageEvent.content,
+              }));
             }
           },
         })

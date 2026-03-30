@@ -13,7 +13,7 @@ export function EmptyState() {
 
 export function MessageBubble({ msg }: { msg: UIMessage }) {
   const containerClassName = cn(
-    "flex max-w-[85%] flex-col gap-1",
+    "mb-4 flex max-w-[85%] flex-col gap-1 last:mb-8",
     msg.role === "user" ? "self-end" : "self-start",
   );
 
@@ -64,7 +64,7 @@ export function MessageBubble({ msg }: { msg: UIMessage }) {
 
 export function StreamingBubble({ content }: { content: string }) {
   return (
-    <div className="flex max-w-[85%] flex-col gap-1 self-start">
+    <div className="mb-4 flex max-w-[85%] flex-col gap-1 self-start last:mb-8">
       <div className="flex flex-row flex-nowrap items-center gap-1.5 px-[2px] text-[10px] uppercase leading-none tracking-[0.06em]">
         <DithieSprite size={16} state="thinking" />
         <span className="text-theme-text">DITHIE</span>

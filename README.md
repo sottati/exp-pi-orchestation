@@ -120,14 +120,17 @@ Abre <http://localhost:3000> para ver el dashboard de Dithie:
 - **Dithie**: pixel-art spider (16x16) como identidad del orchestrator, con estados animados (idle, thinking, delegating, error).
 - **Chat unificado**: toda la conversación pasa por Dithie (orchestrator). Las delegaciones se muestran como bloques colapsables inline.
 - **Anclaje de envío**: al enviar un mensaje en el chat principal (`/`), cuando comienza el streaming de Dithie ese mensaje del usuario se alinea cerca del tope del contenedor (smooth) y al finalizar el stream no hace salto automático al fondo.
-- **Thinking inline**: el chat consume `thinking_start/delta/end` en tiempo real y los muestra completos dentro del feed para debugging del reasoning. El bloque usa una presentacion flotante, con icono/loader de estado, etiqueta `thinking`, y un titulo extraido de la primera linea si viene como heading markdown; headings markdown posteriores tambien se resaltan dentro del cuerpo. El bloque permanece visible mientras streamea la respuesta final. `stream_status` queda como fallback cuando no llega thinking del modelo.
-- **Thinking persistente**: al recargar (F5/Ctrl+R), el bloque de thinking se reconstruye desde mensajes persistidos del orchestrator (`assistant.content[type=thinking]`) con fallback a trazas.
+- **Último turn respirado**: el último reply del agente reserva altura útil sobre el composer para no quedar pegado al input, incluso en conversaciones restauradas.
+- **Reply con contexto**: los envíos desde la UI conservan `orgId`, `orchestratorId` y `contact`, así que responder desde una conversación restaurada sigue en el mismo hilo.
+- **Thinking inline**: el chat consume solo `thinking_start/delta/end` nativos de `pi-ai` en tiempo real y los muestra completos dentro del feed para debugging del reasoning. El bloque usa una presentacion flotante, con icono/loader de estado, etiqueta `thinking`, y un titulo extraido de la primera linea si viene como heading markdown; headings markdown posteriores tambien se resaltan dentro del cuerpo. El bloque permanece visible mientras streamea la respuesta final.
+- **Orden por turno**: al rehidratar conversaciones viejas, el bloque de `thinking` de cada turno queda antes de la respuesta final del agente en ese mismo turno.
+- **Thinking persistente**: al recargar (F5/Ctrl+R), el bloque de thinking se reconstruye desde mensajes persistidos del orchestrator (`assistant.content[type=thinking]`), siempre filtrados al hilo seleccionado.
 - **React Router**: la UI usa layout persistente + rutas para `/`, `/traces`, `/agents`, `/chats` y `/jobs`.
 - **Tailwind UI**: el layout y los componentes usan utilidades Tailwind; `app.css` quedó como capa global de tokens, tema y animaciones, y se compila a `apps/web/app.generated.css`.
-- **Antes del primer token**: fila compacta con la mascota y la etiqueta `thinking` (sin burbuja vacía); al empezar el stream aparece la burbuja con el cursor.
+- **Antes del primer token**: no se inventa un bloque de reasoning; el feed solo muestra thinking si el modelo realmente emite eventos nativos de reasoning.
 - **HITL en UI**: cuando una tool requiere aprobación, aparece un modal con `Allow` / `Don't Allow` y atajos `y` / `n`.
 - **Panel de trazas**: trazas en tiempo real (newest-last) con items expandibles y duración calculada client-side.
-- **Reload seguro**: al refrescar con F5/Ctrl+R, la UI rehidrata chat, delegaciones, trazas, chats internos y jobs persistidos de la sesión activa.
+- **Reload seguro**: al refrescar con F5/Ctrl+R, la UI rehidrata chat, delegaciones, trazas, chats internos y jobs persistidos de la sesión activa; en conversaciones pasadas la hidratación usa el hilo/contacto normalizado para evitar mezclar trazas de otros chats.
 - **Layout del chat**: la barra de entrada vive dentro del panel izquierdo en `/`, por lo que la columna derecha de TRACES llega hasta el borde inferior de la pantalla.
 - **Color por agente**: la vista `/agents` asigna un tinte específico a cada agente usando una paleta compatible con Sacred.
 - **Theme switcher**: la barra de navegación permite alternar entre dark/light y persiste la preferencia en `localStorage`.

@@ -5,6 +5,9 @@ import { DelegationBlockComponent } from "./ui/chat-delegation";
 import { EmptyState, MessageBubble, StreamingBubble } from "./ui/chat-message";
 import { ThinkingTraceBlockComponent } from "./ui/chat-thinking";
 
+const LAST_TURN_MIN_HEIGHT = "calc(100% - 7rem)";
+const LAST_TURN_PADDING_BOTTOM = "2.5rem";
+
 export function ChatPanel({
   state,
   onToggleDelegation,
@@ -117,48 +120,71 @@ export function ChatPanel({
     );
   }
 
-  const showThinkingSpacer = state.isStreaming;
+  const showThinkingSpacer = state.isStreaming && state.streamBuffer === "";
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
-      <div
-        className="flex flex-1 flex-col gap-3 overflow-y-auto px-5 pt-5 pb-2 scrollbar-thin"
-        ref={listRef}
-      >
-        <div className="flex min-h-full flex-col gap-3">
-          {state.chatItems.map((item) => {
-            if (item.kind === "message") {
-              return <MessageBubble key={item.message.id} msg={item.message} />;
-            }
+    <div
+      className="flex flex-1 flex-col gap-3 overflow-y-auto p-4 scrollbar-thin"
+      ref={listRef}
+    >
+      <div className="flex min-h-full flex-col gap-3 pb-8">
+        {state.chatItems.map((item, index) => {
+          const isLastChatItem = index === state.chatItems.length - 1;
+          const isAnchoredAssistantTurn = isLastChatItem && !state.isStreaming && item.kind === "message" && item.message.role === "assistant";
 
-            if (item.kind === "thinking_trace") {
-              const block = state.thinkingTraces[item.runId];
-              if (!block) return null;
-              return (
-                <ThinkingTraceBlockComponent
-                  key={`thinking-${item.runId}`}
-                  block={block}
-                />
-              );
-            }
+          if (item.kind === "message") {
+            const message = <MessageBubble key={item.message.id} msg={item.message} />;
+            if (!isAnchoredAssistantTurn) return message;
+            return (
+              <div
+                key={`turn-${item.message.id}`}
+                className="flex flex-col justify-start"
+                style={{ minHeight: LAST_TURN_MIN_HEIGHT, paddingBottom: LAST_TURN_PADDING_BOTTOM }}
+              >
+                {message}
+              </div>
+            );
+          }
 
-            const delegation = state.delegations[item.delegationId];
-            if (!delegation) return null;
+          if (item.kind === "thinking_trace") {
+            const block = state.thinkingTraces[item.runId];
+            if (!block) return null;
+            
+            if (block.status !== "running" && block.lines.length === 1 && block.lines[0] === "thinking...") {
+              return null;
+            }
 
             return (
-              <DelegationBlockComponent
-                key={item.delegationId}
-                delegation={delegation}
-                expanded={state.expandedDelegations.has(item.delegationId)}
-                onToggle={() => onToggleDelegation(item.delegationId)}
+              <ThinkingTraceBlockComponent
+                key={`thinking-${item.runId}`}
+                block={block}
               />
             );
-          })}
-          {state.isStreaming && state.streamBuffer !== "" && <StreamingBubble content={state.streamBuffer} />}
-          {showThinkingSpacer && (
-            <div className="min-h-[calc(100vh-var(--header-h)-var(--input-h)-80px)] flex-1" aria-hidden />
-          )}
-        </div>
+          }
+
+          const delegation = state.delegations[item.delegationId];
+          if (!delegation) return null;
+
+          return (
+            <DelegationBlockComponent
+              key={item.delegationId}
+              delegation={delegation}
+              expanded={state.expandedDelegations.has(item.delegationId)}
+              onToggle={() => onToggleDelegation(item.delegationId)}
+            />
+          );
+        })}
+        {state.isStreaming && state.streamBuffer !== "" && (
+          <div
+            className="flex flex-col justify-start"
+            style={{ minHeight: LAST_TURN_MIN_HEIGHT, paddingBottom: LAST_TURN_PADDING_BOTTOM }}
+          >
+            <StreamingBubble content={state.streamBuffer} />
+          </div>
+        )}
+        {showThinkingSpacer && (
+          <div className="min-h-[calc(100vh-var(--header-h)-var(--input-h)-80px)] flex-1" aria-hidden />
+        )}
       </div>
     </div>
   );

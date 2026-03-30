@@ -28,18 +28,18 @@ export function ChatPage() {
   const currentOrchestrator = state.selectedOrchestratorId || orchestratorOptions[0] || "orchestrator";
 
   return (
-    <div className="flex min-h-0 flex-1 max-[980px]:flex-col">
+    <div className="flex min-h-0 flex-1 max-lg:flex-col">
       <section className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <div className="shrink-0 border-b border-theme-border bg-theme-surface-panel px-5 py-4 pb-3">
+        {/* <div className="shrink-0 border-b border-theme-border bg-theme-surface-panel px-5 py-4 pb-3">
           <div className="text-[12px] uppercase tracking-[0.14em] text-theme-text">conversation</div>
           <div className="text-[11px] text-theme-text-muted">
             Hilo unificado UI + WhatsApp con filtro por orchestrator/contacto.
           </div>
           <div className="mt-3 flex flex-wrap items-end gap-2 text-[11px]">
-            <label className="flex flex-col gap-1">
+            <label className="flex flex-col gap-1 max-sm:w-full">
               <span className="uppercase tracking-[0.08em] text-theme-text-muted">Orchestrator</span>
               <select
-                className="border border-theme-border bg-theme-surface px-2 py-1 text-theme-text"
+                className="w-full border border-theme-border bg-theme-surface px-2 py-1 text-theme-text"
                 value={currentOrchestrator}
                 onChange={(event) => {
                   void selectConversation(currentOrgId, event.target.value, state.selectedContact || undefined);
@@ -50,10 +50,10 @@ export function ChatPage() {
                 ))}
               </select>
             </label>
-            <label className="flex flex-col gap-1">
+            <label className="flex flex-col gap-1 max-sm:w-full">
               <span className="uppercase tracking-[0.08em] text-theme-text-muted">Contacto</span>
               <input
-                className="border border-theme-border bg-theme-surface px-2 py-1 text-theme-text"
+                className="w-full border border-theme-border bg-theme-surface px-2 py-1 text-theme-text"
                 placeholder="+549..."
                 value={manualContact}
                 onChange={(event) => setManualContact(event.target.value)}
@@ -61,7 +61,7 @@ export function ChatPage() {
             </label>
             <button
               type="button"
-              className="border border-theme-border px-2 py-1 text-theme-text hover:bg-theme-surface-hover"
+              className="border border-theme-border px-2 py-1 text-theme-text hover:bg-theme-surface-hover max-sm:w-full"
               onClick={() => {
                 void selectConversation(currentOrgId, currentOrchestrator, manualContact || undefined);
               }}
@@ -69,7 +69,7 @@ export function ChatPage() {
               Abrir hilo
             </button>
             {state.selectedContact && (
-              <span className="text-theme-text-soft">activo: {state.selectedContact}</span>
+              <span className="w-full text-theme-text-soft">activo: {state.selectedContact}</span>
             )}
           </div>
           {state.conversations.length > 0 && (
@@ -91,7 +91,7 @@ export function ChatPage() {
                 ))}
             </div>
           )}
-        </div>
+        </div> */}
         <ChatPanel
           state={state}
           onToggleDelegation={toggleDelegation}
@@ -100,7 +100,7 @@ export function ChatPage() {
         />
         <InputBar />
       </section>
-      <section className="flex w-[var(--trace-w)] shrink-0 flex-col overflow-hidden border-l border-theme-border max-[980px]:min-h-[220px] max-[980px]:w-full max-[980px]:border-l-0 max-[980px]:border-t">
+      <section className="flex w-[var(--trace-w)] shrink-0 flex-col overflow-hidden border-l border-theme-border max-lg:min-h-[220px] max-lg:w-full max-lg:border-l-0 max-lg:border-t max-sm:hidden">
         <TracePanel
           traces={state.traces}
           expandedTraces={state.expandedTraces}

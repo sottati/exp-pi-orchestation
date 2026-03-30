@@ -24,15 +24,15 @@ export function AppHeader() {
           to="/"
         >
           <DithieSprite size={32} state={state.dithieState} />
-          <span className="select-none text-[11px] leading-none uppercase tracking-[0.14em] text-theme-text">
+          <span className="select-none text-[11px] leading-none uppercase tracking-[0.14em] text-theme-text max-sm:hidden">
             dithie
           </span>
-          <span className="text-[10px] leading-none text-theme-text-soft">{state.dithieState}</span>
+          <span className="text-[10px] leading-none text-theme-text-soft max-sm:hidden">{state.dithieState}</span>
         </NavLink>
       </div>
 
       {/* Middle */}
-      <nav className="flex items-center justify-center gap-2 overflow-x-auto shrink-0 px-4" aria-label="Primary">
+      <nav className="flex items-center justify-center gap-2 overflow-x-auto shrink-0 px-4 max-sm:flex-1 max-sm:justify-start max-sm:px-1" aria-label="Primary">
         {NAV_ITEMS.map((item) => (
           <NavLink
             key={item.to}
@@ -52,14 +52,14 @@ export function AppHeader() {
 
       {/* Right */}
       <div className="flex flex-1 min-w-0 items-center justify-end gap-2 shrink-0 overflow-hidden">
-        <div className="flex h-full items-center gap-3 leading-none truncate mr-2">
+        <div className="flex h-full items-center gap-3 leading-none truncate mr-2 max-sm:hidden">
           {state.orgId && (
-            <span className="text-[10px] leading-none text-theme-text-soft">
+            <span className="text-[10px] leading-none text-theme-text-soft max-md:hidden">
               org: {state.orgId}
             </span>
           )}
           {state.sessionId && (
-            <span className="text-[10px] leading-none text-theme-text-soft truncate">
+            <span className="text-[10px] leading-none text-theme-text-soft truncate max-lg:hidden">
               session: {state.sessionId}
             </span>
           )}
@@ -82,7 +82,7 @@ export function AppHeader() {
           aria-pressed={themeMode === "light"}
         >
           <Sun className="size-3.5" />
-          light
+          <span className="max-sm:hidden">light</span>
         </button>
         <button
           type="button"
@@ -94,7 +94,7 @@ export function AppHeader() {
           aria-pressed={themeMode === "dark"}
         >
           <Moon className="size-3.5" />
-          dark
+          <span className="max-sm:hidden">dark</span>
         </button>
       </div>
     </header>
