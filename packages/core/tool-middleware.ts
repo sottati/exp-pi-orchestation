@@ -1,6 +1,7 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type { Permission } from "./contracts";
 import type { AgentHooks } from "./agent-builder";
+import { errorMessage } from "./errors";
 
 export interface HITLRequest {
   agentId: string;
@@ -129,7 +130,15 @@ export function wrapTool(
       }
 
       // 4. Execute
-      let result = await tool.execute(toolCallId, finalParams);
+      let result;
+      try {
+        result = await tool.execute(toolCallId, finalParams);
+      } catch (err) {
+        console.error(
+          `[tool-error] agent=${agentId} tool=${tool.name} call=${toolCallId}: ${errorMessage(err)}`,
+        );
+        throw err;
+      }
 
       // 5. afterTool hook
       if (hooks?.afterTool) {

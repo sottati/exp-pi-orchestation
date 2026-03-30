@@ -282,6 +282,9 @@ When adding or changing runtime behavior, preserve correlation IDs:
 - CLI commands must be wrapped in try-catch — use `cliError(err)` helper in `apps/cli/index.ts`.
 - Task input validation: `MAX_TASK_LENGTH = 10_000` in `packages/core/tools.ts`.
 - Runtime response extraction ignores intermediate `toolUse` assistant turns, strips leaked `thought:` prefixes, and falls back to completed `get_chat_result` output when the final assistant message is empty.
+- Runtime now subscribes to `tool_execution_start` / `tool_execution_end` and persists execution-phase `tool_start` / `tool_end` traces with sanitized args/details. For `interact_page`, `task` is redacted and only `taskLength` is stored.
+- `wrapTool` logs tool exceptions to stderr as `[tool-error] agent=<id> tool=<name> call=<toolCallId>: ...` before re-throwing.
+- Browser wrapper errors for `browse_url` / `interact_page` now include HTTP status/body snippets and explicit timeout messages; logs use `[browser] ... failed` and never print `interact_page` task content.
 
 ## Chat Persistence
 

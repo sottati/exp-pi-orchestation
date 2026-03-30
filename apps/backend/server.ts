@@ -75,6 +75,25 @@ function sanitizeThoughtPrefix(text: string): string {
   return next;
 }
 
+function truncateStatusText(text: string, max = 220): string {
+  if (text.length <= max) return text;
+  return `${text.slice(0, max)}...`;
+}
+
+function extractToolErrorText(result: unknown): string {
+  if (!result || typeof result !== "object") return "Tool execution failed.";
+  const typed = result as { content?: unknown };
+  if (!Array.isArray(typed.content)) return "Tool execution failed.";
+  for (const block of typed.content) {
+    if (typeof block !== "object" || block === null) continue;
+    const maybeText = block as { type?: unknown; text?: unknown };
+    if (maybeText.type === "text" && typeof maybeText.text === "string" && maybeText.text.trim()) {
+      return truncateStatusText(maybeText.text.trim());
+    }
+  }
+  return "Tool execution failed.";
+}
+
 function getOrgIdFromRequest(req: Request): string {
   try {
     const url = new URL(req.url);
@@ -663,6 +682,17 @@ Bun.serve({
                 label = `→ ${event.toolName} → ${String(args.chatId ?? "")}`;
               }
               ws.send(JSON.stringify({ type: "stream_status", runId, orgId, text: label }));
+            } else if (event.type === "tool_execution_end" && event.isError) {
+              const err = extractToolErrorText(event.result);
+              ws.send(JSON.stringify({
+                type: "stream_status",
+                runId,
+                orgId,
+                text: `x ${event.toolName}: ${err}`,
+              }));
+              console.error(
+                `[ws] tool error org=${orgId} run=${runId} tool=${event.toolName} call=${event.toolCallId}: ${err}`,
+              );
             }
           },
         })

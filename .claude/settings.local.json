@@ -33,7 +33,9 @@
       "Bash(grep -r \"browser-node-bridge\\\\|node.*bridge\\\\|Playwright\\\\|DuckDuckGo\\\\|safeLaunchAndRun\\\\|PageAction\" /c/Users/gerog/source/exp-pi-orchestation/ --include=*.ts --include=*.tsx --include=*.md)",
       "Bash(echo \"Exit code: $?\")",
       "Bash(ls .env*)",
-      "Bash(*)"
+      "Bash(*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:api.github.com)"
     ],
     "additionalDirectories": [
       "c:\\Users\\gerog\\source\\exp-pi-orchestation\\.worktrees\\extensible-agents\\docs\\superpowers",

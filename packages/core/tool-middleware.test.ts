@@ -17,6 +17,18 @@ function fakeTool(name = "test_tool"): AgentTool<any> {
   };
 }
 
+function throwingTool(name = "boom_tool"): AgentTool<any> {
+  return {
+    name,
+    label: name,
+    description: "throws",
+    parameters: Type.Object({ input: Type.String() }),
+    execute: async () => {
+      throw new Error("boom");
+    },
+  };
+}
+
 const approveAll: HITLHandler = async () => ({ approved: true });
 const denyAll: HITLHandler = async () => ({ approved: false });
 const noopTrace = async () => {};
@@ -138,5 +150,27 @@ describe("wrapTool", () => {
     const result = await wrapped.execute("tc1", { input: "hello" });
     expect(getText(result)).toBe("result:hello");
     expect(calls).toEqual(["start", "end"]);
+  });
+
+  test("logs and rethrows tool execution errors", async () => {
+    const logs: string[] = [];
+    const originalError = console.error;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    console.error = ((...args: any[]) => {
+      logs.push(args.map(String).join(" "));
+    }) as typeof console.error;
+
+    try {
+      const wrapped = wrapTool(throwingTool(), {
+        permission: "allow",
+        hitlHandler: approveAll,
+        agentId: "code",
+        tracePermission: noopTrace,
+      });
+      await expect(wrapped.execute("tc1", { input: "hello" })).rejects.toThrow("boom");
+      expect(logs.some((line) => line.includes("[tool-error] agent=code tool=boom_tool call=tc1: boom"))).toBe(true);
+    } finally {
+      console.error = originalError;
+    }
   });
 });

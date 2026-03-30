@@ -45,7 +45,7 @@ describe("browseUrl", () => {
           JSON.stringify({ markdown: "# Hello", title: "Test", url: "https://example.com" }),
           { status: 200 },
         ),
-      )) as typeof fetch;
+      )) as unknown as typeof fetch;
     try {
       const result = await browseUrl("https://example.com");
       expect(result.content).toBe("# Hello");
@@ -62,7 +62,7 @@ describe("browseUrl", () => {
     globalThis.fetch = (() =>
       Promise.resolve(
         new Response(JSON.stringify({ error: "Crawl4AI failed" }), { status: 500 }),
-      )) as typeof fetch;
+      )) as unknown as typeof fetch;
     try {
       const result = await browseUrl("https://example.com");
       expect(result.title).toBe("Error");
@@ -79,7 +79,7 @@ describe("searchWeb", () => {
   test("returns error result when SearXNG is unreachable", async () => {
     const { searchWeb } = await import("./browser");
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (() => Promise.reject(new Error("ECONNREFUSED"))) as typeof fetch;
+    globalThis.fetch = (() => Promise.reject(new Error("ECONNREFUSED"))) as unknown as typeof fetch;
     try {
       const results = await searchWeb("test query");
       expect(Array.isArray(results)).toBe(true);
@@ -103,7 +103,7 @@ describe("searchWeb", () => {
           }),
           { status: 200 },
         ),
-      )) as typeof fetch;
+      )) as unknown as typeof fetch;
     try {
       const results = await searchWeb("bun runtime", 2);
       expect(results).toHaveLength(2);
@@ -130,7 +130,7 @@ describe("searchWeb", () => {
           }),
           { status: 200 },
         ),
-      )) as typeof fetch;
+      )) as unknown as typeof fetch;
     try {
       const results = await searchWeb("query", 3);
       expect(results).toHaveLength(3);
@@ -162,11 +162,40 @@ describe("interactWithPage", () => {
           }),
           { status: 200 },
         ),
-      )) as typeof fetch;
+      )) as unknown as typeof fetch;
     try {
       const result = await interactWithPage("https://example.com", "log in");
       expect(result.content).toBe("Logged in successfully");
       expect(result.url).toBe("https://example.com/dashboard");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("includes HTTP status and body snippet when interact service fails", async () => {
+    const { interactWithPage } = await import("./browser");
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() =>
+      Promise.resolve(new Response("browser-use crashed at step 2", { status: 500 }))) as unknown as typeof fetch;
+    try {
+      const result = await interactWithPage("https://example.com", "log in");
+      expect(result.title).toBe("Error");
+      expect(result.content).toContain("HTTP 500");
+      expect(result.content).toContain("browser-use crashed");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("returns explicit timeout message on aborted interact request", async () => {
+    const { interactWithPage } = await import("./browser");
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() => Promise.reject(new DOMException("aborted", "AbortError"))) as unknown as typeof fetch;
+    try {
+      const result = await interactWithPage("https://example.com", "log in");
+      expect(result.title).toBe("Error");
+      expect(result.content).toContain("timed out");
+      expect(result.content).toContain("/interact");
     } finally {
       globalThis.fetch = originalFetch;
     }

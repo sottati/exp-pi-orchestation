@@ -17,6 +17,7 @@ const BROWSE_SERVICE_URL = process.env.BROWSE_SERVICE_URL ?? "http://localhost:8
 const SEARCH_TIMEOUT_MS = 20_000;
 const BROWSE_TIMEOUT_MS = 60_000;
 const INTERACT_TIMEOUT_MS = 130_000;
+const MAX_ERROR_BODY_CHARS = 400;
 
 function validateHttpUrl(input: string): string {
   let parsed: URL;
@@ -31,32 +32,83 @@ function validateHttpUrl(input: string): string {
   return parsed.toString();
 }
 
+function truncateForError(text: string, max = MAX_ERROR_BODY_CHARS): string {
+  if (text.length <= max) return text;
+  return `${text.slice(0, max)}...`;
+}
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "AbortError";
+}
+
+function normalizeWhitespace(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+async function readJsonObject(response: Response): Promise<{ json: Record<string, unknown> | null; rawBody: string }> {
+  const rawBody = await response.text();
+  if (!rawBody.trim()) return { json: null, rawBody };
+  try {
+    const parsed = JSON.parse(rawBody) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return { json: parsed as Record<string, unknown>, rawBody };
+    }
+    return { json: null, rawBody };
+  } catch {
+    return { json: null, rawBody };
+  }
+}
+
+function buildHttpError(
+  endpoint: string,
+  status: number,
+  json: Record<string, unknown> | null,
+  rawBody: string,
+): string {
+  const serviceError = typeof json?.error === "string" ? json.error.trim() : "";
+  if (serviceError) return `${endpoint} returned HTTP ${status}: ${serviceError}`;
+  const body = normalizeWhitespace(rawBody);
+  if (body) {
+    return `${endpoint} returned HTTP ${status}: ${truncateForError(body)}`;
+  }
+  return `${endpoint} returned HTTP ${status}`;
+}
+
 export async function browseUrl(url: string, waitFor?: string): Promise<BrowseResult> {
+  const endpoint = `${BROWSE_SERVICE_URL}/browse`;
   try {
     const targetUrl = validateHttpUrl(url);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), BROWSE_TIMEOUT_MS);
     try {
-      const res = await fetch(`${BROWSE_SERVICE_URL}/browse`, {
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ url: targetUrl, wait_for: waitFor ?? null }),
         signal: controller.signal,
       });
-      const data = await res.json() as { markdown?: string; title?: string; url?: string; error?: string };
-      if (!res.ok || data.error) {
-        throw new Error(data.error ?? `Browse service returned HTTP ${res.status}`);
+      const { json, rawBody } = await readJsonObject(res);
+      if (!res.ok) {
+        throw new Error(buildHttpError(endpoint, res.status, json, rawBody));
+      }
+      if (!json) throw new Error(`${endpoint} returned invalid JSON.`);
+      if (typeof json.error === "string" && json.error.trim()) {
+        throw new Error(json.error.trim());
       }
       return {
-        content: data.markdown ?? "",
-        title: data.title ?? "",
-        url: data.url ?? targetUrl,
+        content: typeof json.markdown === "string" ? json.markdown : "",
+        title: typeof json.title === "string" ? json.title : "",
+        url: typeof json.url === "string" ? json.url : targetUrl,
       };
     } finally {
       clearTimeout(timer);
     }
   } catch (err) {
-    return { content: `Error browsing ${url}: ${errorMessage(err)}`, title: "Error", url };
+    const msg = isAbortError(err)
+      ? `Request to ${endpoint} timed out after ${BROWSE_TIMEOUT_MS}ms`
+      : errorMessage(err);
+    console.error(`[browser] browseUrl failed url=${url}: ${msg}`);
+    return { content: `Error browsing ${url}: ${msg}`, title: "Error", url };
   }
 }
 
@@ -101,30 +153,40 @@ export async function safeLaunchAndRun<T>(_fn: (page: any) => Promise<T>): Promi
 }
 
 export async function interactWithPage(url: string, task: string): Promise<BrowseResult> {
+  const endpoint = `${BROWSE_SERVICE_URL}/interact`;
   try {
     const targetUrl = validateHttpUrl(url);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), INTERACT_TIMEOUT_MS);
     try {
-      const res = await fetch(`${BROWSE_SERVICE_URL}/interact`, {
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ url: targetUrl, task }),
         signal: controller.signal,
       });
-      const data = await res.json() as { result?: string; final_url?: string; error?: string };
-      if (!res.ok || data.error) {
-        throw new Error(data.error ?? `Browse service returned HTTP ${res.status}`);
+      const { json, rawBody } = await readJsonObject(res);
+      if (!res.ok) {
+        throw new Error(buildHttpError(endpoint, res.status, json, rawBody));
+      }
+      if (!json) throw new Error(`${endpoint} returned invalid JSON.`);
+      if (typeof json.error === "string" && json.error.trim()) {
+        throw new Error(json.error.trim());
       }
       return {
-        content: data.result ?? "",
+        content: typeof json.result === "string" ? json.result : "",
         title: "",
-        url: data.final_url ?? targetUrl,
+        url: typeof json.final_url === "string" ? json.final_url : targetUrl,
       };
     } finally {
       clearTimeout(timer);
     }
   } catch (err) {
-    return { content: `Error interacting with ${url}: ${errorMessage(err)}`, title: "Error", url };
+    const msg = isAbortError(err)
+      ? `Request to ${endpoint} timed out after ${INTERACT_TIMEOUT_MS}ms`
+      : errorMessage(err);
+    // Do not log task text here because it can contain credential placeholders.
+    console.error(`[browser] interactWithPage failed url=${url}: ${msg}`);
+    return { content: `Error interacting with ${url}: ${msg}`, title: "Error", url };
   }
 }

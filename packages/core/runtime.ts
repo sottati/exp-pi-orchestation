@@ -6,7 +6,7 @@ import {
     isOrchestratorAgentId,
 } from "./agents";
 import type { AgentChat, BaseAgentId, Initiator, RunContext, ThreadEnvelope, TraceEvent } from "./contracts";
-import { errorMessage } from "./errors";
+import { errorMessage, safeAsync } from "./errors";
 import { createId, now } from "./ids";
 import { ChatManager } from "./chat-manager";
 import { ThreadStore } from "./thread-store";
@@ -217,6 +217,75 @@ export function extractLastAssistantText(messages: AgentMessage[]): string {
     }
 
     return "";
+}
+
+const TRACE_STRING_LIMIT = 240;
+const TRACE_SENSITIVE_KEY = /(password|pass|token|secret|api[-_]?key|authorization|cookie|credential|refresh|clientsecret|accesstoken)/i;
+
+function truncateForTrace(text: string, limit = TRACE_STRING_LIMIT): string {
+    if (text.length <= limit) return text;
+    return `${text.slice(0, limit)}...`;
+}
+
+function sanitizeTraceValue(value: unknown, key?: string, depth = 0): unknown {
+    if (key && TRACE_SENSITIVE_KEY.test(key)) return "[REDACTED]";
+
+    if (typeof value === "string") return truncateForTrace(value);
+    if (typeof value === "number" || typeof value === "boolean" || value === null) return value;
+    if (value === undefined) return undefined;
+
+    if (Array.isArray(value)) {
+        if (depth >= 1) return `[array(${value.length})]`;
+        return value.slice(0, 5).map((item) => sanitizeTraceValue(item, undefined, depth + 1));
+    }
+
+    if (typeof value === "object") {
+        if (depth >= 2) return "[object]";
+        const source = value as Record<string, unknown>;
+        const out: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(source).slice(0, 12)) {
+            out[k] = sanitizeTraceValue(v, k, depth + 1);
+        }
+        return out;
+    }
+
+    return String(value);
+}
+
+function sanitizeToolArgsForTrace(toolName: string, args: unknown): Record<string, unknown> | undefined {
+    if (!args || typeof args !== "object" || Array.isArray(args)) return undefined;
+    const source = args as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(source)) {
+        // `interact_page.task` can contain resolved credentials; never persist it.
+        if (toolName === "interact_page" && key === "task") {
+            out.task = "[REDACTED]";
+            if (typeof value === "string") out.taskLength = value.length;
+            continue;
+        }
+        out[key] = sanitizeTraceValue(value, key);
+    }
+    return out;
+}
+
+function extractToolErrorFromResult(result: unknown): string | undefined {
+    if (!result || typeof result !== "object") return undefined;
+    const typed = result as { content?: unknown };
+    if (!Array.isArray(typed.content)) return undefined;
+    for (const block of typed.content) {
+        if (typeof block !== "object" || block === null) continue;
+        const maybeText = block as { type?: unknown; text?: unknown };
+        if (maybeText.type === "text" && typeof maybeText.text === "string" && maybeText.text.trim()) {
+            return truncateForTrace(maybeText.text.trim(), 500);
+        }
+    }
+    return undefined;
+}
+
+function summarizeToolDetails(result: unknown): unknown {
+    if (!result || typeof result !== "object") return undefined;
+    const typed = result as { details?: unknown };
+    return sanitizeTraceValue(typed.details);
 }
 
 function resolveInitiator(fromAgentId: BaseAgentId): Initiator {
@@ -913,7 +982,62 @@ export class MultiAgentRuntime {
         };
 
         const beforeCount = historyMessages.length;
-        const unsubscribe = input.onAgentEvent ? agent.subscribe(input.onAgentEvent) : undefined;
+        const forwardAgentEvent = input.onAgentEvent;
+        const unsubscribe = agent.subscribe((event: AgentEvent) => {
+            if (event.type === "tool_execution_start") {
+                const traceDetails: Record<string, unknown> = {
+                    phase: "execution",
+                    args: sanitizeToolArgsForTrace(event.toolName, event.args),
+                };
+                void safeAsync(
+                    () =>
+                        this.trace({
+                            type: "tool_start",
+                            status: "running",
+                            runId: input.runContext.runId,
+                            turnId: input.runContext.turnId,
+                            agentId: input.toAgentId,
+                            chatId: input.chatId,
+                            toolCallId: event.toolCallId,
+                            toolName: event.toolName,
+                            details: traceDetails,
+                        }),
+                    "runtime:tool_execution_start",
+                );
+            } else if (event.type === "tool_execution_end") {
+                const error = event.isError
+                    ? extractToolErrorFromResult(event.result) ?? "Tool execution failed."
+                    : undefined;
+                const traceDetails: Record<string, unknown> = {
+                    phase: "execution",
+                    isError: event.isError,
+                    error,
+                    details: summarizeToolDetails(event.result),
+                };
+                void safeAsync(
+                    () =>
+                        this.trace({
+                            type: "tool_end",
+                            status: event.isError ? "error" : "ok",
+                            runId: input.runContext.runId,
+                            turnId: input.runContext.turnId,
+                            agentId: input.toAgentId,
+                            chatId: input.chatId,
+                            toolCallId: event.toolCallId,
+                            toolName: event.toolName,
+                            details: traceDetails,
+                        }),
+                    "runtime:tool_execution_end",
+                );
+                if (event.isError) {
+                    console.error(
+                        `[tool-error] agent=${input.toAgentId} tool=${event.toolName} call=${event.toolCallId}: ${error ?? "unknown"}`,
+                    );
+                }
+            }
+
+            forwardAgentEvent?.(event);
+        });
         try {
             await agent.prompt(userMessage);
         } finally {
