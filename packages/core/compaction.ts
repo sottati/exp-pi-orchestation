@@ -7,7 +7,7 @@ export interface CompactionParams {
   messages: AgentMessage[];
   model: Model<any>;
   client: MemoryClient;
-  threshold?: number; // default from env COMPACTION_THRESHOLD or 40
+  threshold?: number; // default from env COMPACTION_THRESHOLD or 80
   keep?: number;      // default from env COMPACTION_KEEP or 10
 }
 
@@ -51,12 +51,96 @@ function formatMessages(messages: AgentMessage[]): string {
   return lines.join("\n");
 }
 
+function extractAssistantToolCallIds(content: unknown): string[] {
+  if (!Array.isArray(content)) return [];
+  const ids: string[] = [];
+  for (const block of content) {
+    if (typeof block !== "object" || block === null) continue;
+    const typedBlock = block as {
+      type?: unknown;
+      id?: unknown;
+      callId?: unknown;
+      toolCallId?: unknown;
+      call_id?: unknown;
+    };
+    const type = typeof typedBlock.type === "string" ? typedBlock.type : "";
+    if (type !== "toolCall" && type !== "tool_call" && type !== "function_call") continue;
+    const id =
+      typeof typedBlock.id === "string"
+        ? typedBlock.id
+        : typeof typedBlock.callId === "string"
+          ? typedBlock.callId
+          : typeof typedBlock.toolCallId === "string"
+            ? typedBlock.toolCallId
+            : typeof typedBlock.call_id === "string"
+              ? typedBlock.call_id
+              : "";
+    if (id) ids.push(id);
+  }
+  return ids;
+}
+
+function extractToolResultCallId(message: unknown): string {
+  if (!message || typeof message !== "object") return "";
+  const typed = message as {
+    toolCallId?: unknown;
+    callId?: unknown;
+    tool_call_id?: unknown;
+    call_id?: unknown;
+  };
+  if (typeof typed.toolCallId === "string") return typed.toolCallId;
+  if (typeof typed.callId === "string") return typed.callId;
+  if (typeof typed.tool_call_id === "string") return typed.tool_call_id;
+  if (typeof typed.call_id === "string") return typed.call_id;
+  return "";
+}
+
+function findMatchingAssistantToolCallIndex(
+  messages: AgentMessage[],
+  fromIndex: number,
+  toolCallId: string,
+): number {
+  for (let i = fromIndex; i >= 0; i--) {
+    const message = messages[i] as { role?: unknown; content?: unknown };
+    if (message.role !== "assistant") continue;
+    const ids = extractAssistantToolCallIds(message.content);
+    if (ids.includes(toolCallId)) return i;
+  }
+  return -1;
+}
+
+function adjustKeepStartForToolCallPairs(messages: AgentMessage[], startIndex: number): number {
+  let nextStart = Math.max(0, Math.min(startIndex, messages.length));
+  while (nextStart < messages.length) {
+    const message = messages[nextStart] as { role?: unknown };
+    if (message.role !== "toolResult") break;
+
+    const toolCallId = extractToolResultCallId(messages[nextStart]);
+    if (!toolCallId) {
+      // Malformed tool result at boundary: skip it.
+      nextStart += 1;
+      continue;
+    }
+
+    const matchIndex = findMatchingAssistantToolCallIndex(messages, nextStart - 1, toolCallId);
+    if (matchIndex >= 0) {
+      // Include the matching assistant tool call in the kept suffix.
+      nextStart = matchIndex;
+      continue;
+    }
+
+    // Orphan tool result with no matching call in previous history: skip it.
+    nextStart += 1;
+  }
+  return nextStart;
+}
+
 export async function maybeCompact(params: CompactionParams): Promise<AgentMessage[] | null> {
   const threshold =
     params.threshold ??
     (process.env.COMPACTION_THRESHOLD !== undefined
       ? parseInt(process.env.COMPACTION_THRESHOLD, 10)
-      : 40);
+      : 80);
   const keep =
     params.keep ??
     (process.env.COMPACTION_KEEP !== undefined
@@ -67,10 +151,11 @@ export async function maybeCompact(params: CompactionParams): Promise<AgentMessa
     return null;
   }
 
-  const toCompact = params.messages.slice(0, params.messages.length - keep);
-  const toKeep = params.messages.slice(params.messages.length - keep);
+  const requestedKeepStart = params.messages.length - keep;
+  const safeKeepStart = adjustKeepStartForToolCallPairs(params.messages, requestedKeepStart);
+  const toCompact = params.messages.slice(0, safeKeepStart);
+  const toKeep = params.messages.slice(safeKeepStart);
 
-  const llmCompatible = toCompact.filter(isLlmCompatible) as Message[];
   const formatted = formatMessages(toCompact);
 
   const userPrompt: Message = {

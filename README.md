@@ -38,7 +38,7 @@ Necesito un snippet en C para imprimir del 1 al 10
 - Skills layer local: cada agente puede usar `.skills(...)` y el runtime auto-inyecta contexto desde `SKILL.md` en `./skills` según relevancia por turno.
 - Restauración automática de chats y scheduled jobs interrumpidos al reiniciar sesión.
 - **Memoria semántica (Engram)**: agentes con `mem_save`/`mem_get` persisten y recuperan observaciones cross-session via HTTP al servicio Engram (SQLite FTS5 en `~/.engram/engram.db`). El orchestrator, code, web-designer y secretary pueden guardar y recuperar; el resto solo recupera.
-- **Compactación de hilos**: cuando el orchestrator acumula más de `COMPACTION_THRESHOLD` mensajes (default 40), los más antiguos se resumen con LLM, el resumen se guarda en Engram, y el hilo se trunca conservando los últimos `COMPACTION_KEEP` mensajes (default 10). No-blocking: si Engram no está disponible, la compactación se omite.
+- **Compactación de hilos**: cuando el orchestrator acumula más de `COMPACTION_THRESHOLD` mensajes (default 80), los más antiguos se resumen con LLM, el resumen se guarda en Engram, y el hilo se trunca conservando los últimos `COMPACTION_KEEP` mensajes (default 10). No-blocking: si Engram no está disponible, la compactación se omite.
 - **JSONL optimizado**: `chats.jsonl` solo guarda el registro completo en estado `closed` (antes guardaba en cada cambio de estado, O(n²)). `traces.jsonl` rota automáticamente a `traces.<timestamp>.jsonl` al superar `TRACES_MAX_LINES` líneas (default 5000).
 - CLI interactiva para operar y testear sin UI, con HITL approval prompts.
 - Gate de decisión para saber cuándo pasar a UI/monorepo.
@@ -484,6 +484,7 @@ El runtime incluye un `Scheduler` para ejecución cron, one-time y delayed:
 - **Quiero estado completo raw de un chat**: `/chat <chatId> --json`.
 - **Veo `(sin texto)` o respuesta vacía**: revisa `/thread <id>`; si hay `Model error: ...` suele ser rate-limit/cuota del proveedor.
 - **Veo `thought:` o falta respuesta final tras delegar**: el runtime ahora ignora turns intermedios de tool-use, limpia prefijos `thought:` y puede usar fallback desde `get_chat_result` completado cuando el último assistant llega vacío. La extracción se limita a mensajes del turno actual para evitar reciclar respuestas viejas si el proveedor falla.
+- **Veo `No tool call found for function call output with call_id ...`**: el runtime ahora protege el historial para no enviar `toolResult` huérfanos (ajusta límites de history/compaction para conservar `toolCall`+`toolResult` o descarta huérfanos).
 
 ## Nota
 

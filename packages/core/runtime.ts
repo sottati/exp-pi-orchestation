@@ -1,4 +1,4 @@
-import type { Agent, AgentEvent, AgentMessage, AgentTool } from "@mariozechner/pi-agent-core";
+﻿import type { Agent, AgentEvent, AgentMessage, AgentTool } from "@mariozechner/pi-agent-core";
 import {
     createSpecialistRegistry,
     createAgentDefinitions,
@@ -120,6 +120,121 @@ function extractTextFromContent(content: unknown): { text: string; hasToolCall: 
     return { text: textParts.join(""), hasToolCall };
 }
 
+function extractToolCallIdsFromAssistantContent(content: unknown): string[] {
+    if (!Array.isArray(content)) return [];
+    const ids: string[] = [];
+    for (const block of content) {
+        if (typeof block !== "object" || block === null) continue;
+        const typedBlock = block as {
+            type?: unknown;
+            id?: unknown;
+            callId?: unknown;
+            toolCallId?: unknown;
+            call_id?: unknown;
+        };
+        const type = typeof typedBlock.type === "string" ? typedBlock.type : "";
+        if (type !== "toolCall" && type !== "tool_call" && type !== "function_call") continue;
+        const id =
+            typeof typedBlock.id === "string"
+                ? typedBlock.id
+                : typeof typedBlock.callId === "string"
+                    ? typedBlock.callId
+                    : typeof typedBlock.toolCallId === "string"
+                        ? typedBlock.toolCallId
+                        : typeof typedBlock.call_id === "string"
+                            ? typedBlock.call_id
+                            : "";
+        if (id) ids.push(id);
+    }
+    return ids;
+}
+
+function extractToolResultCallId(message: unknown): string {
+    if (!message || typeof message !== "object") return "";
+    const typed = message as {
+        toolCallId?: unknown;
+        callId?: unknown;
+        tool_call_id?: unknown;
+        call_id?: unknown;
+    };
+    if (typeof typed.toolCallId === "string") return typed.toolCallId;
+    if (typeof typed.callId === "string") return typed.callId;
+    if (typeof typed.tool_call_id === "string") return typed.tool_call_id;
+    if (typeof typed.call_id === "string") return typed.call_id;
+    return "";
+}
+
+function findMatchingAssistantToolCallIndex(
+    messages: AgentMessage[],
+    fromIndex: number,
+    toolCallId: string,
+): number {
+    for (let i = fromIndex; i >= 0; i--) {
+        const message = messages[i] as { role?: unknown; content?: unknown };
+        if (message.role !== "assistant") continue;
+        const ids = extractToolCallIdsFromAssistantContent(message.content);
+        if (ids.includes(toolCallId)) return i;
+    }
+    return -1;
+}
+
+function adjustHistoryStartForToolCallPairs(messages: AgentMessage[], startIndex: number): number {
+    let nextStart = Math.max(0, Math.min(startIndex, messages.length));
+    while (nextStart < messages.length) {
+        const message = messages[nextStart] as { role?: unknown };
+        if (message.role !== "toolResult") break;
+
+        const toolCallId = extractToolResultCallId(messages[nextStart]);
+        if (!toolCallId) {
+            // Malformed tool result at boundary: skip it.
+            nextStart += 1;
+            continue;
+        }
+
+        const matchIndex = findMatchingAssistantToolCallIndex(messages, nextStart - 1, toolCallId);
+        if (matchIndex >= 0) {
+            // Include the matching assistant tool call in the kept window.
+            nextStart = matchIndex;
+            continue;
+        }
+
+        // No matching call in earlier history: drop orphan tool result from boundary.
+        nextStart += 1;
+    }
+    return nextStart;
+}
+
+function dropOrphanToolResults(messages: AgentMessage[]): AgentMessage[] {
+    const seenToolCalls = new Set<string>();
+    const out: AgentMessage[] = [];
+
+    for (const message of messages) {
+        const typed = message as { role?: unknown; content?: unknown };
+        const role = typed.role;
+
+        if (role === "assistant") {
+            for (const toolCallId of extractToolCallIdsFromAssistantContent(typed.content)) {
+                seenToolCalls.add(toolCallId);
+            }
+            out.push(message);
+            continue;
+        }
+
+        if (role === "toolResult") {
+            const toolCallId = extractToolResultCallId(message);
+            if (!toolCallId || !seenToolCalls.has(toolCallId)) {
+                continue;
+            }
+            out.push(message);
+            continue;
+        }
+
+        out.push(message);
+    }
+
+    return out;
+}
+
 function isChatStatusText(text: string): boolean {
     const normalized = text.trim().toLowerCase();
     return (
@@ -139,7 +254,7 @@ function isDelegationPlaceholderText(text: string): boolean {
         normalized.includes("delegate") ||
         normalized.includes("delegat") ||
         normalized.includes("delego") ||
-        normalized.includes("delegué") ||
+        normalized.includes("deleguÃ©") ||
         normalized.includes("en cola") ||
         normalized.includes("queued") ||
         normalized.includes("te aviso")
@@ -315,7 +430,7 @@ function createThreadId(sessionId: string, a: BaseAgentId, b: BaseAgentId): stri
  * rather than summarised, since the model will re-orient from the system
  * prompt + the current user message.
  */
-const MAX_HISTORY_MESSAGES = 40;
+const MAX_HISTORY_MESSAGES = 80;
 
 /**
  * Maximum chars of tool-result content kept for *older* messages in the window.
@@ -326,14 +441,18 @@ const OLD_TOOL_RESULT_MAX_CHARS = 1_500;
 
 function pruneHistory(messages: AgentMessage[]): AgentMessage[] {
     // Hard cap: keep only the last MAX_HISTORY_MESSAGES entries.
-    const capped = messages.length > MAX_HISTORY_MESSAGES
-        ? messages.slice(messages.length - MAX_HISTORY_MESSAGES)
-        : messages;
+    // If the boundary lands on a toolResult, shift to include its matching
+    // toolCall (or skip malformed/orphan toolResult) to keep protocol validity.
+    const requestedStart = messages.length > MAX_HISTORY_MESSAGES
+        ? messages.length - MAX_HISTORY_MESSAGES
+        : 0;
+    const safeStart = adjustHistoryStartForToolCallPairs(messages, requestedStart);
+    const capped = messages.slice(safeStart);
 
     // For the older half of the window, truncate large tool-result text blocks.
     const recentBoundary = Math.max(0, capped.length - 10);
-    return capped.map((msg, idx) => {
-        if (idx >= recentBoundary) return msg; // recent — keep verbatim
+    const truncated = capped.map((msg, idx) => {
+        if (idx >= recentBoundary) return msg; // recent messages are kept verbatim.
 
         // Attempt to shrink oversized tool result content blocks.
         const typed = msg as { role?: string; content?: unknown };
@@ -349,11 +468,14 @@ function pruneHistory(messages: AgentMessage[]): AgentMessage[] {
             if (typeof b.text !== "string" || b.text.length <= OLD_TOOL_RESULT_MAX_CHARS) return block;
             mutated = true;
             const trimmed = b.text.slice(0, OLD_TOOL_RESULT_MAX_CHARS);
-            return { ...b, text: `${trimmed}\n[…truncated in history]` };
+            return { ...b, text: `${trimmed}\n[...truncated in history]` };
         });
 
         return mutated ? { ...typed, content: newContent } as AgentMessage : msg;
     });
+
+    // Final safety net: never send orphan tool results to the provider.
+    return dropOrphanToolResults(truncated);
 }
 
 export interface RuntimeOptions {
@@ -1006,7 +1128,7 @@ export class MultiAgentRuntime {
         const def = this.agentDefs.get(toAgentId);
         if (!def) throw new Error(`Agent '${toAgentId}' is not registered.`);
 
-        // Resolve localTools → AgentTool[] with middleware (permissions, HITL)
+        // Resolve localTools â†’ AgentTool[] with middleware (permissions, HITL)
         const localTools = this.resolveWrappedLocalTools(def, toAgentId, runContext, chatId);
         let resolvedTools = localTools;
 
@@ -1224,7 +1346,7 @@ export class MultiAgentRuntime {
         // turn ends with a provider/tool-call protocol error.
         let answer = extractLastAssistantText(newMessages);
 
-        // For top-level human→orchestrator turns, don't return before delegated chats settle.
+        // For top-level humanâ†’orchestrator turns, don't return before delegated chats settle.
         if (
             isOrchestratorAgentId(input.toAgentId) &&
             isTopLevelHumanInitiator(input.initiator) &&
@@ -1365,36 +1487,36 @@ function debugTrace(event: TraceEvent): void {
 
     switch (event.type) {
         case "run_started":
-            line = `[run]  ← ${d.fromAgentId ?? "?"}: "${String(d.preview ?? "").slice(0, 60)}"`;
+            line = `[run]  â† ${d.fromAgentId ?? "?"}: "${String(d.preview ?? "").slice(0, 60)}"`;
             break;
         case "run_completed":
-            line = `[run]  ✓ done ${d.durationMs}ms`;
+            line = `[run]  âœ“ done ${d.durationMs}ms`;
             break;
         case "run_failed":
-            line = `[run]  ✗ failed: ${d.error ?? "unknown"}`;
+            line = `[run]  âœ— failed: ${d.error ?? "unknown"}`;
             break;
         case "tool_start": {
             const args = (d.args ?? d) as Record<string, unknown>;
             if (event.toolName === "delegate" || event.toolName === "delegate_task") {
-                line = `[tool] delegate → ${args.agentId}: "${String(args.task ?? "").slice(0, 60)}"`;
+                line = `[tool] delegate â†’ ${args.agentId}: "${String(args.task ?? "").slice(0, 60)}"`;
             } else if (event.toolName === "get_chat_result" || event.toolName === "get_chat_status") {
-                line = `[tool] ${event.toolName} → ${args.chatId ?? "?"}`;
+                line = `[tool] ${event.toolName} â†’ ${args.chatId ?? "?"}`;
             } else {
                 line = `[tool] ${event.toolName}`;
             }
             break;
         }
         case "chat_created":
-            line = `[chat] ${event.chatId} created → ${event.agentId} [${d.status}]`;
+            line = `[chat] ${event.chatId} created â†’ ${event.agentId} [${d.status}]`;
             break;
         case "chat_started":
-            line = `[chat] ${event.chatId} started → ${event.agentId}`;
+            line = `[chat] ${event.chatId} started â†’ ${event.agentId}`;
             break;
         case "chat_completed":
-            line = `[chat] ${event.chatId} ✓ done ${d.durationMs}ms`;
+            line = `[chat] ${event.chatId} âœ“ done ${d.durationMs}ms`;
             break;
         case "chat_failed":
-            line = `[chat] ${event.chatId} ✗ failed: ${d.error ?? "unknown"}`;
+            line = `[chat] ${event.chatId} âœ— failed: ${d.error ?? "unknown"}`;
             break;
         case "chat_cancelled":
             line = `[chat] ${event.chatId} cancelled`;

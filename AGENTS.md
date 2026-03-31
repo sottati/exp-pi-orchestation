@@ -290,6 +290,8 @@ When adding or changing runtime behavior, preserve correlation IDs:
 - CLI commands must be wrapped in try-catch — use `cliError(err)` helper in `apps/cli/index.ts`.
 - Task input validation: `MAX_TASK_LENGTH = 10_000` in `packages/core/tools.ts`; delegate tasks are otherwise free-form text (no parenthesis-balance enforcement).
 - Runtime response extraction ignores intermediate `toolUse` assistant turns, strips leaked `thought:` prefixes, and falls back to completed `get_chat_result` output when the final assistant message is empty. Extraction is scoped to the current turn messages to avoid reusing stale answers from prior turns after provider errors.
+- History window/compaction defaults: `MAX_HISTORY_MESSAGES=80` and `COMPACTION_THRESHOLD=80` (with `COMPACTION_KEEP=10` unless overridden by env).
+- History pruning/compaction now preserves tool-call boundaries: if a window starts on `toolResult`, runtime either includes the matching prior `toolCall` or drops orphan results. This prevents provider errors like `No tool call found for function call output with call_id ...`.
 - Runtime now subscribes to `tool_execution_start` / `tool_execution_end` and persists execution-phase `tool_start` / `tool_end` traces with sanitized args/details. For `interact_page`, `task` is redacted and only `taskLength` is stored.
 - `wrapTool` logs tool exceptions to stderr as `[tool-error] agent=<id> tool=<name> call=<toolCallId>: ...` before re-throwing.
 - Browser wrapper errors for `browse_url` / `interact_page` now include HTTP status/body snippets and explicit timeout messages; logs use `[browser] ... failed` and never print `interact_page` task content.

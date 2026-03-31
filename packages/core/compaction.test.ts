@@ -51,6 +51,36 @@ function makeMessages(count: number): AgentMessage[] {
   return Array.from({ length: count }, (_, i) => makeUserMessage(`Message ${i + 1}`));
 }
 
+function makeAssistantToolCallMessage(callId: string): AgentMessage {
+  return {
+    role: "assistant",
+    content: [{ type: "toolCall", id: callId, name: "get_chat_status", arguments: { chatId: "chat_1" } }],
+    api: "openai",
+    provider: "openai",
+    model: "test",
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: "toolUse",
+    timestamp: Date.now(),
+  } as any;
+}
+
+function makeToolResultMessage(callId: string): AgentMessage {
+  return {
+    role: "toolResult",
+    toolCallId: callId,
+    toolName: "get_chat_status",
+    content: [{ type: "text", text: "chat active" }],
+    timestamp: Date.now(),
+  } as any;
+}
+
 function makeMockClient(overrides?: Partial<MemoryClient>): MemoryClient {
   return {
     save: async (_params: SaveParams): Promise<number | undefined> => 1,
@@ -257,5 +287,37 @@ describe("maybeCompact", () => {
         process.env.COMPACTION_KEEP = origKeep;
       }
     }
+  });
+
+  test("11. Expands keep window when compaction boundary starts at toolResult", async () => {
+    const callId = "call_boundary";
+    const messages: AgentMessage[] = [];
+    for (let i = 0; i < 34; i++) messages.push(makeUserMessage(`Message ${i + 1}`));
+    messages.push(makeAssistantToolCallMessage(callId)); // index 34 (toCompact by default)
+    messages.push(makeToolResultMessage(callId)); // index 35 (first of toKeep by default)
+    for (let i = 36; i < 45; i++) messages.push(makeUserMessage(`Message ${i + 1}`));
+
+    const result = await maybeCompact({
+      messages,
+      model: makeFakeModel(),
+      client: makeMockClient(),
+      threshold: 40,
+      keep: 10,
+    });
+
+    expect(result).not.toBeNull();
+    const compacted = result!;
+    const hasAssistantCall = compacted.some((m) => {
+      const typed = m as { role?: unknown; content?: unknown };
+      if (typed.role !== "assistant" || !Array.isArray(typed.content)) return false;
+      return typed.content.some((c) => typeof c === "object" && c !== null && (c as { id?: unknown }).id === callId);
+    });
+    const hasToolResult = compacted.some((m) => {
+      const typed = m as { role?: unknown; toolCallId?: unknown };
+      return typed.role === "toolResult" && typed.toolCallId === callId;
+    });
+
+    expect(hasAssistantCall).toBe(true);
+    expect(hasToolResult).toBe(true);
   });
 });

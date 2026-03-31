@@ -207,7 +207,7 @@ Engram prerequisite (memory layer):
   - `ENGRAM_URL=http://localhost:7437` (default)
   - `ENGRAM_SESSION_ID=pi-agent` (default)
 - Thread compaction env vars (optional, defaults shown):
-  - `COMPACTION_THRESHOLD=40` — trigger compaction when orchestrator has more than this many messages
+  - `COMPACTION_THRESHOLD=80` — trigger compaction when orchestrator has more than this many messages
   - `COMPACTION_KEEP=10` — keep this many recent messages after compaction
   - `TRACES_MAX_LINES=5000` — rotate traces.jsonl after this many lines
 
@@ -290,6 +290,7 @@ When adding or changing runtime behavior, preserve correlation IDs:
 - CLI commands must be wrapped in try-catch — use `cliError(err)` helper in `apps/cli/index.ts`.
 - Task input validation: `MAX_TASK_LENGTH = 10_000` in `packages/core/tools.ts`; delegate tasks are otherwise free-form text (no parenthesis-balance enforcement).
 - Runtime response extraction ignores intermediate tool-use assistant turns, strips leaked `thought:` prefixes, falls back to completed `get_chat_result` output when needed, and is scoped to current-turn messages to avoid stale-answer reuse after provider errors.
+- History pruning/compaction now preserves tool-call boundaries: if a window starts on `toolResult`, runtime either includes the matching prior `toolCall` or drops orphan results. This prevents provider errors like `No tool call found for function call output with call_id ...`.
 - Runtime subscribes to `tool_execution_start` / `tool_execution_end` and persists execution-phase `tool_start` / `tool_end` traces with sanitized args/details. For `interact_page`, `task` is redacted and only `taskLength` is stored.
 - `wrapTool` logs tool exceptions to stderr as `[tool-error] agent=<id> tool=<name> call=<toolCallId>: ...` before re-throwing.
 - Browser wrapper errors for `browse_url` / `interact_page` now include HTTP status/body snippets and explicit timeout messages; logs use `[browser] ... failed` and never print `interact_page` task content.

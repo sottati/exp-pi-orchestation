@@ -210,6 +210,76 @@ function replayPendingHitlToClient(ws: WsClient): void {
   }
 }
 
+/** Friendly agent display name (strips internal prefixes like "orchestrator:") */
+function agentDisplayName(agentId: string): string {
+  if (agentId.startsWith("orchestrator:") || agentId === "orchestrator") return "Dithie";
+  return agentId.replace(/:.*$/, "");
+}
+
+/** Human-readable description of what a HITL tool call is trying to do */
+function hitlActionDescription(toolName: string, params: Record<string, unknown>): string {
+  const p = params as Record<string, string>;
+  switch (toolName) {
+    case "run_command":
+      return `Ejecutar comando en terminal:\n\`${String(p.command ?? "").slice(0, 200)}\``;
+    case "read_file":
+      return `Leer archivo: \`${p.path ?? p.filePath ?? ""}\``;
+    case "write_file":
+    case "edit_file":
+      return `${toolName === "edit_file" ? "Editar" : "Escribir"} archivo: \`${p.path ?? p.filePath ?? ""}\``;
+    case "list_directory":
+      return `Listar directorio: \`${p.path ?? "."}\``;
+    case "search_code":
+      return `Buscar en código: \`${p.query ?? p.pattern ?? ""}\``;
+    case "delegate":
+    case "delegate_task": {
+      const task = String(p.task ?? "").slice(0, 150);
+      return `Delegar tarea al agente *${p.agentId ?? "?"}*:\n_${task}${task.length === 150 ? "…" : ""}_`;
+    }
+    case "browse_url":
+      return `Abrir URL: ${p.url ?? ""}`;
+    case "interact_page":
+      return `Automatizar navegador con la tarea:\n_${String(p.task ?? "").slice(0, 150)}_`;
+    case "search_web":
+      return `Buscar en la web: _${p.query ?? ""}_`;
+    case "schedule_task": {
+      const sched = p.schedule ?? p.cron ?? "";
+      const task = String(p.task ?? "").slice(0, 100);
+      return `Programar tarea (${sched}):\n_${task}_`;
+    }
+    case "cancel_scheduled_job":
+      return `Cancelar tarea programada: \`${p.jobId ?? ""}\``;
+    case "gmail_send":
+    case "gmail_draft": {
+      const action = toolName === "gmail_send" ? "Enviar email" : "Guardar borrador";
+      return `${action} a *${p.to ?? "?"}*: _${String(p.subject ?? "").slice(0, 80)}_`;
+    }
+    case "calendar_create":
+    case "calendar_update":
+      return `${toolName === "calendar_create" ? "Crear" : "Actualizar"} evento: _${String(p.title ?? p.summary ?? "").slice(0, 80)}_`;
+    case "calendar_delete":
+      return `Eliminar evento del calendario: \`${p.eventId ?? ""}\``;
+    case "write_gsheet":
+    case "create_gsheet":
+      return `${toolName === "create_gsheet" ? "Crear" : "Escribir en"} hoja de cálculo${p.title ? `: _${p.title}_` : ""}`;
+    case "write_gdoc":
+    case "create_gdoc":
+      return `${toolName === "create_gdoc" ? "Crear" : "Escribir en"} Google Doc${p.title ? `: _${p.title}_` : ""}`;
+    case "git_commit":
+      return `Commit git: _${String(p.message ?? "").slice(0, 100)}_`;
+    case "git_push":
+      return `Push git al remoto${p.branch ? ` (${p.branch})` : ""}`;
+    case "github_create_pr":
+      return `Crear Pull Request: _${String(p.title ?? "").slice(0, 80)}_`;
+    case "github_merge_pr":
+      return `Hacer merge del PR #${p.prNumber ?? p.pullNumber ?? "?"}`;
+    case "request_credentials":
+      return `Solicitar credenciales para: _${p.domain ?? p.service ?? ""}_`;
+    default:
+      return `Usar herramienta \`${toolName}\``;
+  }
+}
+
 function createWebHitlHandler(): HITLHandler {
   return async (request) => new Promise((resolve, reject) => {
     const reqId = crypto.randomUUID();
@@ -235,10 +305,12 @@ function createWebHitlHandler(): HITLHandler {
       const waBody = [
         `🔔 *Aprobación requerida*`,
         ``,
-        `El agente *${request.agentId}* quiere ejecutar *${request.toolName}*.`,
+        hitlActionDescription(request.toolName, request.params),
+        ``,
+        `_Solicitado por ${agentDisplayName(request.agentId)}_`,
         ``,
         `Responde *si* para aprobar o *no* para rechazar.`,
-        `[Ref: ${shortRef}]`,
+        `*si todo* para aprobar todo`,
       ].join("\n");
       runtimeManager.sendChannelMessage(request.orgId, request.orchestratorId, request.contact, waBody)
         .then(() => {

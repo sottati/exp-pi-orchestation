@@ -518,6 +518,14 @@ export class RuntimeManager {
     const org = await this.ensureOrgRuntime(input.orgId);
     const toAgentId = makeOrchestratorAgentId(input.orchestratorId);
     const normalizedContact = input.contact ? normalizePhoneNumber(input.contact) : undefined;
+
+    // If no explicit contact, fall back to the orchestrator's configured ownerNumber so that
+    // start_background_task is available from the UI too — results are delivered to the owner's WA.
+    const channelOwner = !normalizedContact
+      ? org.channels.find((ch) => ch.orchestratorId === input.orchestratorId && ch.active)?.ownerNumber
+      : undefined;
+    const resolvedContact = normalizedContact ?? channelOwner;
+
     const fromAgentId = normalizedContact ? `external:${normalizedContact}` : "user";
     return org.runtime.chat({
       toAgentId,
@@ -525,7 +533,7 @@ export class RuntimeManager {
       content: input.content,
       initiator: normalizedContact ? "external" : "user",
       channel: normalizedContact ? "whatsapp" : "ui",
-      contact: normalizedContact,
+      contact: resolvedContact,
       orchestratorId: toAgentId,
       metadata: { source: "ui" },
       onAgentEvent: input.onAgentEvent,
