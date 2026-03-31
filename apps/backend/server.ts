@@ -50,8 +50,8 @@ interface PendingHitlRequest {
 }
 
 const hitlPending = new Map<string, PendingHitlRequest>();
-/** Maps normalized WhatsApp contact number → pending HITL reqId for that contact */
-const hitlContactIndex = new Map<string, string>();
+/** Maps normalized WhatsApp contact number → FIFO queue of pending HITL reqIds for that contact */
+const hitlContactIndex = new Map<string, string[]>();
 
 function sendWsJson(ws: WsClient, payload: object): boolean {
   try {
@@ -181,9 +181,14 @@ function resolveHitlRequest(reqId: string, response: { approved: boolean; modifi
   pending.resolved = true;
   if (pending.timeoutHandle) clearTimeout(pending.timeoutHandle);
   hitlPending.delete(reqId);
-  // Clean up WhatsApp contact index
-  if (pending.request.contact && hitlContactIndex.get(pending.request.contact) === reqId) {
-    hitlContactIndex.delete(pending.request.contact);
+  // Clean up WhatsApp contact queue
+  if (pending.request.contact) {
+    const queue = hitlContactIndex.get(pending.request.contact);
+    if (queue) {
+      const idx = queue.indexOf(reqId);
+      if (idx !== -1) queue.splice(idx, 1);
+      if (queue.length === 0) hitlContactIndex.delete(pending.request.contact);
+    }
   }
   console.error(`[hitl] request ${reqId} response approved=${response.approved}`);
   pending.resolve(response);
@@ -218,7 +223,12 @@ function createWebHitlHandler(): HITLHandler {
 
     // WhatsApp channel: send approval message to the contact and start timeout immediately
     if (request.channel === "whatsapp" && request.contact && request.orgId && request.orchestratorId) {
-      hitlContactIndex.set(request.contact, reqId);
+      const existing = hitlContactIndex.get(request.contact);
+      if (existing) {
+        existing.push(reqId);
+      } else {
+        hitlContactIndex.set(request.contact, [reqId]);
+      }
       const shortRef = reqId.slice(0, 8);
       const waBody = [
         `🔔 *Aprobación requerida*`,
@@ -507,14 +517,25 @@ Bun.serve({
           if (contact && textContent.trim()) {
             // Check if this message resolves a pending HITL before routing to the agent
             const normalizedContact = contact.replace(/[^\d+]/g, "").trim();
-            const pendingHitlReqId = hitlContactIndex.get(normalizedContact);
-            if (pendingHitlReqId) {
+            const hitlQueue = hitlContactIndex.get(normalizedContact);
+            if (hitlQueue && hitlQueue.length > 0) {
               const trimmed = textContent.trim().toLowerCase();
+              const approveAll = ["si todo", "sí todo", "yes all", "aprobar todo", "all"].includes(trimmed);
+              const denyAll = ["no todo", "rechazar todo", "deny all"].includes(trimmed);
+              if (approveAll || denyAll) {
+                // Resolve every pending HITL for this contact at once
+                const ids = [...hitlQueue];
+                for (const reqId of ids) resolveHitlRequest(reqId, { approved: approveAll });
+                console.error(`[hitl] WA bulk reply from ${normalizedContact}: approved=${approveAll} resolved=${ids.length}`);
+                return Response.json({ ok: true, hitl_resolved: true, approved: approveAll, resolved: ids.length });
+              }
               const approved = ["si", "sí", "s", "yes", "y", "ok", "aprobar"].includes(trimmed);
               const denied = ["no", "n", "nope", "rechazar", "denegar"].includes(trimmed);
               if (approved || denied) {
+                // Resolve the oldest pending HITL for this contact (FIFO)
+                const pendingHitlReqId = hitlQueue[0]!;
                 resolveHitlRequest(pendingHitlReqId, { approved });
-                console.error(`[hitl] WA reply from ${normalizedContact}: approved=${approved} reqId=${pendingHitlReqId}`);
+                console.error(`[hitl] WA reply from ${normalizedContact}: approved=${approved} reqId=${pendingHitlReqId} remaining=${hitlQueue.length}`);
                 return Response.json({ ok: true, hitl_resolved: true, approved });
               }
             }

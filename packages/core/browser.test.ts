@@ -71,6 +71,20 @@ describe("browseUrl", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  test("returns explicit timeout message on aborted browse request", async () => {
+    const { browseUrl } = await import("./browser");
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() => Promise.reject(new DOMException("aborted", "AbortError"))) as unknown as typeof fetch;
+    try {
+      const result = await browseUrl("https://example.com");
+      expect(result.title).toBe("Error");
+      expect(result.content).toContain("timed out");
+      expect(result.content).toContain("/browse");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 
 // --- searchWeb ---

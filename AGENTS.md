@@ -222,6 +222,9 @@ Explorer prerequisite:
 - Set env vars for local dev (no Docker):
   - `SEARXNG_URL=http://localhost:8080` (default)
   - `BROWSE_SERVICE_URL=http://localhost:8001` (default)
+  - `BROWSE_TIMEOUT_MS=90000` (optional, TS client timeout for `browse_url`)
+  - `BROWSE_PAGE_TIMEOUT_MS=60000` (optional, Python crawl page timeout)
+  - `BROWSE_WAIT_FOR_TIMEOUT_MS=10000` (optional, max wait for `wait_for` selectors before fallback)
 - Python service requires `OPENROUTER_API_KEY` for `interact_page` (browser-use LLM)
 - `BROWSE_LLM_MODEL` overrides the LLM model used by browser-use (default: `openrouter/google/gemini-3.1-flash-lite-preview`)
 
@@ -284,7 +287,7 @@ When adding or changing runtime behavior, preserve correlation IDs:
 - Use `safeParseLine<T>(line)` for JSONL fault-tolerant parsing. Returns `undefined` on corrupt lines.
 - Guard `trace()` and persistence calls with try-catch so trace failures don't shadow original errors.
 - CLI commands must be wrapped in try-catch — use `cliError(err)` helper in `apps/cli/index.ts`.
-- Task input validation: `MAX_TASK_LENGTH = 10_000` in `packages/core/tools.ts`.
+- Task input validation: `MAX_TASK_LENGTH = 10_000` in `packages/core/tools.ts`; delegate tasks are otherwise free-form text (no parenthesis-balance enforcement).
 - Runtime response extraction ignores intermediate `toolUse` assistant turns, strips leaked `thought:` prefixes, and falls back to completed `get_chat_result` output when the final assistant message is empty.
 - Runtime now subscribes to `tool_execution_start` / `tool_execution_end` and persists execution-phase `tool_start` / `tool_end` traces with sanitized args/details. For `interact_page`, `task` is redacted and only `taskLength` is stored.
 - `wrapTool` logs tool exceptions to stderr as `[tool-error] agent=<id> tool=<name> call=<toolCallId>: ...` before re-throwing.

@@ -69,6 +69,9 @@ Hoy, los nueve agentes usan `openrouter/google/gemini-3.1-flash-lite-preview`.
 - Explorer web: iniciar servicios de soporte con `docker compose up searxng pi-browse-service -d` (o levantar el stack completo con `docker compose up --build -d`)
 - Explorer web: requiere salida a internet (DNS + HTTPS) desde el host
 - Explorer web: `SEARXNG_URL=http://localhost:8080` (default) y `BROWSE_SERVICE_URL=http://localhost:8001` (default)
+- Explorer web: `BROWSE_TIMEOUT_MS=90000` (opcional) ajusta el timeout del cliente TS para `browse_url`
+- Explorer web: `BROWSE_PAGE_TIMEOUT_MS=60000` (opcional) timeout de carga/navegaciÃ³n en el microservicio Python
+- Explorer web: `BROWSE_WAIT_FOR_TIMEOUT_MS=10000` (opcional) limita la espera de selectores `wait_for` para habilitar fallback rÃ¡pido
 - Explorer web: `OPENROUTER_API_KEY` requerido para `interact_page` (browser-use LLM)
 - Explorer web: `BROWSE_LLM_MODEL` opcional para overridear el modelo LLM de browser-use
 - Explorer web: si `interact_page` falla, revisar logs de backend con prefijos `[browser]`, `[tool-error]` y logs del microservicio `pi-browse-service` (ahora incluyen stack traces y contexto del endpoint)
@@ -458,6 +461,7 @@ El runtime incluye un `Scheduler` para ejecución cron, one-time y delayed:
 
 - Para mensajes triviales, el orquestador puede responder sin delegar.
 - Para tareas especializadas, debe aparecer `tool_start/tool_end` en `/traces`.
+- `delegate.task` acepta texto libre (incluyendo `1)` o paréntesis sin balance); la validación solo exige no vacío y `MAX_TASK_LENGTH=10_000`.
 - Los `tool_start/tool_end` de ejecucion ahora se persisten desde `tool_execution_start/tool_execution_end` con args/details saneados; `interact_page.task` se redacta en trazas.
 - Si una tool falla durante stream en UI, se emite `stream_status` con el error resumido (ademas del registro en stderr).
 - Cuando el orquestador delega durante un turno del usuario, espera a que esos chats delegados cierren antes de devolver la respuesta final.

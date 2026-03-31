@@ -113,13 +113,20 @@ export interface CreateJobInput {
   task: string;
   schedule: ScheduledJob["schedule"];
   maxRuns?: number;
+  /** Channel delivery target — if set, the job result is sent to this contact via the channel. */
+  orgId?: string;
+  orchestratorId?: string;
+  contact?: string;
 }
 
 interface SchedulerOptions {
   persistJob: (job: ScheduledJob) => Promise<void>;
   restoreJobs: () => Promise<ScheduledJob[]>;
-  executeTask: (agentId: string, task: string) => Promise<string>;
+  /** Executes the agent task. Receives the full job so the runtime can pass channel context. */
+  executeTask: (agentId: string, task: string, job: ScheduledJob) => Promise<string>;
   trace: (event: { type: string; status: string; runId: string; turnId: string; details?: Record<string, unknown> }) => Promise<void>;
+  /** If provided, called after each successful execution when the job has a contact target. */
+  deliverResult?: (job: ScheduledJob, result: string) => Promise<void>;
 }
 
 export class Scheduler {
@@ -169,6 +176,9 @@ export class Scheduler {
       maxRuns,
       createdAt: timestamp,
       updatedAt: timestamp,
+      orgId: input.orgId,
+      orchestratorId: input.orchestratorId,
+      contact: input.contact,
     };
 
     this.jobs.set(jobId, job);
@@ -287,7 +297,7 @@ export class Scheduler {
     });
 
     try {
-      const result = await this.opts.executeTask(job.targetAgentId, job.task);
+      const result = await this.opts.executeTask(job.targetAgentId, job.task, job);
 
       job.runCount += 1;
       job.lastRunAt = now();
@@ -300,6 +310,15 @@ export class Scheduler {
         turnId,
         details: { jobId, result: result.slice(0, 200) },
       });
+
+      // Deliver result to channel contact if configured
+      if (job.contact && this.opts.deliverResult) {
+        try {
+          await this.opts.deliverResult(job, result);
+        } catch (err) {
+          console.error(`[scheduler] delivery failed for job ${jobId}: ${errorMessage(err)}`);
+        }
+      }
 
       // Check if done
       if (job.maxRuns && job.runCount >= job.maxRuns) {

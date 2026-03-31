@@ -15,9 +15,17 @@ export interface SearchResult {
 const SEARXNG_URL = process.env.SEARXNG_URL ?? "http://localhost:8080";
 const BROWSE_SERVICE_URL = process.env.BROWSE_SERVICE_URL ?? "http://localhost:8001";
 const SEARCH_TIMEOUT_MS = 20_000;
-const BROWSE_TIMEOUT_MS = 60_000;
+const BROWSE_TIMEOUT_MS = readPositiveIntEnv("BROWSE_TIMEOUT_MS", 90_000);
 const INTERACT_TIMEOUT_MS = 130_000;
 const MAX_ERROR_BODY_CHARS = 400;
+
+function readPositiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return parsed;
+}
 
 function validateHttpUrl(input: string): string {
   let parsed: URL;

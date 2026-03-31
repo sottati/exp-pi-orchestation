@@ -294,6 +294,13 @@ export class RuntimeManager {
       dataDir: this.orgDataDir(orgId),
       orchestratorIds: orchestratorIds.length > 0 ? orchestratorIds : [makeOrchestratorAgentId()],
       hitlHandler: this.hitlHandler,
+      deliverResult: async (job, result) => {
+        if (!job.contact || !job.orchestratorId) return;
+        await this.sendChannelMessage(orgId, job.orchestratorId, job.contact, result);
+      },
+      sendMessage: async (msgOrgId, orchestratorId, contact, body) => {
+        await this.sendChannelMessage(msgOrgId, orchestratorId, contact, body);
+      },
     });
 
     const next: InternalOrgRuntime = {

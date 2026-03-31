@@ -1,10 +1,26 @@
 import asyncio
+import os
 import socket
 from urllib.parse import urlparse
 
 from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, CacheMode
 from crawl4ai.content_filter_strategy import PruningContentFilter
 from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
+
+
+def _read_env_int(name: str, default: int, minimum: int = 1) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return max(minimum, value)
+
+
+BROWSE_PAGE_TIMEOUT_MS = _read_env_int("BROWSE_PAGE_TIMEOUT_MS", 60_000)
+BROWSE_WAIT_FOR_TIMEOUT_MS = _read_env_int("BROWSE_WAIT_FOR_TIMEOUT_MS", 10_000)
 
 
 async def _diagnose_connection(url: str) -> str:
@@ -31,19 +47,33 @@ async def _diagnose_connection(url: str) -> str:
         return f"{type(e).__name__} connecting to '{host}:{port}': {e}"
 
 
-async def crawl_url(url: str, wait_for: str | None = None) -> dict:
+async def _run_crawl(url: str, wait_for: str | None) -> object:
+    wait_for_timeout = None
+    if wait_for:
+        wait_for_timeout = min(BROWSE_WAIT_FOR_TIMEOUT_MS, BROWSE_PAGE_TIMEOUT_MS)
+
     config = CrawlerRunConfig(
         cache_mode=CacheMode.BYPASS,
+        page_timeout=BROWSE_PAGE_TIMEOUT_MS,
         wait_for=wait_for,
+        wait_for_timeout=wait_for_timeout,
         markdown_generator=DefaultMarkdownGenerator(
             content_filter=PruningContentFilter()
         ),
     )
     async with AsyncWebCrawler() as crawler:
-        result = await crawler.arun(url=url, config=config)
+        return await crawler.arun(url=url, config=config)
+
+
+async def crawl_url(url: str, wait_for: str | None = None) -> dict:
+    result = await _run_crawl(url, wait_for)
     if not result.success:
-        diagnosis = await _diagnose_connection(url)
-        raise RuntimeError(diagnosis or result.error_message or f"Crawl4AI failed for {url}")
+        # If a wait_for selector caused the failure, retry without it.
+        if wait_for and result.error_message and "Wait condition failed" in result.error_message:
+            result = await _run_crawl(url, wait_for=None)
+        if not result.success:
+            diagnosis = await _diagnose_connection(url)
+            raise RuntimeError(diagnosis or result.error_message or f"Crawl4AI failed for {url}")
     markdown = ""
     if result.markdown:
         markdown = result.markdown.fit_markdown or result.markdown.raw_markdown or ""

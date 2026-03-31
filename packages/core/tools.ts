@@ -93,15 +93,6 @@ function validateTask(task: string): string {
     const normalized = normalizeTask(task);
     if (!normalized) throw new Error("Task cannot be empty.");
     if (normalized.length > MAX_TASK_LENGTH) throw new Error(`Task exceeds maximum length of ${MAX_TASK_LENGTH} characters.`);
-
-    let balance = 0;
-    for (const char of normalized) {
-        if (char === "(") balance += 1;
-        if (char === ")") balance -= 1;
-        if (balance < 0) throw new Error("Task has invalid parenthesis ordering.");
-    }
-    if (balance !== 0) throw new Error("Task has unbalanced parentheses.");
-
     return normalized;
 }
 

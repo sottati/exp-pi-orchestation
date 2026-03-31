@@ -17,6 +17,8 @@ import { type HITLHandler, wrapTool, resolvePermission } from "./tool-middleware
 import { compileSystemPrompt } from "./prompt-compiler";
 import { Scheduler } from "./scheduler";
 import { createSchedulerToolEntries } from "./scheduler-tools";
+import { createNotifyContactToolEntry } from "./notify-tool";
+import { createBackgroundTaskToolEntry } from "./background-task-tool";
 import { CredentialStore } from "./credential-store";
 import { WorkspaceManager } from "./workspace-manager";
 import { delimiter, join } from "node:path";
@@ -363,6 +365,10 @@ export interface RuntimeOptions {
     schedules?: Array<{ id: string; cron: string; agentId: string; task: string }>;
     workspaceManager?: WorkspaceManager;
     workspaceAllowedRoots?: string[];
+    /** If provided, called after each scheduled job completes when the job has a contact target. */
+    deliverResult?: (job: import("./contracts").ScheduledJob, result: string) => Promise<void>;
+    /** If provided, agents can call notify_contact to push proactive messages to a WhatsApp contact. */
+    sendMessage?: (orgId: string, orchestratorId: string, contact: string, body: string) => Promise<void>;
 }
 
 const denyAllHandler: HITLHandler = async () => ({ approved: false });
@@ -398,6 +404,7 @@ export class MultiAgentRuntime {
     readonly scheduler: Scheduler;
     readonly credentialStore: CredentialStore;
     readonly workspaceManager: WorkspaceManager;
+    private readonly sendMessageFn?: (orgId: string, orchestratorId: string, contact: string, body: string) => Promise<void>;
 
     constructor(optionsOrSessionId?: RuntimeOptions | string) {
         const options: RuntimeOptions = typeof optionsOrSessionId === "string"
@@ -409,6 +416,7 @@ export class MultiAgentRuntime {
         const dataDir = options.dataDir ?? ".runtime-data";
         this.store = new ThreadStore({ sessionId: this.sessionId, baseDir: dataDir });
         this.hitlHandler = options.hitlHandler ?? denyAllHandler;
+        this.sendMessageFn = options.sendMessage;
 
         // Credential store (shares base dir with thread store)
         this.credentialStore = new CredentialStore({
@@ -557,8 +565,15 @@ export class MultiAgentRuntime {
         this.scheduler = new Scheduler({
             persistJob: (job) => this.store.appendJob(job),
             restoreJobs: () => this.store.getJobRecords(),
-            executeTask: async (agentId, task) => {
-                const result = await this.chat({ toAgentId: agentId, content: task });
+            executeTask: async (agentId, task, job) => {
+                const result = await this.chat({
+                    toAgentId: agentId,
+                    content: task,
+                    contact: job.contact,
+                    orchestratorId: job.orchestratorId,
+                    channel: job.contact ? "whatsapp" : undefined,
+                    initiator: job.contact ? "external" : undefined,
+                });
                 return result.answer;
             },
             trace: async (event) => {
@@ -567,6 +582,7 @@ export class MultiAgentRuntime {
                     sessionId: this.sessionId,
                 } as any);
             },
+            deliverResult: options.deliverResult,
         });
 
         // Config-driven schedules
@@ -904,12 +920,15 @@ export class MultiAgentRuntime {
         });
     }
 
-    private createSchedulerToolsForRun(orchestratorAgentId: string): AgentTool<any>[] {
+    private createSchedulerToolsForRun(orchestratorAgentId: string, runContext?: RunContext): AgentTool<any>[] {
         const entries = createSchedulerToolEntries({
             scheduler: this.scheduler,
             sessionId: this.sessionId,
             callerAgentId: orchestratorAgentId,
             allowedTargets: null, // orchestrator can target any agent
+            orgId: runContext?.orgId,
+            orchestratorId: runContext?.orchestratorId,
+            defaultContact: runContext?.contact,
         });
         return entries.map(entry => ({
             name: entry.name,
@@ -989,13 +1008,56 @@ export class MultiAgentRuntime {
         if (isOrchestratorAgentId(toAgentId)) {
             const orchTools = this.createOrchestratorToolsForRun(runContext, toAgentId);
             resolvedTools = [...orchTools, ...localTools];
+
+            // Inject start_background_task when there's a WhatsApp contact to deliver results to
+            if (runContext.contact && runContext.orchestratorId && this.orgId) {
+                const bgEntry = createBackgroundTaskToolEntry((agentId, task) =>
+                    this.scheduler.addJob({
+                        sessionId: this.sessionId,
+                        createdBy: toAgentId,
+                        targetAgentId: agentId,
+                        task,
+                        schedule: { type: "delay", delayMs: 1 },
+                        orgId: this.orgId,
+                        orchestratorId: runContext.orchestratorId,
+                        contact: runContext.contact,
+                    })
+                );
+                const bgTool: AgentTool<any> = {
+                    name: bgEntry.name,
+                    label: bgEntry.description,
+                    description: bgEntry.description,
+                    parameters: bgEntry.parameters,
+                    execute: bgEntry.execute,
+                };
+                resolvedTools = [...resolvedTools, bgTool];
+            }
         }
 
         // Inject scheduler tools into the secretary agent
         if (toAgentId === "secretary") {
             const schedulerCaller = runContext.orchestratorId ?? this.primaryOrchestratorId;
-            const schedulerTools = this.createSchedulerToolsForRun(schedulerCaller);
+            const schedulerTools = this.createSchedulerToolsForRun(schedulerCaller, runContext);
             resolvedTools = [...resolvedTools, ...schedulerTools];
+        }
+
+        // Inject notify_contact into every agent when the run has a WhatsApp contact
+        if (runContext.contact && runContext.orchestratorId && this.orgId && this.sendMessageFn) {
+            const orgId = this.orgId;
+            const orchestratorId = runContext.orchestratorId;
+            const contact = runContext.contact;
+            const sendFn = this.sendMessageFn;
+            const notifyEntry = createNotifyContactToolEntry((body) =>
+                sendFn(orgId, orchestratorId, contact, body)
+            );
+            const notifyTool: AgentTool<any> = {
+                name: notifyEntry.name,
+                label: notifyEntry.description,
+                description: notifyEntry.description,
+                parameters: notifyEntry.parameters,
+                execute: notifyEntry.execute,
+            };
+            resolvedTools = [...resolvedTools, notifyTool];
         }
 
         const basePrompt = compileSystemPrompt(def, resolvedTools);
@@ -1003,6 +1065,9 @@ export class MultiAgentRuntime {
             userInput,
             config: def.skillsConfig,
         });
+        if (skillContext.selectedSkills.length > 0) {
+            console.error(`[skills] agent=${toAgentId} selected=[${skillContext.selectedSkills.join(", ")}] (${skillContext.availableSkills} available)`);
+        }
         const systemPrompt = skillContext.section
             ? `${basePrompt}\n\n${skillContext.section}`
             : basePrompt;

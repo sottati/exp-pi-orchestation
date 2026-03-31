@@ -170,4 +170,8 @@ export interface ScheduledJob {
     lastRunAt?: number;
     nextRunAt?: number;
     error?: string;
+    /** Channel delivery target — if set, the job result is sent to this contact. */
+    orgId?: string;
+    orchestratorId?: string;
+    contact?: string;
 }

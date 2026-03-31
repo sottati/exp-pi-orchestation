@@ -10,6 +10,7 @@ services:
     environment:
       SEARXNG_URL: http://searxng:8080
       BROWSE_SERVICE_URL: http://pi-browse-service:8001
+      BROWSE_TIMEOUT_MS: ${BROWSE_TIMEOUT_MS:-90000}
     depends_on:
       searxng:
         condition: service_healthy
@@ -30,6 +31,8 @@ services:
     environment:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       BROWSE_LLM_MODEL: ${BROWSE_LLM_MODEL:-openrouter/google/gemini-3.1-flash-lite-preview}
+      BROWSE_PAGE_TIMEOUT_MS: ${BROWSE_PAGE_TIMEOUT_MS:-60000}
+      BROWSE_WAIT_FOR_TIMEOUT_MS: ${BROWSE_WAIT_FOR_TIMEOUT_MS:-10000}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
       interval: 15s

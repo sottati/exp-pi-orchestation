@@ -7,10 +7,14 @@ interface SchedulerToolOptions {
   sessionId: string;
   callerAgentId: string;
   allowedTargets: string[] | null; // null = any target allowed (orchestrator)
+  /** Channel context inherited from the current run — used as default delivery target. */
+  orgId?: string;
+  orchestratorId?: string;
+  defaultContact?: string;
 }
 
 export function createSchedulerToolEntries(opts: SchedulerToolOptions): ToolEntry[] {
-  const { scheduler, sessionId, callerAgentId, allowedTargets } = opts;
+  const { scheduler, sessionId, callerAgentId, allowedTargets, orgId, orchestratorId, defaultContact } = opts;
 
   const scheduleTask: ToolEntry = {
     name: "schedule_task",
@@ -22,6 +26,7 @@ export function createSchedulerToolEntries(opts: SchedulerToolOptions): ToolEntr
       cron: Type.Optional(Type.String({ description: "Cron pattern (5-field)." })),
       runAt: Type.Optional(Type.String({ description: "ISO date for one-time execution." })),
       delayMs: Type.Optional(Type.Number({ description: "Delay in ms from now." })),
+      contact: Type.Optional(Type.String({ description: "WhatsApp contact number to send the result to. Defaults to the contact who created the reminder." })),
     }),
     execute: async (_toolCallId, params) => {
       const target = params.targetAgentId as string;
@@ -40,12 +45,17 @@ export function createSchedulerToolEntries(opts: SchedulerToolOptions): ToolEntr
           ? { type: "once" as const, runAt: new Date(params.runAt as string).getTime() }
           : { type: "delay" as const, delayMs: params.delayMs as number };
 
+      const resolvedContact = (params.contact as string | undefined) ?? defaultContact;
+
       const job = scheduler.addJob({
         sessionId,
         createdBy: callerAgentId,
         targetAgentId: target,
         task: params.task as string,
         schedule,
+        orgId,
+        orchestratorId,
+        contact: resolvedContact,
       });
 
       return {
