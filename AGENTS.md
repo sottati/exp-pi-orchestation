@@ -288,7 +288,7 @@ When adding or changing runtime behavior, preserve correlation IDs:
 - Guard `trace()` and persistence calls with try-catch so trace failures don't shadow original errors.
 - CLI commands must be wrapped in try-catch — use `cliError(err)` helper in `apps/cli/index.ts`.
 - Task input validation: `MAX_TASK_LENGTH = 10_000` in `packages/core/tools.ts`; delegate tasks are otherwise free-form text (no parenthesis-balance enforcement).
-- Runtime response extraction ignores intermediate `toolUse` assistant turns, strips leaked `thought:` prefixes, and falls back to completed `get_chat_result` output when the final assistant message is empty.
+- Runtime response extraction ignores intermediate `toolUse` assistant turns, strips leaked `thought:` prefixes, and falls back to completed `get_chat_result` output when the final assistant message is empty. Extraction is scoped to the current turn messages to avoid reusing stale answers from prior turns after provider errors.
 - Runtime now subscribes to `tool_execution_start` / `tool_execution_end` and persists execution-phase `tool_start` / `tool_end` traces with sanitized args/details. For `interact_page`, `task` is redacted and only `taskLength` is stored.
 - `wrapTool` logs tool exceptions to stderr as `[tool-error] agent=<id> tool=<name> call=<toolCallId>: ...` before re-throwing.
 - Browser wrapper errors for `browse_url` / `interact_page` now include HTTP status/body snippets and explicit timeout messages; logs use `[browser] ... failed` and never print `interact_page` task content.
@@ -358,6 +358,7 @@ Google API tools use OAuth2 via `googleapis`. Credential resolution order:
 1. CredentialStore domain `"google"` (fields: `clientId`, `clientSecret`, `refreshToken`)
 2. Env vars: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`
 3. Optional interactive flow: orchestrator can call `request_credentials` to collect/store values through HITL UI.
+4. Prompt behavior: Google-capable agents should assume access is already configured and only ask for credentials if a Google tool returns an auth/permission error.
 
 Agent tool assignments:
 

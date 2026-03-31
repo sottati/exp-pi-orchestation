@@ -1214,7 +1214,10 @@ export class MultiAgentRuntime {
             previousEnvelopeId = envelopeId;
         }
 
-        let answer = extractLastAssistantText(agent.state.messages);
+        // Extract the final answer from this turn only.
+        // Using full thread history can leak stale answers when the current
+        // turn ends with a provider/tool-call protocol error.
+        let answer = extractLastAssistantText(newMessages);
 
         // For top-level human→orchestrator turns, don't return before delegated chats settle.
         if (

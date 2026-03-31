@@ -34,19 +34,19 @@ describe("extractLastAssistantText", () => {
     const messages: AgentMessage[] = [
       {
         role: "assistant",
-        content: [{ type: "text", text: "thought:La secretaria confirmó el guardado." }],
+        content: [{ type: "text", text: "thought:La secretaria confirmo el guardado." }],
         stopReason: "stop",
       } as any,
     ];
 
-    expect(extractLastAssistantText(messages)).toBe("La secretaria confirmó el guardado.");
+    expect(extractLastAssistantText(messages)).toBe("La secretaria confirmo el guardado.");
   });
 
   test("continues searching when latest assistant has no visible text", () => {
     const messages: AgentMessage[] = [
       {
         role: "assistant",
-        content: [{ type: "text", text: "Respuesta final útil." }],
+        content: [{ type: "text", text: "Respuesta final util." }],
         stopReason: "stop",
       } as any,
       {
@@ -56,6 +56,21 @@ describe("extractLastAssistantText", () => {
       } as any,
     ];
 
-    expect(extractLastAssistantText(messages)).toBe("Respuesta final útil.");
+    expect(extractLastAssistantText(messages)).toBe("Respuesta final util.");
+  });
+
+  test("returns model error when assistant turn has error and no text", () => {
+    const messages: AgentMessage[] = [
+      {
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorMessage: "400 Provider returned error: invalid_request_error",
+      } as any,
+    ];
+
+    const extracted = extractLastAssistantText(messages);
+    expect(extracted).toContain("Model error:");
+    expect(extracted).toContain("invalid_request_error");
   });
 });

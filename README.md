@@ -413,6 +413,7 @@ Las tools de Google usan OAuth2 via `googleapis`. Las credenciales se resuelven 
 
 1. **CredentialStore**: dominio `"google"` con campos `clientId`, `clientSecret`, `refreshToken`.
 2. **Variables de entorno**: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`.
+3. **Comportamiento de prompts**: los agentes con tools Google asumen acceso ya configurado y solo piden credenciales si una tool devuelve error de auth/permisos.
 
 Configura con CredentialStore:
 
@@ -475,7 +476,7 @@ El runtime incluye un `Scheduler` para ejecución cron, one-time y delayed:
 - **Quiero ver conversación interna entre agentes**: `/threads` y luego `/thread <id>`.
 - **Quiero estado completo raw de un chat**: `/chat <chatId> --json`.
 - **Veo `(sin texto)` o respuesta vacía**: revisa `/thread <id>`; si hay `Model error: ...` suele ser rate-limit/cuota del proveedor.
-- **Veo `thought:` o falta respuesta final tras delegar**: el runtime ahora ignora turns intermedios de tool-use, limpia prefijos `thought:` y puede usar fallback desde `get_chat_result` completado cuando el último assistant llega vacío.
+- **Veo `thought:` o falta respuesta final tras delegar**: el runtime ahora ignora turns intermedios de tool-use, limpia prefijos `thought:` y puede usar fallback desde `get_chat_result` completado cuando el último assistant llega vacío. La extracción se limita a mensajes del turno actual para evitar reciclar respuestas viejas si el proveedor falla.
 
 ## Nota
 
