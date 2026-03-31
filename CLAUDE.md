@@ -131,6 +131,7 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Scheduler tools: `packages/core/scheduler-tools.ts` (`schedule_task`, `list_scheduled_jobs`, `cancel_scheduled_job`)
 - MCP client: `packages/core/mcp-client.ts` (`McpConnector` interface for external tool servers)
 - Browser wrapper: `packages/core/browser.ts` (`browseUrl` calls Python microservice → Crawl4AI; `searchWeb` calls SearXNG REST API directly; `interactWithPage` calls Python microservice → browser-use LLM-driven automation)
+- Phone utils: `packages/core/phone-utils.ts` (normalizes contact numbers for thread ids, restore, and channel routing)
 - Explorer tools: `packages/core/explorer-tools.ts` (`browse_url`, `search_web`, `interact_page` tool entries; `interact_page` uses natural language `task` parameter — browser-use decides actions autonomously; supports `{{credential:fieldname}}` placeholders in task string)
 - Credential store: `packages/core/credential-store.ts` (AES-256-GCM encrypted credential storage)
 - Credential tools: `packages/core/credential-tools.ts` (`request_credentials` asks user for keys via HITL and stores them encrypted by domain)
@@ -414,9 +415,12 @@ Serves on <http://localhost:3000>.
 - **Dithie**: pixel-art spider character as orchestrator identity. States: idle (breathing + blink), thinking (eye movement cycle), delegating (eyes shifted), error (X eyes).
 - **Unified chat**: all conversation goes through Dithie (orchestrator). No agent switching. Delegations shown as collapsible inline blocks.
 - **Chat anchor-on-send**: in the main chat route (`/`), once Dithie starts streaming, the just-sent user message is smoothly aligned near the top of the message container and no post-stream jump-to-bottom is triggered.
-- **Inline thinking traces**: the chat feed consumes orchestrator `thinking_start/delta/end` events in real time (not sidebar-only), shows the full reasoning text for debugging in a lighter floating block, extracts a heading-like first line into the block header, highlights later heading-like lines inside the body, and keeps the block visible while the final answer streams; `stream_status` is fallback-only if model thinking is unavailable.
-- **Thinking hydration**: on `/api/ui-state` restore, thinking blocks are rebuilt from persisted orchestrator assistant messages (`content.type === "thinking"`) with trace fallback.
-- **Pre-stream**: while waiting for the first token after `chat_sending`, the chat shows a compact `thinking-row` (mascot + label) instead of an empty message bubble; streaming text uses the usual bubble + cursor.
+- **Breathing last turn**: the last assistant turn reserves viewport space above the composer so replies do not visually collide with the input bar.
+- **Context-preserving replies**: UI sends include the active `orgId`, `orchestratorId`, and normalized `contact`, so restored conversations keep replying into the same thread.
+- **Inline thinking traces**: the chat feed consumes only native orchestrator `thinking_start/delta/end` events from `pi-ai` in real time (not sidebar-only), shows the full reasoning text for debugging in a lighter floating block, extracts a heading-like first line into the block header, highlights later heading-like lines inside the body, and keeps the block visible while the final answer streams.
+- **Per-turn ordering**: on hydrate and live replay, each run's thinking block stays before that run's final assistant reply.
+- **Thinking hydration**: on `/api/ui-state` restore, thinking blocks are rebuilt from persisted orchestrator assistant messages (`content.type === "thinking"`) scoped to the selected thread/run set.
+- **Pre-stream**: while waiting for the first token after `chat_sending`, the chat does not invent a reasoning block; it only renders thinking after native `thinking_*` events arrive.
 - **React Router UI**: shell persistente con rutas para `chat`, `traces`, `agents`, `chats` y `jobs`.
 - **Chat route**: mantiene el split principal Chat panel (flex:1) | Trace panel (280px fixed).
 - **Refresh restore**: F5/Ctrl+R rehydrates persisted session chat, delegation blocks, and traces via REST before WS reconnect.
@@ -429,7 +433,7 @@ Serves on <http://localhost:3000>.
 
 ### Files
 
-- `apps/backend/server.ts`: `Bun.serve()` with REST routes + WebSocket at `/ws`. Monkey-patches `store.appendTrace` for real-time trace push + delegation event tracking (`delegation_start`/`delegation_end`). Also patches `store.appendChatRecord` and `store.appendJob`. Exposes `/api/ui-state` for reload hydration.
+- `apps/backend/server.ts`: `Bun.serve()` with REST routes + WebSocket at `/ws`. Monkey-patches `store.appendTrace` for real-time trace push + delegation event tracking (`delegation_start`/`delegation_end`). Also patches `store.appendChatRecord` and `store.appendJob`. Exposes `/api/ui-state` for reload hydration, scoped traces, and normalized contact thread lookup.
 - `apps/web/index.html`: HTML shell (title "dithie", JetBrains Mono font link).
 - `apps/web/app.tsx`: entrypoint React + `createBrowserRouter()` con rutas anidadas.
 - `apps/web/runtime-context.tsx`: estado global de la UI, reducer, bootstrap desde `/api/ui-state`, WebSocket persistente y preferencia de tema.
@@ -460,9 +464,9 @@ Serves on <http://localhost:3000>.
 - `{ type: "agents", agents, sessionId }` — on connect
 - `{ type: "chat_sending", runId, toAgentId }` — before chat starts
 - `{ type: "stream_delta", runId, delta }` — streaming text token
+- `{ type: "stream_thinking_start|delta|end", runId, ... }` — native model reasoning stream
 - `{ type: "stream_end", runId, answer, durationMs }` — chat complete
 - `{ type: "stream_error", runId, error }` — chat failed
-- `{ type: "stream_status", runId, text }` — tool status label (ignored by Dithie UI)
 - `{ type: "trace", event }` — real-time trace push
 - `{ type: "chat_lifecycle", chat }` — chat state change
 - `{ type: "job_lifecycle", job }` — scheduled job state change

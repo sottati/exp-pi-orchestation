@@ -7,6 +7,7 @@ import type {
   ScheduledJob,
   TraceEvent,
 } from "../../packages/core/contracts";
+import { normalizePhoneNumber } from "../../packages/core/phone-utils";
 import type { AgentInfo, ChatItem, DelegationBlock, HydratedUiState, ThinkingTraceBlock, UIMessage } from "./ui-state";
 
 export type DithieState = "idle" | "thinking" | "delegating" | "error";
@@ -60,16 +61,23 @@ export interface RuntimeState {
   hitlQueue: HitlRequestItem[];
 }
 
+export interface OutgoingChatPayload {
+  type: "chat";
+  orgId?: string;
+  orchestratorId?: string;
+  contact?: string;
+  content: string;
+}
+
 type ServerMsg =
   | { type: "agents"; agents: AgentInfo[]; sessionId?: string; orgId?: string }
   | { type: "chat_sending"; runId: string; toAgentId?: string; orgId?: string; orchestratorId?: string; contact?: string }
   | { type: "stream_delta"; runId: string; delta: string; orgId?: string }
-  | { type: "stream_thinking_start"; runId: string }
-  | { type: "stream_thinking_delta"; runId: string; delta: string }
-  | { type: "stream_thinking_end"; runId: string; content: string }
+  | { type: "stream_thinking_start"; runId: string; orgId?: string }
+  | { type: "stream_thinking_delta"; runId: string; delta: string; orgId?: string }
+  | { type: "stream_thinking_end"; runId: string; content: string; orgId?: string }
   | { type: "stream_end"; runId: string; answer: string; durationMs: number; orgId?: string }
   | { type: "stream_error"; runId: string; error: string; orgId?: string }
-  | { type: "stream_status"; runId: string; text: string; orgId?: string }
   | { type: "trace"; event: TraceEvent; orgId?: string }
   | { type: "chat_lifecycle"; chat: AgentChat; orgId?: string }
   | { type: "job_lifecycle"; job: ScheduledJob; orgId?: string }
@@ -204,13 +212,26 @@ function splitThinkingLines(text: string): string[] {
 function createThinkingTraceBlock(runId: string, now: number): ThinkingTraceBlock {
   return {
     runId,
-    lines: ["thinking..."],
+    lines: [],
     status: "running",
     startedAt: now,
     updatedAt: now,
     collapsed: true,
-    source: "tool",
-    hasModelThinking: false,
+    source: "model",
+    hasModelThinking: true,
+  };
+}
+
+export function buildOutgoingChatPayload(
+  state: Pick<RuntimeState, "orgId" | "selectedOrchestratorId" | "selectedContact">,
+  content: string,
+): OutgoingChatPayload {
+  return {
+    type: "chat",
+    orgId: state.orgId || undefined,
+    orchestratorId: state.selectedOrchestratorId || undefined,
+    contact: state.selectedContact || undefined,
+    content,
   };
 }
 
@@ -240,7 +261,7 @@ export function runtimeReducer(state: RuntimeState, action: Action): RuntimeStat
     case "agents":
       return {
         ...state,
-        orgId: action.orgId ?? state.orgId,
+        orgId: state.orgId || action.orgId || "",
         agents: action.agents,
         sessionId: action.sessionId ?? state.sessionId,
       };
@@ -264,15 +285,6 @@ export function runtimeReducer(state: RuntimeState, action: Action): RuntimeStat
         isStreaming: true,
         streamBuffer: "",
         currentRunId: action.runId,
-        thinkingTraces: state.thinkingTraces[action.runId]
-          ? state.thinkingTraces
-          : {
-            ...state.thinkingTraces,
-            [action.runId]: createThinkingTraceBlock(action.runId, Date.now()),
-          },
-        chatItems: hasThinkingTraceItem(state.chatItems, action.runId)
-          ? state.chatItems
-          : [...state.chatItems, { kind: "thinking_trace", runId: action.runId }],
       };
 
     case "stream_delta":
@@ -280,6 +292,7 @@ export function runtimeReducer(state: RuntimeState, action: Action): RuntimeStat
       return { ...state, streamBuffer: state.streamBuffer + action.delta };
 
     case "stream_end": {
+      if (!isEventForCurrentOrg(state, action.orgId)) return state;
       const existingThinkingTrace = state.thinkingTraces[action.runId];
       const content = action.answer || state.streamBuffer;
       // When answer is empty (e.g. WA-driven run where the message already
@@ -317,6 +330,7 @@ export function runtimeReducer(state: RuntimeState, action: Action): RuntimeStat
     }
 
     case "stream_error": {
+      if (!isEventForCurrentOrg(state, action.orgId)) return state;
       const existingThinkingTrace = action.runId ? state.thinkingTraces[action.runId] : undefined;
       const msg: UIMessage = {
         id: `err-${action.runId || "socket"}-${Date.now()}`,
@@ -346,48 +360,10 @@ export function runtimeReducer(state: RuntimeState, action: Action): RuntimeStat
       };
     }
 
-    case "stream_status": {
-      const now = Date.now();
-      const existing = state.thinkingTraces[action.runId];
-      if (existing?.hasModelThinking) return state;
-      const nextLines = existing
-        ? existing.lines[existing.lines.length - 1] === action.text
-          ? existing.lines
-          : existing.lines.length === 1 && existing.lines[0] === "thinking..."
-            ? [action.text]
-            : [...existing.lines, action.text]
-        : [action.text];
-      const nextBlock: ThinkingTraceBlock = existing
-        ? {
-          ...existing,
-          lines: nextLines,
-          updatedAt: now,
-          status: "running",
-          source: "tool",
-        }
-        : {
-          runId: action.runId,
-          lines: [action.text],
-          status: "running",
-          startedAt: now,
-          updatedAt: now,
-          collapsed: true,
-          source: "tool",
-          hasModelThinking: false,
-        };
-
-      return {
-        ...state,
-        thinkingTraces: { ...state.thinkingTraces, [action.runId]: nextBlock },
-        chatItems: hasThinkingTraceItem(state.chatItems, action.runId)
-          ? state.chatItems
-          : [...state.chatItems, { kind: "thinking_trace", runId: action.runId }],
-      };
-    }
-
     case "stream_thinking_start": {
+      if (!isEventForCurrentOrg(state, action.orgId)) return state;
       const now = Date.now();
-      const existing = state.thinkingTraces[action.runId];
+      const existing = state.thinkingTraces[action.runId] ?? createThinkingTraceBlock(action.runId, now);
       const nextBlock: ThinkingTraceBlock = existing
         ? {
           ...existing,
@@ -395,18 +371,10 @@ export function runtimeReducer(state: RuntimeState, action: Action): RuntimeStat
           updatedAt: now,
           hasModelThinking: true,
           source: "model",
-          lines:
-            existing.lines.length === 0 || (existing.lines.length === 1 && existing.lines[0] === "thinking...")
-              ? ["thinking..."]
-              : existing.lines,
+          lines: existing.lines,
           modelText: existing.modelText ?? "",
         }
-        : {
-          ...createThinkingTraceBlock(action.runId, now),
-          hasModelThinking: true,
-          source: "model",
-          modelText: "",
-        };
+        : createThinkingTraceBlock(action.runId, now);
 
       return {
         ...state,
@@ -418,6 +386,7 @@ export function runtimeReducer(state: RuntimeState, action: Action): RuntimeStat
     }
 
     case "stream_thinking_delta": {
+      if (!isEventForCurrentOrg(state, action.orgId)) return state;
       const now = Date.now();
       const existing = state.thinkingTraces[action.runId] ?? createThinkingTraceBlock(action.runId, now);
       const modelText = (existing.modelText ?? "") + action.delta;
@@ -429,7 +398,7 @@ export function runtimeReducer(state: RuntimeState, action: Action): RuntimeStat
         source: "model",
         hasModelThinking: true,
         modelText,
-        lines: lines.length > 0 ? lines : ["thinking..."],
+        lines: lines.length > 0 ? lines : existing.lines,
       };
 
       return {
@@ -442,13 +411,14 @@ export function runtimeReducer(state: RuntimeState, action: Action): RuntimeStat
     }
 
     case "stream_thinking_end": {
+      if (!isEventForCurrentOrg(state, action.orgId)) return state;
       const now = Date.now();
       const existing = state.thinkingTraces[action.runId] ?? createThinkingTraceBlock(action.runId, now);
       const finalModelText = action.content || existing.modelText || "";
       const lines = splitThinkingLines(finalModelText);
       const nextBlock: ThinkingTraceBlock = {
         ...existing,
-        status: "running",
+        status: "completed",
         updatedAt: now,
         source: "model",
         hasModelThinking: true,
@@ -818,21 +788,16 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
     const orgId = state.orgId || undefined;
     const contact = state.selectedContact.trim() || undefined;
     dispatch({ type: "send_user_message", content, id });
-    ws.send(JSON.stringify({
-      type: "chat",
-      orgId,
-      orchestratorId,
-      toAgentId: orchestratorId,
-      contact,
-      content,
-    }));
+    setPendingAnchorUserMessageId(id);
+    ws.send(JSON.stringify(buildOutgoingChatPayload(state, content)));
     return true;
   }, [state.orgId, state.orchestrators, state.selectedContact, state.selectedOrchestratorId]);
 
   const selectConversation = useCallback(async (orgId: string, orchestratorId: string, contact?: string) => {
     const normalizedOrg = orgId.trim();
     const normalizedOrchestrator = orchestratorId.trim();
-    const normalizedContact = (contact ?? "").trim();
+    const trimmedContact = (contact ?? "").trim();
+    const normalizedContact = trimmedContact ? normalizePhoneNumber(trimmedContact) : "";
     if (!normalizedOrg || !normalizedOrchestrator) return;
 
     dispatch({

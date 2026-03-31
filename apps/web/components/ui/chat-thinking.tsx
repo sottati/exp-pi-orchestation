@@ -32,6 +32,10 @@ export function splitThinkingTitle(lines: string[]): {
     return { bodyLines: [] };
   }
 
+  if (firstLine === "thinking..." && rest.length === 0) {
+    return { bodyLines: [] };
+  }
+
   const title = extractThinkingHeadingText(firstLine);
   if (title) {
     return {
