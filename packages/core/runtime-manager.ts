@@ -353,6 +353,20 @@ export class RuntimeManager {
     await this.emitCommunicationIntent(intent);
   }
 
+  /**
+   * Send a message to a contact via their WhatsApp channel.
+   * Used by the HITL handler to dispatch approval requests over WhatsApp.
+   */
+  async sendChannelMessage(orgId: string, orchestratorId: string, contact: string, body: string): Promise<void> {
+    const state = await this.ensureOrgRuntime(orgId);
+    const channel = state.channels.find((r) => r.orchestratorId === orchestratorId);
+    if (!channel?.phoneNumberId) {
+      throw new Error(`No phoneNumberId configured for orchestrator '${orchestratorId}' in org '${orgId}'.`);
+    }
+    const kapso = this.requireKapsoClient();
+    await kapso.sendTextMessage({ phoneNumberId: channel.phoneNumberId, to: contact, body });
+  }
+
   private enqueueConversation<T>(key: string, task: () => Promise<T>): Promise<T> {
     const previous = this.conversationLocks.get(key) ?? Promise.resolve();
     const next = previous

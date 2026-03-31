@@ -303,6 +303,55 @@ function createThreadId(sessionId: string, a: BaseAgentId, b: BaseAgentId): stri
     return `${sessionId}::${[a, b].sort().join("<->")}`;
 }
 
+/**
+ * Maximum number of history messages to load per agent turn.
+ * Prevents context-window overflow when threads accumulate large tool results
+ * (e.g. browse_url returning thousands of chars of markdown).
+ * We keep the most recent N messages; older messages are discarded entirely
+ * rather than summarised, since the model will re-orient from the system
+ * prompt + the current user message.
+ */
+const MAX_HISTORY_MESSAGES = 40;
+
+/**
+ * Maximum chars of tool-result content kept for *older* messages in the window.
+ * Recent messages (last 10) are kept verbatim.
+ * This prevents a handful of large browse results from eating the whole context.
+ */
+const OLD_TOOL_RESULT_MAX_CHARS = 1_500;
+
+function pruneHistory(messages: AgentMessage[]): AgentMessage[] {
+    // Hard cap: keep only the last MAX_HISTORY_MESSAGES entries.
+    const capped = messages.length > MAX_HISTORY_MESSAGES
+        ? messages.slice(messages.length - MAX_HISTORY_MESSAGES)
+        : messages;
+
+    // For the older half of the window, truncate large tool-result text blocks.
+    const recentBoundary = Math.max(0, capped.length - 10);
+    return capped.map((msg, idx) => {
+        if (idx >= recentBoundary) return msg; // recent — keep verbatim
+
+        // Attempt to shrink oversized tool result content blocks.
+        const typed = msg as { role?: string; content?: unknown };
+        if (typed.role !== "toolResult" || !Array.isArray(typed.content)) return msg;
+
+        let mutated = false;
+        const newContent = (typed.content as unknown[]).map((block) => {
+            if (
+                typeof block !== "object" || block === null ||
+                (block as { type?: unknown }).type !== "text"
+            ) return block;
+            const b = block as { type: string; text?: string };
+            if (typeof b.text !== "string" || b.text.length <= OLD_TOOL_RESULT_MAX_CHARS) return block;
+            mutated = true;
+            const trimmed = b.text.slice(0, OLD_TOOL_RESULT_MAX_CHARS);
+            return { ...b, text: `${trimmed}\n[…truncated in history]` };
+        });
+
+        return mutated ? { ...typed, content: newContent } as AgentMessage : msg;
+    });
+}
+
 export interface RuntimeOptions {
     sessionId?: string;
     orgId?: string;
@@ -897,6 +946,12 @@ export class MultiAgentRuntime {
                     hitlHandler: this.hitlHandler,
                     hitlTimeout: 5 * 60_000, // 5 minutes timeout for HITL
                     agentId,
+                    getRunContext: () => ({
+                        channel: runContext.channel,
+                        contact: runContext.contact,
+                        orgId: runContext.orgId,
+                        orchestratorId: runContext.orchestratorId,
+                    }),
                     onHitlStart: () => {
                         if (chatId) this.chatManager.pauseTimeout(chatId);
                     },
@@ -972,7 +1027,7 @@ export class MultiAgentRuntime {
 
         const threadId = createThreadId(this.sessionId, input.fromAgentId, input.toAgentId);
         const history = await this.store.getThreadMessages(threadId);
-        const historyMessages = history.map((item) => item.message);
+        const historyMessages = pruneHistory(history.map((item) => item.message));
         agent.replaceMessages(historyMessages);
 
         const userMessage: AgentMessage = {

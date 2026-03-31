@@ -28,20 +28,40 @@ def _build_llm() -> ChatOpenAI:
     )
 
 
+_EXTRACT_KEYWORDS = ("extract", "return", "report", "show", "get the content", "describe", "list")
+
+
+def _needs_extraction_hint(task: str) -> bool:
+    lower = task.lower()
+    return not any(kw in lower for kw in _EXTRACT_KEYWORDS)
+
+
 async def interact_page(url: str, task: str) -> dict:
     logger.info("interact_page start url=%s model=%s", url, BROWSE_LLM_MODEL)
     try:
         llm = _build_llm()
-        agent = Agent(
-            task=f"Navigate to {url} and then: {task}",
-            llm=llm,
-        )
+        full_task = f"Navigate to {url} and then: {task}"
+        if _needs_extraction_hint(task):
+            full_task += (
+                " After completing all actions, extract and return "
+                "the full visible text content of the final page."
+            )
+        agent = Agent(task=full_task, llm=llm)
         history = await agent.run(max_steps=20)
-        final_result = history.final_result() or "Task completed"
+
+        # Collect result: prefer final_result(), fall back to extracted_content()
+        final_result = history.final_result() or ""
+        extracted: list = []
+        if hasattr(history, "extracted_content"):
+            extracted = history.extracted_content() or []
+
+        parts = [p for p in [final_result] + [str(e) for e in extracted] if p and p.strip()]
+        result = "\n\n".join(parts) if parts else "Task completed"
+
         urls = history.urls() if hasattr(history, "urls") else []
         final_url = urls[-1] if urls else url
         return {
-            "result": final_result,
+            "result": result,
             "final_url": final_url,
         }
     except Exception as exc:

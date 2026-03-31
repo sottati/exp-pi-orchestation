@@ -71,7 +71,7 @@ export function createAgentDefinitions(opts?: {
     .role("Routes and delegates tasks to specialists.")
     .model("openrouter", "openai/gpt-5.4-mini")
     .systemPrompt([
-      "You are an orchestrator agent.",
+      "You are an orchestrator agent. You name is Dithie.",
       "Use list_agents to discover available specialists.",
       "Use delegate to send tasks to specialists.",
       "Then poll with get_chat_status/get_chat_result to get results.",
@@ -89,7 +89,9 @@ export function createAgentDefinitions(opts?: {
       "For shell commands, prefer run_command with shell + shellCommand parameters.",
       "For local filesystem and terminal requests, prefer your direct tools first; delegate only when specialist reasoning is needed.",
       "After tool results, produce a direct final answer for the user.",
-      "Be concise by default.",
+      "If you need to ask for credentials, use request_credentials to ask the user for secrets through HITL instead of asking for secrets in plain chat.",
+      "If an answer you give comes from a specialist outcome, use all the info the specialist returned in your answer.",
+      "Be concise by default. **always answer in argentine spanish, NEVER in english or any other language**",
     ].join(" "))
     .capabilities(["routing", "delegation", "credential-collection"])
     .thinkingLevel("medium")
@@ -189,6 +191,9 @@ export function createAgentDefinitions(opts?: {
     credentialStore: opts?.credentialStore,
   });
   const gDriveTools = createGoogleDriveToolEntries({ credentialStore: opts?.credentialStore });
+  const explorerCredentialTools = createCredentialToolEntries({
+    credentialStore: opts?.credentialStore,
+  });
 
   const explorer = withSkills(defineAgent("explorer"))
     .name("Web Explorer")
@@ -202,7 +207,16 @@ export function createAgentDefinitions(opts?: {
       "- search_web: Search the web for a query. Returns titles, URLs, and snippets.",
       "- interact_page: Autonomously interact with a web page using a natural language task.",
       "  Describe what to accomplish (e.g., 'log in and navigate to reports'), browser-use handles the execution.",
-      "  Credentials can be injected using {{credential:username}} and {{credential:password}} placeholders.",
+      "  Credentials can be injected using {{credential:fieldname}} placeholders — they are replaced with stored values before execution.",
+      "",
+      "Credential vault tools:",
+      "- get_credential_fields: Check what fields are stored for a domain (e.g. 'example.com'). Use this before interact_page to confirm which placeholders are available.",
+      "- request_credentials: Ask the user to provide credentials via HITL and store them in the encrypted vault. Use when get_credential_fields reports no stored credentials.",
+      "",
+      "Credential workflow for authenticated sites:",
+      "1. Call get_credential_fields with the site's domain.",
+      "2. If fields exist, use {{credential:fieldname}} placeholders in your interact_page task string.",
+      "3. If no fields exist, call request_credentials to collect them from the user, then retry.",
       "",
       "Google Drive tools:",
       "- drive_list: List files in Google Drive. Filter by folder or query.",
@@ -217,9 +231,15 @@ export function createAgentDefinitions(opts?: {
       "- Do not perform purchases, account creation, or irreversible actions.",
       "- Be concise. Prefer structured output (lists, key-value) over prose.",
     ].join("\n"))
-    .capabilities(["browse", "search", "interact", "extract", "drive-list", "drive-search", "drive-download"])
-    .localToolEntries([...explorerTools, ...gDriveTools])
-    .permissions({ "browse_url": "hitl", "interact_page": "hitl", "drive_download": "hitl" })
+    .capabilities(["browse", "search", "interact", "extract", "drive-list", "drive-search", "drive-download", "credential-lookup"])
+    .localToolEntries([...explorerTools, ...gDriveTools, ...explorerCredentialTools])
+    .permissions({
+      "browse_url": "hitl",
+      "interact_page": "hitl",
+      "drive_download": "hitl",
+      "get_credential_fields": "allow",
+      "request_credentials": "hitl",
+    })
     .maxConcurrency(1)
     .build();
 

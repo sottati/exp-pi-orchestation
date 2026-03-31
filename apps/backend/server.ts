@@ -50,6 +50,8 @@ interface PendingHitlRequest {
 }
 
 const hitlPending = new Map<string, PendingHitlRequest>();
+/** Maps normalized WhatsApp contact number → pending HITL reqId for that contact */
+const hitlContactIndex = new Map<string, string>();
 
 function sendWsJson(ws: WsClient, payload: object): boolean {
   try {
@@ -179,6 +181,10 @@ function resolveHitlRequest(reqId: string, response: { approved: boolean; modifi
   pending.resolved = true;
   if (pending.timeoutHandle) clearTimeout(pending.timeoutHandle);
   hitlPending.delete(reqId);
+  // Clean up WhatsApp contact index
+  if (pending.request.contact && hitlContactIndex.get(pending.request.contact) === reqId) {
+    hitlContactIndex.delete(pending.request.contact);
+  }
   console.error(`[hitl] request ${reqId} response approved=${response.approved}`);
   pending.resolve(response);
   for (const ws of wsClients) {
@@ -209,11 +215,36 @@ function createWebHitlHandler(): HITLHandler {
       resolved: false,
     };
     hitlPending.set(reqId, pending);
+
+    // WhatsApp channel: send approval message to the contact and start timeout immediately
+    if (request.channel === "whatsapp" && request.contact && request.orgId && request.orchestratorId) {
+      hitlContactIndex.set(request.contact, reqId);
+      const shortRef = reqId.slice(0, 8);
+      const waBody = [
+        `🔔 *Aprobación requerida*`,
+        ``,
+        `El agente *${request.agentId}* quiere ejecutar *${request.toolName}*.`,
+        ``,
+        `Responde *si* para aprobar o *no* para rechazar.`,
+        `[Ref: ${shortRef}]`,
+      ].join("\n");
+      runtimeManager.sendChannelMessage(request.orgId, request.orchestratorId, request.contact, waBody)
+        .then(() => {
+          console.error(`[hitl] WA request ${reqId} sent to ${request.contact}; starting timeout (${request.timeout}ms)`);
+          startHitlTimeout(pending);
+        })
+        .catch((err) => {
+          console.error(`[hitl] WA request ${reqId} send failed: ${errorMessage(err)}; starting timeout anyway`);
+          startHitlTimeout(pending);
+        });
+    }
+
+    // Always broadcast to UI WebSocket clients (dual-channel: either WA or UI can resolve)
     const delivered = broadcastHitlRequest(pending);
-    if (delivered === 0) {
+    if (delivered === 0 && request.channel !== "whatsapp") {
       console.error(`[hitl] request ${reqId} queued waiting for UI connection (timeout not started yet).`);
-    } else {
-      console.error(`[hitl] request ${reqId} delivered; waiting for UI acknowledgment before starting timeout.`);
+    } else if (delivered > 0) {
+      console.error(`[hitl] request ${reqId} delivered to UI; waiting for acknowledgment before starting timeout.`);
     }
   });
 }
@@ -274,6 +305,12 @@ function patchRuntime(orgId: string, runtime: MultiAgentRuntime): void {
       (event.toolName === "delegate" || event.toolName === "delegate_task")
     ) {
       const details = event.details as Record<string, unknown> | undefined;
+      // Each delegate tool call emits two tool_start traces: one for the
+      // permission check (no "phase") and one for execution (phase: "execution").
+      // Only broadcast delegation_start on the execution trace to avoid duplicates.
+      const isExecutionPhase = (details as Record<string, unknown> | undefined)?.phase === "execution";
+      if (!isExecutionPhase) return;
+
       const args = details?.args as Record<string, unknown> | undefined;
       const taskFromTrace = details?.task ?? args?.task;
       const start = {
@@ -468,7 +505,34 @@ Bun.serve({
 
         if (eventName === "whatsapp.message.received") {
           if (contact && textContent.trim()) {
-            void runtimeManager.processExternalMessage({
+            // Check if this message resolves a pending HITL before routing to the agent
+            const normalizedContact = contact.replace(/[^\d+]/g, "").trim();
+            const pendingHitlReqId = hitlContactIndex.get(normalizedContact);
+            if (pendingHitlReqId) {
+              const trimmed = textContent.trim().toLowerCase();
+              const approved = ["si", "sí", "s", "yes", "y", "ok", "aprobar"].includes(trimmed);
+              const denied = ["no", "n", "nope", "rechazar", "denegar"].includes(trimmed);
+              if (approved || denied) {
+                resolveHitlRequest(pendingHitlReqId, { approved });
+                console.error(`[hitl] WA reply from ${normalizedContact}: approved=${approved} reqId=${pendingHitlReqId}`);
+                return Response.json({ ok: true, hitl_resolved: true, approved });
+              }
+            }
+
+            // Signal UI that a WA conversation is now active so the chat feed
+            // adopts this (orgId, orchestratorId, contact) tuple before the
+            // channel_event messages arrive.
+            const waRunId = messageId ?? crypto.randomUUID();
+            const waStart = Date.now();
+            broadcast({
+              type: "chat_sending",
+              runId: waRunId,
+              orgId: channel.orgId,
+              orchestratorId: channel.orchestratorId,
+              contact: normalizedContact,
+            });
+
+            runtimeManager.processExternalMessage({
               orgId: channel.orgId,
               orchestratorId: channel.orchestratorId,
               channel: "whatsapp",
@@ -481,8 +545,24 @@ Bun.serve({
                 phoneNumberId,
                 payloadVersion: req.headers.get("X-Webhook-Payload-Version") ?? "unknown",
               },
+            }).then(() => {
+              // Answer is already in the UI via channel_event outbound "sent".
+              // Send stream_end with empty answer to reset the streaming indicator.
+              broadcast({
+                type: "stream_end",
+                runId: waRunId,
+                orgId: channel.orgId,
+                answer: "",
+                durationMs: Date.now() - waStart,
+              });
             }).catch((err) => {
               console.error("[kapso] processExternalMessage failed:", errorMessage(err));
+              broadcast({
+                type: "stream_error",
+                runId: waRunId,
+                orgId: channel.orgId,
+                error: errorMessage(err),
+              });
             });
           }
           return Response.json({ ok: true, accepted: true });

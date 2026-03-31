@@ -1,5 +1,5 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import type { Permission } from "./contracts";
+import type { Permission, ChannelKind } from "./contracts";
 import type { AgentHooks } from "./agent-builder";
 import { errorMessage } from "./errors";
 
@@ -9,6 +9,11 @@ export interface HITLRequest {
   params: Record<string, unknown>;
   reason: string;
   timeout: number;
+  /** Channel context from the originating RunContext — used to route the approval request */
+  channel?: ChannelKind;
+  contact?: string;
+  orgId?: string;
+  orchestratorId?: string;
 }
 
 export interface HITLResponse {
@@ -27,6 +32,8 @@ export interface WrapToolOptions {
   onHitlStart?: (request: HITLRequest) => Promise<void> | void;
   onHitlEnd?: (request: HITLRequest) => Promise<void> | void;
   tracePermission: (info: { toolName: string; permission: Permission; resolved: string }) => Promise<void>;
+  /** Called at tool execution time to attach channel context to the HITL request */
+  getRunContext?: () => { channel?: ChannelKind; contact?: string; orgId?: string; orchestratorId?: string } | undefined;
 }
 
 export function resolvePermission(
@@ -64,6 +71,7 @@ export function wrapTool(
     onHitlStart,
     onHitlEnd,
     tracePermission,
+    getRunContext,
   } = options;
 
   return {
@@ -83,12 +91,17 @@ export function wrapTool(
 
       // 2. HITL prompt if needed
       if (permission === "hitl") {
+        const runCtx = getRunContext?.();
         const request: HITLRequest = {
           agentId,
           toolName: tool.name,
           params,
           reason: `Agent '${agentId}' wants to use '${tool.name}'.`,
           timeout: hitlTimeout,
+          channel: runCtx?.channel,
+          contact: runCtx?.contact,
+          orgId: runCtx?.orgId,
+          orchestratorId: runCtx?.orchestratorId,
         };
 
         let response: HITLResponse;

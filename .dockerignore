@@ -1,0 +1,11 @@
+.git
+.claude
+.cursor
+.vscode
+.worktrees
+node_modules
+.runtime-data
+.runtime-data-test-jobs
+.env
+.env.*
+*.log

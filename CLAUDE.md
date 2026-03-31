@@ -156,6 +156,7 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Google Tasks tools: `packages/core/google-tasks-tools.ts` (`tasks_list`, `tasks_create`, `tasks_complete` — assigned to `secretary`)
 - Chat orchestration: `packages/core/chat-manager.ts` (per-agent concurrency with FIFO queue, timeout/retry, HITL timeout pause/resume, disk persistence and restore)
 - Persistence: `packages/core/thread-store.ts` (threads, traces, chat records — atomic append, fault-tolerant JSONL)
+- Deployment template: `deploy/nginx/pi-agent.conf` (Nginx reverse proxy for Oracle VM; includes `/ws` WebSocket upgrade headers)
 - Error utilities: `packages/core/errors.ts` (`errorMessage`, `safeAsync`, `safeParseLine`)
 - Contracts: `packages/core/contracts.ts`
 
@@ -194,11 +195,14 @@ Use these project scripts:
 - `bun run smoke:marketing`
 - `bun run smoke:graphic-designer`
 - `bun run ui:gate`
+- `docker compose up --build -d` (backend + explorer support stack)
+- `docker compose down`
+- `PI_BACKEND_PORT=3001 docker compose up --build -d` (optional override if port 3000 is busy)
 
 Explorer prerequisite:
 
 - Start supporting services before running explorer agent or smoke test:
-  - `docker-compose up searxng pi-browse-service -d`
+  - `docker compose up searxng pi-browse-service -d`
   - Or run SearXNG manually: `docker run -p 8080:8080 -v ./services/searxng:/etc/searxng searxng/searxng:latest`
   - Or run Python service manually: `cd services/browse-service && uvicorn main:app --port 8001`
 - Set env vars for local dev (no Docker):
@@ -289,7 +293,7 @@ Current setup keeps same model for all agents.
 - `orchestrator` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: delegation/chat tools + `read_file`, `search_code`, `list_directory`, `run_command`, `request_credentials` with HITL)
 - `code` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: dev tools + `workspace_*` + `git_*` + `github_*`; delegates frontend to `web-designer`)
 - `math` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: analyst tools + `read_excel`, `write_excel`, `read_gsheet`, `write_gsheet`, `create_gsheet`)
-- `explorer` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: browser + `drive_list`, `drive_search`, `drive_download`)
+- `explorer` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: browser + `drive_list`, `drive_search`, `drive_download` + `get_credential_fields`, `request_credentials`)
 - `writer` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: `read_docx`, `write_docx`, `read_gdoc`, `write_gdoc`, `create_gdoc`, `gmail_send`, `gmail_draft`)
 - `web-designer` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: dev tools + frontend tools + `browse_url` + `workspace_*` + `git_*` + `github_*`; delegates backend to `code`)
 - `debugger` → `openrouter/google/gemini-3.1-flash-lite-preview`
@@ -326,7 +330,12 @@ When permission resolves to `"hitl"`, the `HITLHandler` is called to prompt the 
 - Web: WebSocket request/response with configurable timeout
 - Web UI: modal with `Allow` / `Don't Allow` buttons and keyboard shortcuts `y` / `n`
 - Web UI forms: `request_credentials` renders secure text/password fields and responds with `modifiedParams`.
-- Backend starts HITL timeout only after the UI acknowledges request receipt (`hitl_seen`), preventing silent timeout without modal display.
+- **WhatsApp**: when the originating run has `channel === "whatsapp"`, the backend sends a WA message asking for approval. The owner replies *si*/*no* (or *yes*/*ok*/*s*/*n* etc.) to resolve. Webhook handler intercepts matching replies before routing to the agent. Timeout starts immediately after WA send (no `hitl_seen`).
+- Dual-channel: UI modal is always shown in parallel; either the UI or WA reply resolves first.
+- `HITLRequest` carries `channel?`, `contact?`, `orgId?`, `orchestratorId?` populated from `RunContext` via `getRunContext` in `wrapTool`.
+- `RuntimeManager.sendChannelMessage(orgId, orchestratorId, contact, body)` is the send path for WA HITL messages.
+- `hitlContactIndex` in `server.ts` maps normalized contact → reqId for fast WA reply lookup.
+- Backend starts HITL timeout (UI path) only after the UI acknowledges receipt (`hitl_seen`).
 - Delegated chat timeout is paused while waiting on HITL approval and resumed after HITL resolves.
 - Repeated HITL pauses in the same delegated chat preserve remaining timeout correctly across each pause/resume cycle.
 - If no UI is connected, HITL requests remain queued until a UI client connects and acknowledges.
@@ -491,6 +500,7 @@ UI + channel behavior:
 - Conversation context is `orgId + orchestratorId + contact`.
 - Inbox supports filter by orchestrator.
 - Unified thread shows WhatsApp inbound/outbound plus internal UI messages.
+- UI chat now sends the currently selected `orchestratorId` in WS `type: "chat"` payloads (instead of hardcoding `orchestrator`), avoiding registry mismatches in multi-orchestrator orgs.
 - UI-originated messages must stay internal (do not dispatch to WhatsApp transport).
 - WS events include channel activity and delivery states (`sent`, `delivered`, `read`, `failed`) plus `communication_intent`.
 

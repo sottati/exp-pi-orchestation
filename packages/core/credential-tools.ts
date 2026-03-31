@@ -140,5 +140,38 @@ export function createCredentialToolEntries(opts?: {
     },
   };
 
-  return [requestCredentials];
+  const getCredentialFields: ToolEntry = {
+    name: "get_credential_fields",
+    source: "local",
+    description: "List the field names stored for a credential domain. Returns only key names (no values) so the agent knows which {{credential:fieldname}} placeholders are available for interact_page.",
+    parameters: Type.Object({
+      domain: Type.String({
+        description: "Credential domain namespace (e.g. google.com, github.com, myapp).",
+        minLength: 1,
+      }),
+    }),
+    defaultPermission: "allow",
+    available: true,
+    execute: async (_toolCallId, rawParams) => {
+      const domain = normalizeDomain((rawParams as { domain: string }).domain);
+      if (!credentialStore?.enabled) {
+        return textResult("Credential store is disabled.", { domain });
+      }
+      try {
+        const creds = await credentialStore.get(domain);
+        if (!creds || Object.keys(creds).length === 0) {
+          return textResult(`No credentials stored for domain '${domain}'.`, { domain, fields: [] });
+        }
+        const fields = Object.keys(creds).sort();
+        return textResult(
+          `Stored credential fields for '${domain}': ${fields.join(", ")}.\nUse {{credential:${fields[0]}}} placeholders in interact_page tasks.`,
+          { domain, fields },
+        );
+      } catch (err) {
+        return textResult(`Error: ${errorMessage(err)}`, { domain });
+      }
+    },
+  };
+
+  return [requestCredentials, getCredentialFields];
 }

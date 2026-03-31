@@ -167,8 +167,9 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Web UI runtime state: `apps/web/runtime-context.tsx` (shared reducer + REST hydration + WebSocket lifecycle, kept stable across route changes)
 - Web UI router shell: `apps/web/app.tsx` mounts `react-router-dom`; `apps/web/layouts/dashboard-layout.tsx` keeps the persistent header/nav around routed pages while `apps/web/pages/chat-page.tsx` owns the chat input bar
  - Web UI styling: `apps/web/app.css` now defines Sacred-inspired theme tokens + Tailwind entrypoint; dark theme is the default and a nav switcher persists the user's preference; `apps/web/app.generated.css` is the compiled stylesheet served by `index.html`
- - Web UI utilities: `apps/web/lib/utils.ts` (`cn`) and `apps/web/lib/agent-colors.ts` (per-agent Sacred tint mapping + shared status badge styles)
- - shadcn/ui config: root `components.json` + TS path aliases are configured so the CLI can target `apps/web`; in this cloud environment, `shadcn add` still fails unless `bun` is available in PATH because the CLI shells out to `bun add`
+- Web UI utilities: `apps/web/lib/utils.ts` (`cn`) and `apps/web/lib/agent-colors.ts` (per-agent Sacred tint mapping + shared status badge styles)
+- shadcn/ui config: root `components.json` + TS path aliases are configured so the CLI can target `apps/web`; in this cloud environment, `shadcn add` still fails unless `bun` is available in PATH because the CLI shells out to `bun add`
+- Deployment template: `deploy/nginx/pi-agent.conf` (Nginx reverse proxy for Oracle VM; includes `/ws` WebSocket upgrade headers)
 - Error utilities: `packages/core/errors.ts` (`errorMessage`, `safeAsync`, `safeParseLine`)
 - Contracts: `packages/core/contracts.ts`
 
@@ -208,11 +209,14 @@ Use these project scripts:
 - `bun run smoke:graphic-designer`
 - `bun run ui` (Dithie web dashboard with per-agent views)
 - `bun run ui:gate`
+- `docker compose up --build -d` (backend + explorer support stack)
+- `docker compose down`
+- `PI_BACKEND_PORT=3001 docker compose up --build -d` (optional override if port 3000 is busy)
 
 Explorer prerequisite:
 
 - Start supporting services before running explorer agent or smoke test:
-  - `docker-compose up searxng pi-browse-service -d`
+  - `docker compose up searxng pi-browse-service -d`
   - Or run SearXNG manually: `docker run -p 8080:8080 -v ./services/searxng:/etc/searxng searxng/searxng:latest`
   - Or run Python service manually: `cd services/browse-service && uvicorn main:app --port 8001`
 - Set env vars for local dev (no Docker):
@@ -456,6 +460,7 @@ UI + channel behavior:
 - Conversation context is `orgId + orchestratorId + contact`.
 - Inbox supports filter by orchestrator.
 - Unified thread shows WhatsApp inbound/outbound plus internal UI messages.
+- UI chat now sends the currently selected `orchestratorId` in WS `type: "chat"` payloads (instead of hardcoding `orchestrator`), avoiding registry mismatches in multi-orchestrator orgs.
 - UI-originated messages must stay internal (do not dispatch to WhatsApp transport).
 - WS events include channel activity and delivery states (`sent`, `delivered`, `read`, `failed`) plus `communication_intent`.
 

@@ -66,7 +66,7 @@ Hoy, los nueve agentes usan `openrouter/google/gemini-3.1-flash-lite-preview`.
 - [Git](https://git-scm.com/) instalado y disponible en `PATH`
 - Dependencias de Office tools: `exceljs`, `mammoth`, `docx` (instaladas via `bun install`)
 - Google Workspace: `googleapis` (instalada via `bun install`); requiere credenciales OAuth2 (ver sección Google Auth)
-- Explorer web: iniciar servicios de soporte con `docker-compose up searxng pi-browse-service -d`
+- Explorer web: iniciar servicios de soporte con `docker compose up searxng pi-browse-service -d` (o levantar el stack completo con `docker compose up --build -d`)
 - Explorer web: requiere salida a internet (DNS + HTTPS) desde el host
 - Explorer web: `SEARXNG_URL=http://localhost:8080` (default) y `BROWSE_SERVICE_URL=http://localhost:8001` (default)
 - Explorer web: `OPENROUTER_API_KEY` requerido para `interact_page` (browser-use LLM)
@@ -99,6 +99,51 @@ bun run smoke:web-designer
 bun run smoke:marketing
 bun run smoke:graphic-designer
 bun run ui:gate
+```
+
+## Deploy con Docker Compose (Oracle VM)
+
+Levantar backend + servicios de explorer:
+
+```bash
+docker compose up --build -d
+```
+
+Ver logs del backend:
+
+```bash
+docker compose logs -f pi-backend
+```
+
+Apagar stack:
+
+```bash
+docker compose down
+```
+
+Notas:
+
+- El estado persistente del runtime queda en `./.runtime-data` (bind mount a `/app/.runtime-data`).
+- `searxng` y `pi-browse-service` quedan publicados solo en loopback (`127.0.0.1`) para reducir exposicion.
+- Si `3000` ya esta ocupado, usa otro puerto para el backend: `PI_BACKEND_PORT=3001 docker compose up --build -d`.
+
+Nginx reverse proxy (Oracle VM):
+
+- Template listo: `deploy/nginx/pi-agent.conf`
+- Copiar y habilitar en Ubuntu:
+
+```bash
+sudo cp deploy/nginx/pi-agent.conf /etc/nginx/sites-available/pi-agent.conf
+sudo ln -s /etc/nginx/sites-available/pi-agent.conf /etc/nginx/sites-enabled/pi-agent.conf
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+- HTTPS con Certbot:
+
+```bash
+sudo certbot --nginx -d tu-dominio.com -d www.tu-dominio.com
 ```
 
 Con sesión específica:
@@ -456,6 +501,7 @@ UI y conversacion unificada:
 - `GET /api/ui-state` acepta `orgId`, `orchestratorId` y `contact`.
 - Inbox por orchestrator con hilos por contacto (conversaciones WPP).
 - El hilo muestra inbound/outbound de WhatsApp y mensajes internos de UI.
+- El chat de la UI envia `orchestratorId` seleccionado en el payload WS (`type: "chat"`), evitando fallback hardcodeado a `orchestrator` en sesiones multi-orchestrator.
 - Mensajes enviados desde UI no se despachan a WhatsApp; solo afectan el contexto conversacional interno.
 - Nuevos eventos WS: `channel_event` (sent/delivered/read/failed) y `communication_intent`.
 

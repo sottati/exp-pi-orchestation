@@ -85,7 +85,9 @@ type ServerMsg =
     params: Record<string, unknown>;
     timeout: number;
     reason?: string;
-  };
+  }
+  | { type: "hitl_resolved"; reqId: string; approved: boolean }
+  | { type: "hitl_expired"; reqId: string; agentId: string; toolName: string; timeout: number };
 
 type LocalAction =
   | { type: "hydrate"; snapshot: HydratedUiState }
@@ -279,14 +281,20 @@ export function runtimeReducer(state: RuntimeState, action: Action): RuntimeStat
 
     case "stream_end": {
       const existingThinkingTrace = state.thinkingTraces[action.runId];
-      const msg: UIMessage = {
-        id: `msg-${action.runId}`,
-        role: "assistant",
-        content: action.answer || state.streamBuffer,
-        timestamp: Date.now(),
-        runId: action.runId,
-        durationMs: action.durationMs,
-      };
+      const content = action.answer || state.streamBuffer;
+      // When answer is empty (e.g. WA-driven run where the message already
+      // arrived via channel_event), just reset the streaming indicator without
+      // adding a duplicate bubble.
+      const msg: UIMessage | null = content
+        ? {
+          id: `msg-${action.runId}`,
+          role: "assistant",
+          content,
+          timestamp: Date.now(),
+          runId: action.runId,
+          durationMs: action.durationMs,
+        }
+        : null;
       return {
         ...state,
         isStreaming: false,
@@ -303,8 +311,8 @@ export function runtimeReducer(state: RuntimeState, action: Action): RuntimeStat
             },
           }
           : state.thinkingTraces,
-        messages: [...state.messages, msg],
-        chatItems: [...state.chatItems, { kind: "message", message: msg }],
+        messages: msg ? [...state.messages, msg] : state.messages,
+        chatItems: msg ? [...state.chatItems, { kind: "message", message: msg }] : state.chatItems,
       };
     }
 
@@ -631,6 +639,8 @@ export function runtimeReducer(state: RuntimeState, action: Action): RuntimeStat
       };
     }
 
+    case "hitl_resolved":
+    case "hitl_expired":
     case "resolve_hitl_request":
       return {
         ...state,
@@ -802,10 +812,22 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
 
     const id = `user-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const orchestratorId = state.selectedOrchestratorId
+      || state.orchestrators[0]?.orchestratorId
+      || "orchestrator";
+    const orgId = state.orgId || undefined;
+    const contact = state.selectedContact.trim() || undefined;
     dispatch({ type: "send_user_message", content, id });
-    ws.send(JSON.stringify({ type: "chat", toAgentId: "orchestrator", content }));
+    ws.send(JSON.stringify({
+      type: "chat",
+      orgId,
+      orchestratorId,
+      toAgentId: orchestratorId,
+      contact,
+      content,
+    }));
     return true;
-  }, [state.orgId, state.selectedContact, state.selectedOrchestratorId]);
+  }, [state.orgId, state.orchestrators, state.selectedContact, state.selectedOrchestratorId]);
 
   const selectConversation = useCallback(async (orgId: string, orchestratorId: string, contact?: string) => {
     const normalizedOrg = orgId.trim();

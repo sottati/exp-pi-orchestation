@@ -51,7 +51,14 @@ export class ThreadStore {
 
     private async appendJsonl(path: string, payload: unknown) {
         await this.ready;
-        await appendFile(path, JSON.stringify(payload) + "\n", "utf-8");
+        try {
+            await appendFile(path, JSON.stringify(payload) + "\n", "utf-8");
+        } catch (err) {
+            if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+            // Directory was deleted at runtime — recreate and retry once.
+            await mkdir(this.threadsDir, { recursive: true });
+            await appendFile(path, JSON.stringify(payload) + "\n", "utf-8");
+        }
     }
 
     private async readFile(path: string): Promise<string> {

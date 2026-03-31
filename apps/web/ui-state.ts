@@ -315,11 +315,18 @@ export function buildHydratedUiState(input: BuildUiStateInput): HydratedUiState 
         task: typeof task === "string" ? task : "",
         status: "running",
       };
-      chatItemsWithTime.push({
-        timestamp: trace.timestamp,
-        order: order++,
-        item: { kind: "delegation", delegationId: trace.toolCallId },
-      });
+      // Each tool call emits two tool_start traces (permission + execution).
+      // Only add the chatItem once to avoid duplicate keys in the React list.
+      const alreadyInList = chatItemsWithTime.some(
+        (e) => e.item.kind === "delegation" && e.item.delegationId === trace.toolCallId,
+      );
+      if (!alreadyInList) {
+        chatItemsWithTime.push({
+          timestamp: trace.timestamp,
+          order: order++,
+          item: { kind: "delegation", delegationId: trace.toolCallId },
+        });
+      }
     }
 
     if (trace.type === "tool_end" && trace.toolCallId && isDelegateTrace(trace)) {
