@@ -53,3 +53,14 @@ services:
       timeout: 5s
       start_period: 30s
       retries: 5
+
+  engram:
+    image: ghcr.io/gentleman-programming/engram:latest
+    ports:
+      - "7437:7437"
+    volumes:
+      - engram-data:/root/.engram
+    restart: unless-stopped
+
+volumes:
+  engram-data:

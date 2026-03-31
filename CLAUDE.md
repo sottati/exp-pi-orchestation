@@ -199,6 +199,17 @@ Use these project scripts:
 - `docker compose down`
 - `PI_BACKEND_PORT=3001 docker compose up --build -d` (optional override if port 3000 is busy)
 
+Engram prerequisite (memory layer):
+
+- Start engram before running any agent that uses memory: `docker-compose up engram -d`
+- Set env vars for local dev (no Docker):
+  - `ENGRAM_URL=http://localhost:7437` (default)
+  - `ENGRAM_SESSION_ID=pi-agent` (default)
+- Thread compaction env vars (optional, defaults shown):
+  - `COMPACTION_THRESHOLD=40` — trigger compaction when orchestrator has more than this many messages
+  - `COMPACTION_KEEP=10` — keep this many recent messages after compaction
+  - `TRACES_MAX_LINES=5000` — rotate traces.jsonl after this many lines
+
 Explorer prerequisite:
 
 - Start supporting services before running explorer agent or smoke test:

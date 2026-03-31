@@ -37,6 +37,9 @@ Necesito un snippet en C para imprimir del 1 al 10
 - Prompt compiler: ensamblado de system prompt en 5 capas (base, tools, delegation, rules, examples).
 - Skills layer local: cada agente puede usar `.skills(...)` y el runtime auto-inyecta contexto desde `SKILL.md` en `./skills` según relevancia por turno.
 - Restauración automática de chats y scheduled jobs interrumpidos al reiniciar sesión.
+- **Memoria semántica (Engram)**: agentes con `mem_save`/`mem_get` persisten y recuperan observaciones cross-session via HTTP al servicio Engram (SQLite FTS5 en `~/.engram/engram.db`). El orchestrator, code, web-designer y secretary pueden guardar y recuperar; el resto solo recupera.
+- **Compactación de hilos**: cuando el orchestrator acumula más de `COMPACTION_THRESHOLD` mensajes (default 40), los más antiguos se resumen con LLM, el resumen se guarda en Engram, y el hilo se trunca conservando los últimos `COMPACTION_KEEP` mensajes (default 10). No-blocking: si Engram no está disponible, la compactación se omite.
+- **JSONL optimizado**: `chats.jsonl` solo guarda el registro completo en estado `closed` (antes guardaba en cada cambio de estado, O(n²)). `traces.jsonl` rota automáticamente a `traces.<timestamp>.jsonl` al superar `TRACES_MAX_LINES` líneas (default 5000).
 - CLI interactiva para operar y testear sin UI, con HITL approval prompts.
 - Gate de decisión para saber cuándo pasar a UI/monorepo.
 - Workspace manager local (`workspace_*`): registro de repos/workspaces, workspace activo y roots permitidos.
@@ -66,7 +69,8 @@ Hoy, los nueve agentes usan `openrouter/google/gemini-3.1-flash-lite-preview`.
 - [Git](https://git-scm.com/) instalado y disponible en `PATH`
 - Dependencias de Office tools: `exceljs`, `mammoth`, `docx` (instaladas via `bun install`)
 - Google Workspace: `googleapis` (instalada via `bun install`); requiere credenciales OAuth2 (ver sección Google Auth)
-- Explorer web: iniciar servicios de soporte con `docker compose up searxng pi-browse-service -d` (o levantar el stack completo con `docker compose up --build -d`)
+- Engram (memoria semántica): `docker-compose up engram -d` — requiere Docker; expone puerto 7437; persiste en volumen `engram-data`; env vars: `ENGRAM_URL` (default `http://localhost:7437`), `ENGRAM_SESSION_ID` (default `pi-agent`)
+- Explorer web: iniciar servicios de soporte con `docker-compose up searxng pi-browse-service -d`
 - Explorer web: requiere salida a internet (DNS + HTTPS) desde el host
 - Explorer web: `SEARXNG_URL=http://localhost:8080` (default) y `BROWSE_SERVICE_URL=http://localhost:8001` (default)
 - Explorer web: `BROWSE_TIMEOUT_MS=90000` (opcional) ajusta el timeout del cliente TS para `browse_url`
