@@ -35,7 +35,11 @@
       "Bash(ls .env*)",
       "Bash(*)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "WebFetch(domain:api.github.com)"
+      "WebFetch(domain:api.github.com)",
+      "WebSearch",
+      "WebFetch(domain:docs.browser-use.com)",
+      "Skill(browser-use)",
+      "Skill(browser-use:*)"
     ],
     "additionalDirectories": [
       "c:\\Users\\gerog\\source\\exp-pi-orchestation\\.worktrees\\extensible-agents\\docs\\superpowers",

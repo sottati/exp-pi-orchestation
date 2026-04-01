@@ -78,6 +78,10 @@ Hoy, los nueve agentes usan `openrouter/google/gemini-3.1-flash-lite-preview`.
 - Explorer web: `BROWSE_WAIT_FOR_TIMEOUT_MS=10000` (opcional) limita la espera de selectores `wait_for` para habilitar fallback rÃ¡pido
 - Explorer web: `OPENROUTER_API_KEY` requerido para `interact_page` (browser-use LLM)
 - Explorer web: `BROWSE_LLM_MODEL` opcional para overridear el modelo LLM de browser-use
+- Explorer web: `BROWSE_INTERACT_MAX_RETRIES=1` (opcional) para reintentos extra en `interact_page` cuando judge/runtime marcan extracción no confiable
+- Explorer web: skill de interaccion vendoreada en `skills/browser/_official/interaction/SKILL.md` (inyectada en `interact_page`)
+- Explorer web: `BROWSE_OFFICIAL_SKILL_MAX_CHARS=2500` y `BROWSE_OFFICIAL_SKILL_TOTAL_MAX_CHARS=5000` (opcionales) para acotar la inyeccion de skills en `interact_page`
+- Explorer web: salida de `interact_page` formateada como `Interaction Report` (status, pasos, acciones, URLs, findings, warnings, judge validation y observed blockers) para mejorar la interpretacion del `explorer`
 - Explorer web: si `interact_page` falla, revisar logs de backend con prefijos `[browser]`, `[tool-error]` y logs del microservicio `pi-browse-service` (ahora incluyen stack traces y contexto del endpoint)
 - Para PRs desde agentes: [GitHub CLI (`gh`)](https://cli.github.com/) autenticado (`gh auth login`)
 - Marketing: env var `MARKETING_SHEET_ID` o CredentialStore dominio `"marketing"` con el ID de la hoja de Google Sheets usada por `marketing_keywords`, `marketing_competitors`, `marketing_content_calendar`
@@ -361,6 +365,7 @@ Cada envelope de hilo incluye metadatos de relación:
 - `packages/core/mcp-client.ts`: interfaz `McpConnector` para servidores de tools externos.
 - `packages/core/browser.ts`: `browseUrl` llama al microservicio Python (Crawl4AI); `searchWeb` llama directamente a SearXNG REST API; `interactWithPage` llama al microservicio Python (browser-use LLM-driven automation).
 - `packages/core/explorer-tools.ts`: tool entries del explorer (`browse_url`, `search_web`, `interact_page`); `interact_page` usa parámetro `task` en lenguaje natural — browser-use decide las acciones de forma autónoma; soporta placeholders `{{credential:fieldname}}` en el task string.
+- `services/browse-service/interactor.py`: agrega reglas globales + skill de interaccion global + skill por dominio y devuelve un `Interaction Report` estructurado para `interact_page`; usa `ChatOpenRouter` de browser-use con fallback a `ChatOpenAI` por compatibilidad y reintenta con contexto del intento previo orientado por blockers (overlay/modal/cookie/DOM) cuando detecta fallas de validacion.
 - `packages/core/credential-tools.ts`: tool entry `request_credentials` para solicitar credenciales por HITL y guardarlas en `CredentialStore`.
 - `packages/core/analyst-tools.ts`: tool entries del data analyst (`query_sqlite`, `query_supabase`, `parse_csv`, `analyze_data`).
 - `packages/core/office-tools.ts`: tool entries de Office — `read_excel`, `write_excel` (exceljs) para math/analyst; `read_docx`, `write_docx` (mammoth + docx) para writer.

@@ -133,6 +133,7 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Browser wrapper: `packages/core/browser.ts` (`browseUrl` calls Python microservice → Crawl4AI; `searchWeb` calls SearXNG REST API directly; `interactWithPage` calls Python microservice → browser-use LLM-driven automation)
 - Phone utils: `packages/core/phone-utils.ts` (normalizes contact numbers for thread ids, restore, and channel routing)
 - Explorer tools: `packages/core/explorer-tools.ts` (`browse_url`, `search_web`, `interact_page` tool entries; `interact_page` uses natural language `task` parameter — browser-use decides actions autonomously; supports `{{credential:fieldname}}` placeholders in task string)
+- Browser-use interactor: `services/browse-service/interactor.py` (extends browser-use prompt with global safety rules + vendored interaction skill + domain skills; `interact_page` now returns a structured `Interaction Report` for better downstream interpretation including judge validation + observed blockers; uses browser-use `ChatOpenRouter` with `ChatOpenAI` fallback for compatibility; retries once by default with blocker-aware previous-attempt context when validation fails).
 - Credential store: `packages/core/credential-store.ts` (AES-256-GCM encrypted credential storage)
 - Credential tools: `packages/core/credential-tools.ts` (`request_credentials` asks user for keys via HITL and stores them encrypted by domain)
 - Analyst tools: `packages/core/analyst-tools.ts` (`query_sqlite`, `query_supabase`, `parse_csv`, `analyze_data` tool entries)
@@ -225,6 +226,10 @@ Explorer prerequisite:
   - `BROWSE_WAIT_FOR_TIMEOUT_MS=10000` (optional, max wait for `wait_for` selectors before fallback)
 - Python service requires `OPENROUTER_API_KEY` for `interact_page` (browser-use LLM)
 - `BROWSE_LLM_MODEL` overrides the LLM model used by browser-use (default: `openrouter/google/gemini-3.1-flash-lite-preview`)
+- `BROWSE_INTERACT_MAX_RETRIES=1` (optional, extra retries for `interact_page` when judge/runtime signals mark extraction as unreliable)
+- Vendored interaction skill lives at `skills/browser/_official/interaction/SKILL.md`.
+- `BROWSE_OFFICIAL_SKILL_MAX_CHARS=2500` (optional, max chars per interaction skill injected into `interact_page`).
+- `BROWSE_OFFICIAL_SKILL_TOTAL_MAX_CHARS=5000` (optional, max combined chars from interaction skills injected into `interact_page`).
 
 Marketing prerequisite:
 
