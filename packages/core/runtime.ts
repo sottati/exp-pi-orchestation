@@ -25,6 +25,7 @@ import { delimiter, join } from "node:path";
 import { buildSkillContextSection } from "./skills-layer";
 import { MemoryClient } from "./memory-client";
 import { maybeCompact } from "./compaction";
+import { type McpServerConfig, createMcpConnector } from "./mcp-client";
 
 interface RouteMessageInput {
     fromAgentId: BaseAgentId;
@@ -493,6 +494,8 @@ export interface RuntimeOptions {
     deliverResult?: (job: import("./contracts").ScheduledJob, result: string) => Promise<void>;
     /** If provided, agents can call notify_contact to push proactive messages to a WhatsApp contact. */
     sendMessage?: (orgId: string, orchestratorId: string, contact: string, body: string) => Promise<void>;
+    /** MCP servers to connect at startup. Tools are injected into agents that declare matching mcp:server/* refs. */
+    mcpServers?: McpServerConfig[];
 }
 
 const denyAllHandler: HITLHandler = async () => ({ approved: false });
@@ -576,8 +579,23 @@ export class MultiAgentRuntime {
         // Backward-compatible specialist registry (used by orchestrator tools)
         this.specialistRegistry = createSpecialistRegistry(sharedOpts);
 
-        // Tool registry
+        // Tool registry + MCP server connections
         this.toolRegistry = new ToolRegistry();
+
+        const mcpServers = [
+            ...(options.mcpServers ?? []),
+            // Auto-detect Figma MCP when token is available
+            ...(process.env.FIGMA_ACCESS_TOKEN ? [{
+                name: "figma",
+                transport: "stdio" as const,
+                command: "bunx @figma/mcp",
+                env: { FIGMA_ACCESS_TOKEN: process.env.FIGMA_ACCESS_TOKEN },
+            }] : []),
+        ];
+        for (const serverCfg of mcpServers) {
+            this.toolRegistry.connectMcp(serverCfg.name, createMcpConnector(serverCfg))
+                .catch((err) => console.error(`[mcp] Failed to connect '${serverCfg.name}': ${errorMessage(err)}`));
+        }
 
         this.chatManager = new ChatManager({
             persistChat: (chat) => this.store.appendChatRecord(chat),
@@ -1072,7 +1090,11 @@ export class MultiAgentRuntime {
         runContext: RunContext,
         chatId?: string,
     ): AgentTool<any>[] {
-        return (def.localTools ?? []).map(entry => {
+        const mcpRefs = (def.toolRefs ?? []).filter(r => r.startsWith("mcp:"));
+        const mcpEntries = mcpRefs.length > 0 ? this.toolRegistry.resolve(mcpRefs) : [];
+        const allEntries = [...(def.localTools ?? []), ...mcpEntries];
+
+        return allEntries.map(entry => {
             const permission = resolvePermission(
                 undefined,
                 def.permissions,

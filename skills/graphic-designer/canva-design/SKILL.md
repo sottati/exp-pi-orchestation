@@ -10,7 +10,7 @@ metadata:
 ## Cuándo Usar Canva vs. generate_image
 
 | Necesidad | Herramienta |
-|-----------|-------------|
+| --------- | ----------- |
 | Pieza editable con texto, logo, CTAs, layout | `canva_create` |
 | Imagen pura artística o fotográfica sin texto | `generate_image` |
 | Asset visual para insertar en un diseño Canva | `generate_image` primero, luego Canva para componer |
@@ -21,7 +21,7 @@ metadata:
 ## Tipos de Diseño (`designType`)
 
 | Tipo | Casos de uso |
-|------|-------------|
+| ---- | ------------ |
 | `poster` | Flyers, afiches, eventos, comunicados, carteles |
 | `social_media` | Posts de Instagram, Facebook, LinkedIn, stories |
 | `banner` | Banners web, email headers, portadas de redes |
@@ -42,7 +42,7 @@ metadata:
 ## Formato de Exportación
 
 | Formato | Cuándo usarlo |
-|---------|---------------|
+| ------- | ------------- |
 | PNG | Web, redes sociales, fondo transparente |
 | JPG | Fotografías, email, menor peso de archivo |
 | PDF | Impresión, presentaciones formales |
@@ -58,6 +58,10 @@ Si el brief es vago o incompleto:
 3. **Colores de marca** — ¿Hay brand kit o paleta definida?
 4. **Texto a incluir** — Titular, subtítulo, logo, URL, disclaimer
 5. **Referencias** — ¿Hay un diseño previo o estilo que tomar como base?
+
+---
+
+**Para dimensiones exactas, specs por plataforma y checklist de diseño**: Ver [references/design-specs.md](references/design-specs.md)
 
 ---
 

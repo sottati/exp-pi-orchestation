@@ -1,0 +1,68 @@
+{
+  "skill_name": "image-generation",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Generá una imagen para el hero de nuestra landing page. Somos una startup de fintech.",
+      "expected_output": "Should identify that the brief is incomplete before generating. Should ask for: style (photorealistic vs illustration), color palette/brand colors, specific subject matter, and confirm aspect ratio 16:9 for a web hero. Once context is provided, should construct a detailed prompt using the structure: subject + environment + visual style + composition + palette/lighting. Should specify 16:9 aspect ratio.",
+      "assertions": [
+        "Identifies incomplete brief and asks clarifying questions",
+        "Asks about visual style, palette, and subject",
+        "Uses 16:9 aspect ratio for web hero",
+        "Constructs structured prompt: subject + environment + style + composition + lighting",
+        "Does not generate with a vague prompt without gathering context first"
+      ],
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Necesito una imagen cuadrada para el perfil de Instagram de nuestra marca de café. Estilo vintage, tonos cálidos, mostrar una taza de café humeante.",
+      "expected_output": "Should recognize the brief is complete enough to proceed. Should use 1:1 aspect ratio for Instagram. Should construct a detailed prompt: 'taza de café humeante sobre mesa de madera rústica, fotografía vintage editorial, iluminación cálida dorada, tonos sepia y marrón, vignette en bordes, alta resolución' or similar. Should call generate_image with the constructed prompt and ratio 1:1.",
+      "assertions": [
+        "Uses 1:1 aspect ratio for Instagram",
+        "Includes vintage style modifier in prompt",
+        "Includes warm tones / lighting specification",
+        "Constructs detailed prompt, not just repeating user input",
+        "Calls generate_image with the final prompt"
+      ],
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Make me a logo for a tech company called Nexus.",
+      "expected_output": "Should recognize that generate_image cannot reliably produce readable text inside images. Should inform the user that AI image generation doesn't produce legible text in logos. Should suggest either: (1) generate an icon/symbol without text using generate_image, then add text in Canva, or (2) use canva_create for the full logo design. Should ask the user which approach they prefer before proceeding.",
+      "assertions": [
+        "Recognizes that generate_image cannot produce readable text",
+        "Explains the limitation clearly",
+        "Suggests combining generate_image (for icon) + Canva (for text)",
+        "Asks user how to proceed instead of generating a broken result"
+      ],
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Generá 3 variaciones de una imagen para una campaña de LinkedIn. Producto: software B2B de RR.HH. Audiencia: directores de Recursos Humanos.",
+      "expected_output": "Should use 4:3 aspect ratio for LinkedIn. Should generate 3 variations with meaningfully different angles/styles, not just slight variations: e.g., one photorealistic (professional in modern office), one abstract/conceptual (team network visualization), one data-focused (dashboard screen). Should construct 3 distinct prompts and call generate_image 3 times or note they will generate sequentially. Should keep professional tone suitable for B2B audience.",
+      "assertions": [
+        "Uses 4:3 aspect ratio for LinkedIn",
+        "Generates 3 distinct variations with different angles",
+        "Keeps professional B2B tone",
+        "Each prompt is meaningfully different, not just slight wording changes",
+        "Suitable for HR director audience"
+      ],
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "I need an Instagram Story for a flash sale. 50% off, ends tonight.",
+      "expected_output": "Should recognize this requires text overlay ('50% off', 'ends tonight') which generate_image cannot reliably produce. Should recommend using canva_create with designType 'social_media' for a Story with text, since the design requires readable promotional text. May offer to generate a background image first with generate_image and then use Canva for the text/layout.",
+      "assertions": [
+        "Recognizes text content ('50% off', 'ends tonight') cannot be reliably generated in image",
+        "Recommends canva_create for designs requiring readable promotional text",
+        "Uses 9:16 aspect ratio if generating a background",
+        "Suggests the right tool for the right job"
+      ],
+      "files": []
+    }
+  ]
+}

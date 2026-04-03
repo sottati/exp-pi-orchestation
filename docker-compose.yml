@@ -35,6 +35,8 @@ services:
       BROWSE_WAIT_FOR_TIMEOUT_MS: ${BROWSE_WAIT_FOR_TIMEOUT_MS:-10000}
       BROWSE_OFFICIAL_SKILL_MAX_CHARS: ${BROWSE_OFFICIAL_SKILL_MAX_CHARS:-2500}
       BROWSE_OFFICIAL_SKILL_TOTAL_MAX_CHARS: ${BROWSE_OFFICIAL_SKILL_TOTAL_MAX_CHARS:-5000}
+    volumes:
+      - ./skills:/skills:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
       interval: 15s

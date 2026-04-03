@@ -25,6 +25,7 @@ class BrowseRequest(BaseModel):
 class InteractRequest(BaseModel):
     url: str
     task: str
+    api_key: str | None = None
 
 
 @app.get("/health")
@@ -45,7 +46,7 @@ async def browse(req: BrowseRequest):
 @app.post("/interact")
 async def interact(req: InteractRequest):
     try:
-        result = await interact_task(req.url, req.task)
+        result = await interact_task(req.url, req.task, req.api_key)
         return result
     except Exception as e:
         logger.exception("interact failed url=%s task_len=%s", req.url, len(req.task))

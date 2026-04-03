@@ -1,0 +1,55 @@
+{
+  "skill_name": "figma-assets",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Necesito exportar todos los iconos del design system de Figma. El archivo es https://www.figma.com/file/ABC123def/Design-System",
+      "expected_output": "Should extract the fileId 'ABC123def' from the URL. Should call figma_get with that fileId to inspect the file structure and find icon-related frames or components. Should identify the nodeIds of icon components/frames. Should then call figma_export with those nodeIds and SVG format (best for icons). Should return the export URLs.",
+      "assertions": [
+        "Extracts fileId 'ABC123def' from the Figma URL",
+        "Calls figma_get first to inspect structure",
+        "Identifies icon nodes from the structure",
+        "Uses SVG format for icons",
+        "Calls figma_export with the identified nodeIds"
+      ],
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Exportá el frame 'Hero Section' del archivo de Figma como PNG para usarlo de referencia.",
+      "expected_output": "Should ask for the fileId if not provided, or look for it in the conversation context. Should call figma_get to find the 'Hero Section' frame and get its nodeId. Should call figma_export with that nodeId and PNG format (raster, appropriate for reference screenshots). Should return the PNG URL.",
+      "assertions": [
+        "Looks for fileId — asks if not provided",
+        "Calls figma_get to find the 'Hero Section' frame by name",
+        "Extracts the correct nodeId from the structure",
+        "Uses PNG format for raster reference",
+        "Returns the export URL"
+      ],
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "¿Qué páginas tiene el archivo de Figma? El fileId es XYZ789.",
+      "expected_output": "Should call figma_get with fileId 'XYZ789'. Should present the pages structure clearly — page names and the top-level frames/components within each page. Should not call figma_export (no export needed for inspection).",
+      "assertions": [
+        "Calls figma_get with fileId 'XYZ789'",
+        "Presents the page structure clearly",
+        "Lists frames/components per page",
+        "Does not call figma_export — only inspection was requested"
+      ],
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Exportá el componente de botón primario de Figma en todos los formatos posibles.",
+      "expected_output": "Should call figma_get first to identify the button component nodeId. Should then call figma_export 3 times (or explain it will export in SVG, PNG, and PDF). Should note that SVG is best for UI components, PNG for raster previews, PDF for documentation. Should return all 3 export URLs.",
+      "assertions": [
+        "Calls figma_get to find the button component nodeId",
+        "Exports in SVG, PNG, and PDF formats",
+        "Notes which format is best for which use case",
+        "Returns all export URLs"
+      ],
+      "files": []
+    }
+  ]
+}

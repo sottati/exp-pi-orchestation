@@ -114,8 +114,9 @@ def _ensure_browser_use_provider(llm: ChatOpenAI) -> ChatOpenAI:
     return llm
 
 
-def _build_llm() -> Any:
-    if not OPENROUTER_API_KEY:
+def _build_llm(api_key: str | None = None) -> Any:
+    resolved_key = api_key or OPENROUTER_API_KEY
+    if not resolved_key:
         raise RuntimeError(
             "OPENROUTER_API_KEY is not configured. interact_page requires a valid OpenRouter API key."
         )
@@ -123,14 +124,14 @@ def _build_llm() -> Any:
     try:
         return ChatOpenRouter(
             model=model_name,
-            api_key=OPENROUTER_API_KEY,
+            api_key=resolved_key,
             base_url="https://openrouter.ai/api/v1",
         )
     except Exception:
         logger.debug("ChatOpenRouter init failed, falling back to ChatOpenAI", exc_info=True)
         llm = ChatOpenAI(
             model=model_name,
-            api_key=OPENROUTER_API_KEY,
+            api_key=resolved_key,
             base_url="https://openrouter.ai/api/v1",
         )
         return _ensure_browser_use_provider(llm)
@@ -619,10 +620,10 @@ def _append_retry_summary(final_report: str, attempt_logs: list[str]) -> str:
     return "\n".join(lines)
 
 
-async def interact_page(url: str, task: str) -> dict:
+async def interact_page(url: str, task: str, api_key: str | None = None) -> dict:
     logger.info("interact_page start url=%s model=%s", url, BROWSE_LLM_MODEL)
     try:
-        llm = _build_llm()
+        llm = _build_llm(api_key)
         full_task = f"Navigate to {url} and then: {task}"
         if _needs_extraction_hint(task):
             full_task += (

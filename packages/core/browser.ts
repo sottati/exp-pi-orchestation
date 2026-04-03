@@ -160,17 +160,19 @@ export async function safeLaunchAndRun<T>(_fn: (page: any) => Promise<T>): Promi
   );
 }
 
-export async function interactWithPage(url: string, task: string): Promise<BrowseResult> {
+export async function interactWithPage(url: string, task: string, apiKey?: string): Promise<BrowseResult> {
   const endpoint = `${BROWSE_SERVICE_URL}/interact`;
   try {
     const targetUrl = validateHttpUrl(url);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), INTERACT_TIMEOUT_MS);
     try {
+      const body: Record<string, unknown> = { url: targetUrl, task };
+      if (apiKey) body.api_key = apiKey;
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ url: targetUrl, task }),
+        body: JSON.stringify(body),
         signal: controller.signal,
       });
       const { json, rawBody } = await readJsonObject(res);

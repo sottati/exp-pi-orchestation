@@ -41,20 +41,6 @@ async function getCanvaApiKey(credentialStore?: CredentialStore): Promise<string
   return key;
 }
 
-async function getFigmaAccessToken(credentialStore?: CredentialStore): Promise<string> {
-  if (credentialStore) {
-    const cred = await credentialStore.get("figma");
-    const token = cred?.["accessToken"];
-    if (token) return token;
-  }
-  const token = process.env.FIGMA_ACCESS_TOKEN;
-  if (!token) {
-    throw new Error(
-      "Figma access token not configured — store in CredentialStore domain 'figma' with field 'accessToken'",
-    );
-  }
-  return token;
-}
 
 export function createGraphicDesignerToolEntries(opts?: GraphicDesignerToolOptions): ToolEntry[] {
   const credentialStore = opts?.credentialStore;
@@ -344,125 +330,8 @@ export function createGraphicDesignerToolEntries(opts?: GraphicDesignerToolOptio
     },
   };
 
-  const figmaGet: ToolEntry = {
-    name: "figma_get",
-    source: "local",
-    description:
-      "Get the structure of a Figma file: top-level frames and components. Read-only. Use the file key from the Figma URL: figma.com/file/{key}/...",
-    parameters: Type.Object({
-      fileKey: Type.String({ description: "The Figma file key (from the URL)" }),
-      nodeId: Type.Optional(
-        Type.String({
-          description:
-            "Optional node ID to scope the response to a specific frame or component",
-        }),
-      ),
-    }),
-    defaultPermission: "allow",
-    available: true,
-    execute: async (_toolCallId, params) => {
-      try {
-        const token = await getFigmaAccessToken(credentialStore);
-        const fileKey = params.fileKey as string;
-        const nodeId = params.nodeId as string | undefined;
+  // Figma is now connected via the official MCP server (@figma/mcp).
+  // The runtime auto-connects when FIGMA_ACCESS_TOKEN is set; tools are injected as mcp:figma/*.
 
-        const url = nodeId
-          ? `https://api.figma.com/v1/files/${fileKey}/nodes?ids=${encodeURIComponent(nodeId)}`
-          : `https://api.figma.com/v1/files/${fileKey}`;
-
-        const response = await fetch(url, { headers: { "X-Figma-Token": token } });
-
-        if (!response.ok) {
-          const errBody = await response.text();
-          return textResult(`Figma API error (${response.status}): ${errBody}`);
-        }
-
-        const data = (await response.json()) as {
-          name?: string;
-          document?: { children?: Array<{ id: string; name: string; type: string }> };
-          nodes?: Record<string, { document?: { id: string; name: string; type: string } }>;
-        };
-
-        if (nodeId && data.nodes) {
-          const node = Object.values(data.nodes)[0]?.document;
-          return textResult(
-            `Node: ${node?.name ?? "(unknown)"} (${node?.type ?? "?"}) ID: ${node?.id ?? nodeId}`,
-            { node },
-          );
-        }
-
-        const children = data.document?.children ?? [];
-        const pages = children.filter((c) => c.type === "CANVAS");
-        const frames = children.filter((c) => c.type === "FRAME");
-        const components = children.filter((c) => c.type === "COMPONENT");
-
-        return textResult(
-          [
-            `File: ${data.name ?? "(untitled)"}`,
-            `Pages (${pages.length}): ${pages.map((f) => `${f.name} (${f.id})`).join(", ") || "(none)"}`,
-            `Frames (${frames.length}): ${frames.map((f) => `${f.name} (${f.id})`).join(", ") || "(none)"}`,
-            `Components (${components.length}): ${components.map((c) => `${c.name} (${c.id})`).join(", ") || "(none)"}`,
-          ].join("\n"),
-          { name: data.name, pages, frames, components },
-        );
-      } catch (err) {
-        return textResult(`Error fetching Figma file: ${errorMessage(err)}`);
-      }
-    },
-  };
-
-  const figmaExport: ToolEntry = {
-    name: "figma_export",
-    source: "local",
-    description: "Export one or more Figma nodes as image URLs (PNG, SVG, or PDF).",
-    parameters: Type.Object({
-      fileKey: Type.String({ description: "The Figma file key" }),
-      nodeIds: Type.Array(Type.String(), { description: "List of node IDs to export" }),
-      format: Type.Union([Type.Literal("png"), Type.Literal("svg"), Type.Literal("pdf")], {
-        description: "Export format",
-      }),
-      scale: Type.Optional(
-        Type.Number({ description: "Scale factor for PNG (e.g. 2 for 2x). Defaults to 1." }),
-      ),
-    }),
-    defaultPermission: "allow",
-    available: true,
-    execute: async (_toolCallId, params) => {
-      try {
-        const token = await getFigmaAccessToken(credentialStore);
-        const fileKey = params.fileKey as string;
-        const nodeIds = params.nodeIds as string[];
-        const format = params.format as string;
-        const scale = (params.scale as number | undefined) ?? 1;
-
-        const idsParam = nodeIds.map(encodeURIComponent).join(",");
-        const url = `https://api.figma.com/v1/images/${fileKey}?ids=${idsParam}&format=${format}&scale=${scale}`;
-
-        const response = await fetch(url, { headers: { "X-Figma-Token": token } });
-
-        if (!response.ok) {
-          const errBody = await response.text();
-          return textResult(`Figma API error (${response.status}): ${errBody}`);
-        }
-
-        const data = (await response.json()) as {
-          images?: Record<string, string | null>;
-        };
-        const images = data.images ?? {};
-
-        const lines = Object.entries(images).map(([id, imgUrl]) =>
-          imgUrl ? `${id}: ${imgUrl}` : `${id}: (failed)`,
-        );
-
-        return textResult(
-          `Exported ${lines.length} node(s) as ${format}:\n${lines.join("\n")}`,
-          { images, format, fileKey },
-        );
-      } catch (err) {
-        return textResult(`Error exporting Figma nodes: ${errorMessage(err)}`);
-      }
-    },
-  };
-
-  return [generateImage, canvaCreate, canvaGet, canvaExport, figmaGet, figmaExport];
+  return [generateImage, canvaCreate, canvaGet, canvaExport];
 }

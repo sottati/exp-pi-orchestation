@@ -92,7 +92,9 @@ export function createExplorerToolEntries(opts: ExplorerToolOptions): ToolEntry[
         url,
         credentialStore,
       );
-      const result = await interactWithPage(url, task);
+      const openrouterCreds = await credentialStore?.get("openrouter");
+      const apiKey = openrouterCreds?.apiKey as string | undefined;
+      const result = await interactWithPage(url, task, apiKey);
       if (result.title === "Error" || result.content.startsWith("Error interacting with ")) {
         throw new Error(result.content);
       }

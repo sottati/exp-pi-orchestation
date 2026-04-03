@@ -1,0 +1,67 @@
+{
+  "skill_name": "canva-design",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Creá un post de Instagram para anunciar el lanzamiento de nuestra app. El título es 'Ya disponible en App Store y Google Play'.",
+      "expected_output": "Should identify this needs text ('Ya disponible en App Store y Google Play') so Canva is the right tool, not generate_image. Should use designType 'social_media' for Instagram. Should call canva_create with a descriptive title. Should return the editUrl so the user can customize the design. Should ask for brand colors if not provided, or proceed with a generic design.",
+      "assertions": [
+        "Chooses canva_create over generate_image because design requires readable text",
+        "Uses designType 'social_media'",
+        "Calls canva_create with title and designType",
+        "Returns editUrl for user to customize",
+        "Asks or acknowledges brand color/style information"
+      ],
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Necesito exportar el banner de campaña que tenemos en Canva a PDF para mandarlo a imprenta. El designId es 'DAFxxx123'.",
+      "expected_output": "Should call canva_export with the provided designId and format 'pdf'. Should note that PDF is the correct format for print. Should wait for the export to complete and return the download URL.",
+      "assertions": [
+        "Calls canva_export with designId 'DAFxxx123'",
+        "Uses 'pdf' format (correct for print)",
+        "Returns the export download URL",
+        "Does not create a new design — uses the existing designId"
+      ],
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Hacé un flyer para un evento de networking el próximo jueves. Tema: IA y Startups. Lugar: WeWork Palermo. Hora: 18:30hs.",
+      "expected_output": "Should use designType 'poster' for a flyer/event. Should call canva_create with a descriptive title like 'Flyer Networking IA y Startups'. Should return editUrl for the user to add the specific event details and customize. Should note the information to include: event title, date/time, location.",
+      "assertions": [
+        "Uses designType 'poster' for event flyer",
+        "Calls canva_create with appropriate title",
+        "Returns editUrl",
+        "Notes or structures the event details to include in the design"
+      ],
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Quiero una imagen artística para el fondo del banner de LinkedIn. Sin texto, solo algo visual que represente innovación y tecnología.",
+      "expected_output": "Should recognize that 'no text, purely visual' means generate_image is the right tool here, not Canva. Should use 4:3 aspect ratio for LinkedIn banner. Should construct a detailed artistic prompt around innovation/technology themes. Should call generate_image. May optionally suggest that if the user later wants to add text/logo, they can use Canva with this image as background.",
+      "assertions": [
+        "Correctly routes to generate_image (not Canva) for text-free visual",
+        "Uses 4:3 aspect ratio for LinkedIn",
+        "Constructs detailed prompt around innovation/technology themes",
+        "Optionally suggests combining with Canva for text overlay"
+      ],
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "Necesito 5 posts de Instagram con distintos diseños para la semana. Todos sobre consejos de productividad.",
+      "expected_output": "Should create 5 Canva designs using canva_create, each with a distinct title (e.g., 'Tip 1 - Productividad', 'Tip 2 - Productividad'). Should use designType 'social_media' for all. Should call canva_create 5 times or explain it will create them sequentially. Should return all 5 editUrls so the user can customize each one with the specific tip content.",
+      "assertions": [
+        "Creates 5 separate Canva designs",
+        "Uses designType 'social_media' for all",
+        "Gives each design a distinct descriptive title",
+        "Returns all editUrls",
+        "Does not create just one and ask — proceeds to create all 5"
+      ],
+      "files": []
+    }
+  ]
+}

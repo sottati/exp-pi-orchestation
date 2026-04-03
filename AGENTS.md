@@ -149,7 +149,7 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Office tools: `packages/core/office-tools.ts` (`read_excel`, `write_excel` via exceljs; `read_docx`, `write_docx` via mammoth + docx)
 - Debugger tools: `packages/core/debugger-tools.ts` (`read_file`, `search_code`, `list_directory` tool entries)
 - Marketing tools: `packages/core/marketing-tools.ts` (`seo_audit`, `marketing_keywords`, `marketing_competitors`, `marketing_content_calendar` — assigned to `marketing`)
-- Graphic designer tools: `packages/core/graphic-designer-tools.ts` (`generate_image` via Gemini Imagen 3; `canva_create`, `canva_get`, `canva_export` via Canva Connect API; `figma_get`, `figma_export` via Figma REST API — assigned to `graphic-designer`)
+- Graphic designer tools: `packages/core/graphic-designer-tools.ts` (`generate_image` via Gemini Imagen 3; `canva_create`, `canva_get`, `canva_export` via Canva Connect API — assigned to `graphic-designer`; Figma is connected via MCP server `@figma/mcp`, auto-injected as `mcp:figma/*` when `FIGMA_ACCESS_TOKEN` is set)
 - Workspace manager: `packages/core/workspace-manager.ts` (persists workspaces, active workspace, allowed roots in `.runtime-data/workspaces.json`)
 - Workspace tools: `packages/core/workspace-tools.ts` (`workspace_roots`, `workspace_list`, `workspace_get_active`, `workspace_register`, `workspace_set_active`)
 - Git tools: `packages/core/git-tools.ts` (`git_*` and `github_*` tools running on the active workspace; PR actions via `gh`)
@@ -322,7 +322,7 @@ Current setup keeps same model for all agents.
 - `debugger` → `openrouter/google/gemini-3.1-flash-lite-preview`
 - `secretary` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: `gmail_search`, `gmail_read`, calendar, internal contacts, tasks + scheduler tools)
 - `marketing` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: `seo_audit`, `marketing_keywords`, `marketing_competitors`, `marketing_content_calendar`, `search_web`, `browse_url`; delegates to `writer`, `explorer`, `secretary`)
-- `graphic-designer` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: `generate_image`, `canva_create`, `canva_get`, `canva_export`, `figma_get`, `figma_export`, `search_web`, `browse_url`; delegates to `explorer`)
+- `graphic-designer` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: `generate_image`, `canva_create`, `canva_get`, `canva_export`, `mcp:figma/*` (auto-injected via `@figma/mcp` when `FIGMA_ACCESS_TOKEN` set), `search_web`, `browse_url`; delegates to `explorer`)
 
 ## Agent Builder Pattern
 

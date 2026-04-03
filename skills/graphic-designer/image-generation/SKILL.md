@@ -58,6 +58,8 @@ Extract these details before writing the prompt. Ask only what's missing:
 
 **Mood**: dark and moody, bright and airy, minimalist, vibrant, corporate clean, vintage, futuristic, pastel soft
 
+**Para la lista completa de modificadores, paletas y plantillas de prompt por caso de uso**: Ver [references/style-guide.md](references/style-guide.md)
+
 ---
 
 ## Iteración
