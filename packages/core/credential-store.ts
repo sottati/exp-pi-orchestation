@@ -13,13 +13,28 @@ interface StoreData {
   [domain: string]: CredentialEntry;
 }
 
+export interface CredentialContext {
+  orgId?: string;
+  userId?: string;
+  orchestratorId?: string;
+}
+
+export interface CredentialStorePort {
+  readonly enabled: boolean;
+  save(domain: string, credentials: Record<string, string>): Promise<void>;
+  get(domain: string): Promise<Record<string, string> | undefined>;
+  list(): Promise<string[]>;
+  delete(domain: string): Promise<boolean>;
+  runWithContext?<T>(context: CredentialContext, fn: () => Promise<T>): Promise<T>;
+}
+
 const ALGORITHM = "aes-256-gcm";
 const PBKDF2_ITERATIONS = 600_000;
 const KEY_LENGTH = 32;
 const IV_LENGTH = 16;
 const SALT_LENGTH = 32;
 
-export class CredentialStore {
+export class CredentialStore implements CredentialStorePort {
   private readonly masterPassword?: string;
   private readonly filePath: string;
 
@@ -84,6 +99,10 @@ export class CredentialStore {
     delete store[domain];
     await this.writeStore(store);
     return true;
+  }
+
+  async runWithContext<T>(_context: CredentialContext, fn: () => Promise<T>): Promise<T> {
+    return fn();
   }
 
   private async readStore(): Promise<StoreData> {

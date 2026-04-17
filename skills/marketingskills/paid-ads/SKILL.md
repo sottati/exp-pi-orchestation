@@ -221,6 +221,28 @@ LI_LeadGen_CMOs-SaaS_Whitepaper_Mar24
 
 ---
 
+## Análisis con Datos Reales (Meta Ads MCP)
+
+Cuando `mcp:meta-ads/*` está disponible, antes de dar recomendaciones **siempre extraé datos reales**:
+
+```text
+1. get_ad_accounts         → identificar la cuenta correcta
+2. get_campaigns           → estado, objetivo, budget actual
+3. get_insights (30 días)  → CPA, ROAS, CTR, CPC reales
+4. get_adsets              → qué targeting está activo
+5. get_ads + get_creatives → qué creativos están corriendo
+```
+
+Flujo de diagnóstico con datos reales:
+
+- **Performance caída**: `get_insights` comparando últimos 7 vs 14 días → identificar qué cambió
+- **Creativos fatigados**: `get_insights` nivel ad → ads con frequency alta y CTR cayendo
+- **Audiences que no convierten**: `get_insights` nivel adset → comparar CPA por targeting
+
+Si el server no está disponible, trabajá en modo estratégico con la información que provea el usuario.
+
+---
+
 ## Reporting & Analysis
 
 ### Weekly Review
@@ -298,7 +320,7 @@ For implementation, see the [tools registry](../../tools/REGISTRY.md). Key adver
 | Platform | Best For | MCP | Guide |
 |----------|----------|:---:|-------|
 | **Google Ads** | Search intent, high-intent traffic | ✓ | [google-ads.md](../../tools/integrations/google-ads.md) |
-| **Meta Ads** | Demand gen, visual products, B2C | - | [meta-ads.md](../../tools/integrations/meta-ads.md) |
+| **Meta Ads** | Demand gen, visual products, B2C | ✓ | `mcp:meta-ads/*` — accounts, campaigns, adsets, ads, insights, creatives |
 | **LinkedIn Ads** | B2B, job title targeting | - | [linkedin-ads.md](../../tools/integrations/linkedin-ads.md) |
 | **TikTok Ads** | Younger demographics, video | - | [tiktok-ads.md](../../tools/integrations/tiktok-ads.md) |
 

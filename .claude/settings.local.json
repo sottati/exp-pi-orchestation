@@ -39,12 +39,14 @@
       "WebSearch",
       "WebFetch(domain:docs.browser-use.com)",
       "Skill(browser-use)",
-      "Skill(browser-use:*)"
+      "Skill(browser-use:*)",
+      "Read(//c/Users/gerog/.claude/**)"
     ],
     "additionalDirectories": [
       "c:\\Users\\gerog\\source\\exp-pi-orchestation\\.worktrees\\extensible-agents\\docs\\superpowers",
       "c:\\Users\\gerog\\source\\exp-pi-orchestation\\docs",
-      "c:\\Users\\gerog\\source\\exp-pi-orchestation\\.worktrees\\extensible-agents"
+      "c:\\Users\\gerog\\source\\exp-pi-orchestation\\.worktrees\\extensible-agents",
+      "C:\\Users\\gerog\\.claude"
     ]
   }
 }

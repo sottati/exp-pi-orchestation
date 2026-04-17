@@ -28,7 +28,7 @@ Necesito un snippet en C para imprimir del 1 al 10
 - Error handling robusto: JSONL fault-tolerant, hooks con `safeAsync`, guards en CLI/trace/persistence.
 - Configuración de modelo por agente (`orchestrator`, `code`, `math`) via builder pattern en `packages/core/agents.ts`.
 - Sistema extensible de agentes: agent builder, tool registry, tool middleware con permisos y HITL.
-- Captura segura de credenciales: el `orchestrator` puede solicitar claves por HITL (`request_credentials`) y guardarlas cifradas en `CredentialStore`.
+- Captura segura de credenciales: el `orchestrator` puede solicitar claves por HITL (`request_credentials`) y guardarlas cifradas en Supabase (`org_credentials`) via `CredentialStorePort`.
 - Office tools: `read_excel`/`write_excel` (exceljs) para el agente math/analyst; `read_docx`/`write_docx` (mammoth + docx) para el agente writer.
 - Google Workspace integration: Sheets, Docs, Drive, Gmail, Calendar, Tasks — autenticación OAuth2 via `googleapis`.
 - Agente `secretary`: asistente personal para calendar, email, contactos internos, tareas y cron jobs.
@@ -67,6 +67,7 @@ Hoy, los nueve agentes usan `openrouter/google/gemini-3.1-flash-lite-preview`.
 
 - [Bun](https://bun.com) 1.3+
 - [Git](https://git-scm.com/) instalado y disponible en `PATH`
+- Supabase proyecto activo (Auth + Postgres) con schema inicial aplicado (`supabase/migrations/20260403_000001_multi_org_cutover.sql`)
 - Dependencias de Office tools: `exceljs`, `mammoth`, `docx` (instaladas via `bun install`)
 - Google Workspace: `googleapis` (instalada via `bun install`); requiere credenciales OAuth2 (ver sección Google Auth)
 - Engram (memoria semántica): `docker-compose up engram -d` — requiere Docker; expone puerto 7437; persiste en volumen `engram-data`; env vars: `ENGRAM_URL` (default `http://localhost:7437`), `ENGRAM_SESSION_ID` (default `pi-agent`)
@@ -86,6 +87,7 @@ Hoy, los nueve agentes usan `openrouter/google/gemini-3.1-flash-lite-preview`.
 - Para PRs desde agentes: [GitHub CLI (`gh`)](https://cli.github.com/) autenticado (`gh auth login`)
 - Marketing: env var `MARKETING_SHEET_ID` o CredentialStore dominio `"marketing"` con el ID de la hoja de Google Sheets usada por `marketing_keywords`, `marketing_competitors`, `marketing_content_calendar`
 - Graphic designer: env vars `GEMINI_API_KEY`, `CANVA_API_KEY`, `FIGMA_ACCESS_TOKEN` o CredentialStore dominios `"gemini"` (field: `apiKey`), `"canva"` (field: `apiKey`), `"figma"` (field: `accessToken`)
+- Cutover Supabase/Auth: `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` (frontend login), `SUPABASE_SECRET_KEY` (backend; fallback legacy `SUPABASE_SERVICE_ROLE_KEY`), `MASTER_ENCRYPTION_KEY`
 
 ## Instalación
 
@@ -191,7 +193,10 @@ Abre <http://localhost:3000> para ver el dashboard de Dithie:
 - **Layout del chat**: la barra de entrada vive dentro del panel izquierdo en `/`, por lo que la columna derecha de TRACES llega hasta el borde inferior de la pantalla.
 - **Color por agente**: la vista `/agents` asigna un tinte específico a cada agente usando una paleta compatible con Sacred.
 - **Theme switcher**: la barra de navegación permite alternar entre dark/light y persiste la preferencia en `localStorage`.
-- **WebSocket** en `/ws`: deltas de streaming, delegation events (`delegation_start`/`delegation_end`), lifecycle de chats y push de trazas.
+- **Login UI** en `/login`: autenticación email/password con Supabase Auth usando `SUPABASE_PUBLISHABLE_KEY`.
+- **Persistencia de sesión UI**: tras login, se guarda `PI_AUTH_TOKEN` en `localStorage` para habilitar inmediatamente REST/WS autenticados.
+- **WebSocket** en `/ws`: requiere token (query `token`) y scope de org autorizado (`orgId`), luego emite solo eventos de esa org.
+- **Cliente WebSocket**: la UI no abre `/ws` hasta tener token y descarta `orgId` no-UUID en query para evitar handshakes rechazados por scope inválido.
 - **HITL en UI**: cuando una tool requiere aprobación, aparece un modal con `Allow` / `Don't Allow` y atajos `y` / `n`. Para `request_credentials`, el modal muestra inputs (incluyendo campos `password`) y envía `modifiedParams` sin exponer valores en chat/trazas. El timeout empieza recién cuando la UI confirma recepción (`hitl_seen`), evitando timeouts “silenciosos” sin modal.
 - **HITL + delegación**: mientras una delegación está esperando aprobación HITL, el runtime pausa el timeout del chat delegado para evitar fallos prematuros.
 - **HITL + delegación (multi-step)**: si una misma delegación entra en varias aprobaciones HITL, el timeout acumula correctamente el tiempo restante entre cada `pause/resume` para evitar cancelaciones falsas.
@@ -536,15 +541,29 @@ Variables de entorno Kapso:
 
 - `KAPSO_API_KEY` (requerida para onboarding/envio)
 - `KAPSO_API_BASE_URL` (opcional, default `https://api.kapso.ai`)
-- `KAPSO_PROJECT_WEBHOOK_SECRET` y `KAPSO_PHONE_WEBHOOK_SECRET` (o `KAPSO_WEBHOOK_SECRET`)
-- `DEFAULT_ORG_ID` para backend/UI
+- `KAPSO_PROJECT_WEBHOOK_SECRET` y `KAPSO_PHONE_WEBHOOK_SECRET` (o `KAPSO_WEBHOOK_SECRET`); en multi-org se resuelven desde `env_secrets` por `org_id`/`orchestrator_id` con fallback a `process.env`
+- backend/UI resuelven org desde `org_memberships` en Supabase (sin depender de `DEFAULT_ORG_ID`)
 - Bootstrap opcional para pruebas repetibles en local/sandbox:
-  - `KAPSO_BOOTSTRAP_ORG_ID` (default `DEFAULT_ORG_ID`)
+  - bootstrap resuelve org/user desde Supabase (`org_memberships` y/o canal existente por `kapso_customer_id`)
   - `KAPSO_BOOTSTRAP_ORCHESTRATOR_ID` (default `main`)
   - `KAPSO_BOOTSTRAP_OWNER_NUMBER`
   - `KAPSO_BOOTSTRAP_CUSTOMER_ID`
   - `KAPSO_BOOTSTRAP_PHONE_NUMBER_ID` (opcional)
-  - `KAPSO_BOOTSTRAP_ACTIVE` (`true`/`false`, opcional)
+- `KAPSO_BOOTSTRAP_ACTIVE` (`true`/`false`, opcional)
+
+Variables de entorno Supabase/Auth:
+
+- `SUPABASE_URL` (URL del proyecto Supabase)
+- `SUPABASE_PUBLISHABLE_KEY` (browser/public key para login en frontend; fallback: `SUPABASE_ANON_KEY`)
+- `SUPABASE_SECRET_KEY` (secret key para backend server-side; fallback legacy `SUPABASE_SERVICE_ROLE_KEY`)
+- `MASTER_ENCRYPTION_KEY` (AES-256-GCM para `org_credentials` y `env_secrets`)
+- El acceso a endpoints y WebSocket valida membership (`org_memberships`) y responde `401/403` cuando corresponde.
+
+Notas del cutover v1:
+
+- `orgs.config` es la fuente de verdad de agentes/orchestrators habilitados por org.
+- `orchestrator_channels` representa solo canales configurados (no inventario completo de orchestrators).
+- `threads/traces/chats/scheduled_jobs/workspaces` todavia persisten en JSONL (`.runtime-data/orgs/<orgId>/...`).
 
 ## Modelo de negocio y despliegue cloud (multi-tenant)
 

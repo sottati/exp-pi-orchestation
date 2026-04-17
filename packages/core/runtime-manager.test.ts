@@ -1,8 +1,16 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+﻿import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type {
+  ChannelDeliveryEvent,
+  CommunicationIntentLog,
+  OrchestratorChannelConfig,
+} from "./contracts";
+import type { CredentialStorePort } from "./credential-store";
+import type { CredentialContext } from "./credential-store";
 import { RuntimeManager } from "./runtime-manager";
+import type { SupabaseRuntimeStore } from "./supabase-runtime-store";
 
 const originalFetch = globalThis.fetch;
 
@@ -13,17 +21,169 @@ function makeJsonResponse(payload: unknown): Response {
   });
 }
 
+class InMemoryRuntimeStore {
+  private readonly orgConfigs = new Map<string, { config: Record<string, unknown>; configVersion: number }>();
+  private readonly channelsByOrg = new Map<string, OrchestratorChannelConfig[]>();
+  private readonly channelEventsByOrg = new Map<string, ChannelDeliveryEvent[]>();
+  private readonly communicationIntentsByOrg = new Map<string, CommunicationIntentLog[]>();
+
+  setOrgConfig(orgId: string, config: Record<string, unknown>, configVersion = 1): void {
+    this.orgConfigs.set(orgId, { config, configVersion });
+  }
+
+  async getOrgConfig(orgId: string): Promise<{ orgId: string; config: Record<string, unknown>; configVersion: number }> {
+    const found = this.orgConfigs.get(orgId);
+    if (found) {
+      return { orgId, config: found.config, configVersion: found.configVersion };
+    }
+    return { orgId, config: {}, configVersion: 1 };
+  }
+
+  async listMembershipOrgIds(_userId: string): Promise<string[]> {
+    return [];
+  }
+
+  async isMemberOfOrg(_userId: string, _orgId: string): Promise<boolean> {
+    return true;
+  }
+
+  async listOrchestratorChannels(orgId: string): Promise<OrchestratorChannelConfig[]> {
+    return [...(this.channelsByOrg.get(orgId) ?? [])].sort((a, b) => a.orchestratorId.localeCompare(b.orchestratorId));
+  }
+
+  async upsertOrchestratorChannel(input: {
+    orgId: string;
+    userId: string;
+    orchestratorId: string;
+    ownerNumber: string;
+    kapsoCustomerId: string;
+    phoneNumberId?: string;
+    active?: boolean;
+  }): Promise<OrchestratorChannelConfig> {
+    const existing = (this.channelsByOrg.get(input.orgId) ?? []).find((row) => row.orchestratorId === input.orchestratorId);
+    const nowTs = Date.now();
+    const next: OrchestratorChannelConfig = {
+      orgId: input.orgId,
+      userId: input.userId,
+      orchestratorId: input.orchestratorId,
+      ownerNumber: input.ownerNumber,
+      kapsoCustomerId: input.kapsoCustomerId,
+      phoneNumberId: input.phoneNumberId ?? existing?.phoneNumberId,
+      active: input.active ?? true,
+      createdAt: existing?.createdAt ?? nowTs,
+      updatedAt: nowTs,
+    };
+    const rows = (this.channelsByOrg.get(input.orgId) ?? []).filter((row) => row.orchestratorId !== input.orchestratorId);
+    rows.push(next);
+    this.channelsByOrg.set(input.orgId, rows);
+    return next;
+  }
+
+  async bindPhoneNumberByCustomer(customerId: string, phoneNumberId: string): Promise<OrchestratorChannelConfig | undefined> {
+    for (const [orgId, rows] of this.channelsByOrg.entries()) {
+      const index = rows.findIndex((row) => row.kapsoCustomerId === customerId);
+      if (index < 0) continue;
+      const updated: OrchestratorChannelConfig = {
+        ...rows[index]!,
+        phoneNumberId,
+        updatedAt: Date.now(),
+      };
+      const nextRows = [...rows];
+      nextRows[index] = updated;
+      this.channelsByOrg.set(orgId, nextRows);
+      return updated;
+    }
+    return undefined;
+  }
+
+  async findChannelByPhoneNumberId(phoneNumberId: string): Promise<OrchestratorChannelConfig | undefined> {
+    for (const rows of this.channelsByOrg.values()) {
+      const found = rows.find((row) => row.phoneNumberId === phoneNumberId);
+      if (found) return found;
+    }
+    return undefined;
+  }
+
+  async findChannelByKapsoCustomerId(customerId: string): Promise<OrchestratorChannelConfig | undefined> {
+    for (const rows of this.channelsByOrg.values()) {
+      const found = rows.find((row) => row.kapsoCustomerId === customerId);
+      if (found) return found;
+    }
+    return undefined;
+  }
+
+  async appendChannelEvent(event: ChannelDeliveryEvent): Promise<void> {
+    const rows = this.channelEventsByOrg.get(event.orgId) ?? [];
+    if (event.messageId && rows.some((row) => row.messageId === event.messageId)) return;
+    rows.push(event);
+    rows.sort((a, b) => a.timestamp - b.timestamp);
+    this.channelEventsByOrg.set(event.orgId, rows);
+  }
+
+  async listChannelEvents(orgId: string): Promise<ChannelDeliveryEvent[]> {
+    return [...(this.channelEventsByOrg.get(orgId) ?? [])].sort((a, b) => a.timestamp - b.timestamp);
+  }
+
+  async appendCommunicationIntent(intent: CommunicationIntentLog): Promise<void> {
+    const rows = this.communicationIntentsByOrg.get(intent.orgId) ?? [];
+    rows.push(intent);
+    rows.sort((a, b) => b.timestamp - a.timestamp);
+    this.communicationIntentsByOrg.set(intent.orgId, rows);
+  }
+
+  async listCommunicationIntents(orgId: string): Promise<CommunicationIntentLog[]> {
+    return [...(this.communicationIntentsByOrg.get(orgId) ?? [])].sort((a, b) => b.timestamp - a.timestamp);
+  }
+
+  async resolveEnvOverride(_key: string, _opts?: { orgId?: string; userId?: string; orchestratorId?: string }): Promise<string | undefined> {
+    return undefined;
+  }
+}
+
+const noopCredentialStoreFactory = (): CredentialStorePort => ({
+  enabled: false,
+  async save() {
+    // no-op for tests
+  },
+  async get() {
+    return undefined;
+  },
+  async list() {
+    return [];
+  },
+  async delete() {
+    return true;
+  },
+  async runWithContext<T>(_context: CredentialContext, fn: () => Promise<T>): Promise<T> {
+    return fn();
+  },
+});
+
 describe("RuntimeManager", () => {
   let baseDataDir: string;
+  let runtimeStore: InMemoryRuntimeStore;
 
   beforeEach(() => {
     baseDataDir = mkdtempSync(join(tmpdir(), "runtime-manager-test-"));
+    runtimeStore = new InMemoryRuntimeStore();
   });
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
     rmSync(baseDataDir, { recursive: true, force: true });
   });
+
+  function createManager(opts?: { kapsoApiKey?: string; kapsoFallbackTemplateName?: string; kapsoFallbackTemplateLanguageCode?: string }) {
+    return new RuntimeManager({
+      baseDataDir,
+      kapsoApiBaseUrl: "https://kapso.test",
+      kapsoApiKey: opts?.kapsoApiKey,
+      kapsoFallbackTemplateName: opts?.kapsoFallbackTemplateName,
+      kapsoFallbackTemplateLanguageCode: opts?.kapsoFallbackTemplateLanguageCode,
+      runtimeStore: runtimeStore as unknown as SupabaseRuntimeStore,
+      credentialStoreFactory: noopCredentialStoreFactory,
+    });
+  }
 
   test("owner_number mismatch is blocked and logged as communication intent", async () => {
     globalThis.fetch = (async (input) => {
@@ -37,14 +197,11 @@ describe("RuntimeManager", () => {
       throw new Error(`Unexpected fetch URL in test: ${url}`);
     }) as typeof fetch;
 
-    const manager = new RuntimeManager({
-      baseDataDir,
-      kapsoApiBaseUrl: "https://kapso.test",
-      kapsoApiKey: "test-key",
-    });
+    const manager = createManager({ kapsoApiKey: "test-key" });
 
     await manager.createOrchestratorWithSetupLink({
       orgId: "org-a",
+      userId: "user-1",
       orchestratorId: "sales",
       ownerNumber: "+5491111111111",
     });
@@ -68,7 +225,7 @@ describe("RuntimeManager", () => {
   });
 
   test("recordChannelEvent updates conversation index", async () => {
-    const manager = new RuntimeManager({ baseDataDir });
+    const manager = createManager();
     const ts = Date.now();
 
     await manager.recordChannelEvent({
@@ -90,11 +247,12 @@ describe("RuntimeManager", () => {
     expect(conversations[0]?.lastStatus).toBe("received");
   });
 
-  test("upsertOrchestratorChannel stores reusable sandbox mapping", async () => {
-    const manager = new RuntimeManager({ baseDataDir });
+  test("upsertOrchestratorChannel stores reusable mapping", async () => {
+    const manager = createManager();
 
     const created = await manager.upsertOrchestratorChannel({
       orgId: "default",
+      userId: "user-1",
       orchestratorId: "main",
       ownerNumber: "+54 9 11 6606-6821",
       kapsoCustomerId: "cust_sandbox",
@@ -109,6 +267,7 @@ describe("RuntimeManager", () => {
 
     const updated = await manager.upsertOrchestratorChannel({
       orgId: "default",
+      userId: "user-1",
       orchestratorId: "main",
       ownerNumber: "+5491166066821",
       kapsoCustomerId: "cust_sandbox_2",
@@ -126,30 +285,6 @@ describe("RuntimeManager", () => {
     expect(orchestrators[0]?.phoneNumberId).toBe("pn_1");
   });
 
-  test("listOrchestrators tolerates legacy single-object channel file", async () => {
-    const orgDir = join(baseDataDir, "default");
-    mkdirSync(orgDir, { recursive: true });
-    writeFileSync(
-      join(orgDir, "orchestrator-channels.json"),
-      JSON.stringify({
-        orgId: "default",
-        orchestratorId: "orchestrator:main",
-        kapsoCustomerId: "cust_legacy",
-        ownerNumber: "+54 9 11 6606-6821",
-        active: true,
-        createdAt: 1,
-        updatedAt: 2,
-      }, null, 2),
-      "utf-8",
-    );
-
-    const manager = new RuntimeManager({ baseDataDir });
-    const orchestrators = await manager.listOrchestrators("default");
-    expect(orchestrators.length).toBe(1);
-    expect(orchestrators[0]?.kapsoCustomerId).toBe("cust_legacy");
-    expect(orchestrators[0]?.ownerNumber).toBe("+5491166066821");
-  });
-
   test("processExternalMessage preserves FIFO order per conversation", async () => {
     globalThis.fetch = (async (input) => {
       const url = String(input);
@@ -162,14 +297,11 @@ describe("RuntimeManager", () => {
       throw new Error(`Unexpected fetch URL in test: ${url}`);
     }) as typeof fetch;
 
-    const manager = new RuntimeManager({
-      baseDataDir,
-      kapsoApiBaseUrl: "https://kapso.test",
-      kapsoApiKey: "test-key",
-    });
+    const manager = createManager({ kapsoApiKey: "test-key" });
 
     await manager.createOrchestratorWithSetupLink({
       orgId: "org-a",
+      userId: "user-1",
       orchestratorId: "sales",
       ownerNumber: "+5491111111111",
     });
@@ -255,9 +387,7 @@ describe("RuntimeManager", () => {
       throw new Error(`Unexpected fetch URL in test: ${url}`);
     }) as typeof fetch;
 
-    const manager = new RuntimeManager({
-      baseDataDir,
-      kapsoApiBaseUrl: "https://kapso.test",
+    const manager = createManager({
       kapsoApiKey: "test-key",
       kapsoFallbackTemplateName: "outside_window_fallback",
       kapsoFallbackTemplateLanguageCode: "es_AR",
@@ -265,6 +395,7 @@ describe("RuntimeManager", () => {
 
     const created = await manager.createOrchestratorWithSetupLink({
       orgId: "org-a",
+      userId: "user-1",
       orchestratorId: "sales",
       ownerNumber: "+5491111111111",
     });

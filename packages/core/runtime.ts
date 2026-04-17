@@ -20,6 +20,7 @@ import { createSchedulerToolEntries } from "./scheduler-tools";
 import { createNotifyContactToolEntry } from "./notify-tool";
 import { createBackgroundTaskToolEntry } from "./background-task-tool";
 import { CredentialStore } from "./credential-store";
+import type { CredentialStorePort } from "./credential-store";
 import { WorkspaceManager } from "./workspace-manager";
 import { delimiter, join } from "node:path";
 import { buildSkillContextSection } from "./skills-layer";
@@ -73,6 +74,7 @@ export interface ChatInput {
     content: string;
     fromAgentId?: BaseAgentId;
     initiator?: Initiator;
+    userId?: string;
     metadata?: Record<string, unknown>;
     channel?: RunContext["channel"];
     contact?: string;
@@ -490,6 +492,7 @@ export interface RuntimeOptions {
     schedules?: Array<{ id: string; cron: string; agentId: string; task: string }>;
     workspaceManager?: WorkspaceManager;
     workspaceAllowedRoots?: string[];
+    credentialStore?: CredentialStorePort;
     /** If provided, called after each scheduled job completes when the job has a contact target. */
     deliverResult?: (job: import("./contracts").ScheduledJob, result: string) => Promise<void>;
     /** If provided, agents can call notify_contact to push proactive messages to a WhatsApp contact. */
@@ -529,7 +532,7 @@ export class MultiAgentRuntime {
     readonly agentDefs: Map<string, AgentDefinition>;
     readonly hitlHandler: HITLHandler;
     readonly scheduler: Scheduler;
-    readonly credentialStore: CredentialStore;
+    readonly credentialStore: CredentialStorePort;
     readonly workspaceManager: WorkspaceManager;
     private readonly sendMessageFn?: (orgId: string, orchestratorId: string, contact: string, body: string) => Promise<void>;
     private readonly memoryClient: MemoryClient;
@@ -547,7 +550,7 @@ export class MultiAgentRuntime {
         this.sendMessageFn = options.sendMessage;
 
         // Credential store (shares base dir with thread store)
-        this.credentialStore = new CredentialStore({
+        this.credentialStore = options.credentialStore ?? new CredentialStore({
             dataDir,
             masterPassword: process.env.MASTER_PASSWORD,
         });
@@ -590,6 +593,13 @@ export class MultiAgentRuntime {
                 transport: "stdio" as const,
                 command: "bunx @figma/mcp",
                 env: { FIGMA_ACCESS_TOKEN: process.env.FIGMA_ACCESS_TOKEN },
+            }] : []),
+            // Auto-detect Meta Ads MCP when token is available
+            ...(process.env.META_ADS_ACCESS_TOKEN ? [{
+                name: "meta-ads",
+                transport: "stdio" as const,
+                command: "bunx meta-ads-mcp-server",
+                env: { META_ADS_ACCESS_TOKEN: process.env.META_ADS_ACCESS_TOKEN },
             }] : []),
         ];
         for (const serverCfg of mcpServers) {
@@ -896,6 +906,7 @@ export class MultiAgentRuntime {
         const runContext = this.createRunContext();
         const fromAgentId = input.fromAgentId ?? "user";
         const initiator = input.initiator ?? resolveInitiator(fromAgentId);
+        runContext.userId = input.userId;
         runContext.channel = input.channel;
         runContext.contact = input.contact;
         runContext.orchestratorId = input.orchestratorId ?? (isOrchestratorAgentId(input.toAgentId) ? input.toAgentId : undefined);
@@ -1307,10 +1318,24 @@ export class MultiAgentRuntime {
 
             forwardAgentEvent?.(event);
         });
-        try {
-            await agent.prompt(userMessage);
-        } finally {
-            unsubscribe?.();
+        const promptTask = async () => {
+            try {
+                await agent.prompt(userMessage);
+            } finally {
+                unsubscribe?.();
+            }
+        };
+        if (this.credentialStore.runWithContext) {
+            await this.credentialStore.runWithContext(
+                {
+                    orgId: input.runContext.orgId ?? this.orgId,
+                    userId: input.runContext.userId,
+                    orchestratorId: input.runContext.orchestratorId,
+                },
+                promptTask,
+            );
+        } else {
+            await promptTask();
         }
         const newMessages = agent.state.messages.slice(beforeCount);
         let previousEnvelopeId = history.at(-1)?.envelopeId;

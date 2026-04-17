@@ -13,22 +13,39 @@ import { errorMessage } from "../../packages/core/errors";
 import { normalizePhoneNumber } from "../../packages/core/phone-utils";
 import type { MultiAgentRuntime } from "../../packages/core/runtime";
 import { RuntimeManager } from "../../packages/core/runtime-manager";
+import { createSupabaseAdminClient, readSupabaseAdminConfigFromEnv } from "../../packages/core/supabase-client";
 import type { HITLHandler, HITLRequest } from "../../packages/core/tool-middleware";
 import { buildHydratedUiState, getPrimaryThreadId } from "../web/ui-state";
 import { verifyWebhookSignature, WebhookIdempotencyWindow } from "./kapso-webhook-utils";
 
-const DEFAULT_ORG_ID = process.env.DEFAULT_ORG_ID ?? "default";
-const KAPSO_PROJECT_WEBHOOK_SECRET = process.env.KAPSO_PROJECT_WEBHOOK_SECRET ?? process.env.KAPSO_WEBHOOK_SECRET;
-const KAPSO_PHONE_WEBHOOK_SECRET = process.env.KAPSO_PHONE_WEBHOOK_SECRET ?? process.env.KAPSO_WEBHOOK_SECRET;
-const KAPSO_BOOTSTRAP_ORG_ID = process.env.KAPSO_BOOTSTRAP_ORG_ID ?? DEFAULT_ORG_ID;
-const KAPSO_BOOTSTRAP_ORCHESTRATOR_ID = process.env.KAPSO_BOOTSTRAP_ORCHESTRATOR_ID ?? "main";
+const KAPSO_WEBHOOK_SECRET = process.env.KAPSO_WEBHOOK_SECRET;
+const KAPSO_PROJECT_WEBHOOK_SECRET = process.env.KAPSO_PROJECT_WEBHOOK_SECRET ?? KAPSO_WEBHOOK_SECRET;
+const KAPSO_PHONE_WEBHOOK_SECRET = process.env.KAPSO_PHONE_WEBHOOK_SECRET ?? KAPSO_WEBHOOK_SECRET;
+const KAPSO_BOOTSTRAP_ORCHESTRATOR_ID = process.env.KAPSO_BOOTSTRAP_ORCHESTRATOR_ID?.trim() || "main";
 const KAPSO_BOOTSTRAP_OWNER_NUMBER = process.env.KAPSO_BOOTSTRAP_OWNER_NUMBER;
 const KAPSO_BOOTSTRAP_CUSTOMER_ID = process.env.KAPSO_BOOTSTRAP_CUSTOMER_ID;
 const KAPSO_BOOTSTRAP_PHONE_NUMBER_ID = process.env.KAPSO_BOOTSTRAP_PHONE_NUMBER_ID;
 const KAPSO_BOOTSTRAP_ACTIVE = process.env.KAPSO_BOOTSTRAP_ACTIVE;
+const SUPABASE_PUBLIC_URL = process.env.SUPABASE_URL?.trim()
+  ?? process.env.VITE_SUPABASE_URL?.trim()
+  ?? "";
+const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY?.trim()
+  ?? process.env.SUPABASE_ANON_KEY?.trim()
+  ?? process.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim()
+  ?? "";
+const SUPABASE_ADMIN_CONFIG = readSupabaseAdminConfigFromEnv();
+if (!SUPABASE_ADMIN_CONFIG) {
+  throw new Error("Missing SUPABASE_URL or SUPABASE_SECRET_KEY (fallback: SUPABASE_SERVICE_ROLE_KEY) for backend auth.");
+}
+const supabaseAdmin = createSupabaseAdminClient(SUPABASE_ADMIN_CONFIG);
+
+interface WsSessionData {
+  orgId: string;
+  userId: string;
+}
 
 type WsClient = import("bun").ServerWebSocket<unknown>;
-const wsClients = new Set<WsClient>();
+const wsClients = new Map<WsClient, WsSessionData>();
 const patchedRuntimes = new WeakSet<MultiAgentRuntime>();
 const delegationStarts = new Map<string, {
   orgId: string;
@@ -51,7 +68,7 @@ interface PendingHitlRequest {
 }
 
 const hitlPending = new Map<string, PendingHitlRequest>();
-/** Maps normalized WhatsApp contact number → FIFO queue of pending HITL reqIds for that contact */
+/** Maps normalized WhatsApp contact number â†’ FIFO queue of pending HITL reqIds for that contact */
 const hitlContactIndex = new Map<string, string[]>();
 
 function sendWsJson(ws: WsClient, payload: object): boolean {
@@ -63,15 +80,23 @@ function sendWsJson(ws: WsClient, payload: object): boolean {
   }
 }
 
-function broadcast(payload: object): void {
+function wsSessionForClient(ws: WsClient): WsSessionData | undefined {
+  return wsClients.get(ws) ?? (ws.data as WsSessionData | undefined);
+}
+
+function broadcastToOrg(orgId: string, payload: object): number {
   const text = JSON.stringify(payload);
-  for (const ws of wsClients) {
+  let delivered = 0;
+  for (const [ws, session] of wsClients.entries()) {
+    if (session.orgId !== orgId) continue;
     try {
       ws.send(text);
+      delivered += 1;
     } catch {
       // ignore closed sockets
     }
   }
+  return delivered;
 }
 
 function sanitizeThoughtPrefix(text: string): string {
@@ -103,13 +128,83 @@ function extractToolErrorText(result: unknown): string {
   return "Tool execution failed.";
 }
 
-function getOrgIdFromRequest(req: Request): string {
+function isUuid(value?: string | null): value is string {
+  if (!value) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.trim());
+}
+
+function getBearerToken(req: Request, opts?: { allowQueryToken?: boolean }): string | undefined {
+  const authHeader = req.headers.get("authorization") ?? req.headers.get("Authorization");
+  if (authHeader && /^Bearer\s+/i.test(authHeader)) {
+    return authHeader.replace(/^Bearer\s+/i, "").trim() || undefined;
+  }
+  if (!opts?.allowQueryToken) return undefined;
   try {
     const url = new URL(req.url);
-    return url.searchParams.get("orgId")?.trim() || DEFAULT_ORG_ID;
+    return url.searchParams.get("token")?.trim() || undefined;
   } catch {
-    return DEFAULT_ORG_ID;
+    return undefined;
   }
+}
+
+function unauthorizedResponse(message = "unauthorized"): Response {
+  return Response.json({ error: message }, { status: 401 });
+}
+
+function forbiddenResponse(message = "forbidden"): Response {
+  return Response.json({ error: message }, { status: 403 });
+}
+
+async function authenticateRequest(
+  req: Request,
+  opts?: { allowQueryToken?: boolean },
+): Promise<{ userId: string; token: string } | Response> {
+  const token = getBearerToken(req, opts);
+  if (!token) return unauthorizedResponse("missing_bearer_token");
+  const { data, error } = await supabaseAdmin.auth.getUser(token);
+  if (error || !data.user?.id) return unauthorizedResponse("invalid_bearer_token");
+  return { userId: data.user.id, token };
+}
+
+async function authorizeOrgRequest(
+  req: Request,
+  explicitOrgId?: string,
+  opts?: { allowQueryToken?: boolean },
+): Promise<{ userId: string; token: string; orgId: string } | Response> {
+  const auth = await authenticateRequest(req, opts);
+  if (auth instanceof Response) return auth;
+  let requestedOrgId = explicitOrgId?.trim() || undefined;
+  let explicitOrgScope = Boolean(requestedOrgId);
+  if (!requestedOrgId) {
+    try {
+      const url = new URL(req.url);
+      const queryOrgId = url.searchParams.get("orgId")?.trim();
+      if (queryOrgId) {
+        requestedOrgId = queryOrgId;
+        explicitOrgScope = true;
+      }
+    } catch {
+      // Ignore URL parse failures and continue with defaults.
+    }
+  }
+  if (requestedOrgId && !isUuid(requestedOrgId)) {
+    if (explicitOrgScope) return forbiddenResponse("invalid_org_id");
+    requestedOrgId = undefined;
+  }
+
+  const memberships = await runtimeManager.listUserOrgIds(auth.userId);
+  if (!requestedOrgId) {
+    requestedOrgId = memberships[0];
+  }
+  if (!requestedOrgId) return forbiddenResponse("missing_org_id");
+  const allowed = await runtimeManager.isUserMemberOfOrg(auth.userId, requestedOrgId);
+  if (!allowed) {
+    if (explicitOrgScope) return forbiddenResponse("org_membership_required");
+    const fallbackOrgId = memberships[0];
+    if (!fallbackOrgId) return forbiddenResponse("org_membership_required");
+    requestedOrgId = fallbackOrgId;
+  }
+  return { ...auth, orgId: requestedOrgId };
 }
 
 function getThreadContextFromRequest(req: Request): { orchestratorId?: string; contact?: string } {
@@ -139,10 +234,16 @@ function parseOptionalBoolean(value: string | undefined): boolean | undefined {
 
 function broadcastHitlRequest(pending: PendingHitlRequest): number {
   const payload = { type: "hitl_request", reqId: pending.reqId, ...pending.request };
-  let delivered = 0;
-  for (const ws of wsClients) {
-    if (sendWsJson(ws, payload)) delivered += 1;
-  }
+  const targetOrgId = pending.request.orgId?.trim();
+  const delivered = targetOrgId
+    ? broadcastToOrg(targetOrgId, payload)
+    : (() => {
+      let count = 0;
+      for (const ws of wsClients.keys()) {
+        if (sendWsJson(ws, payload)) count += 1;
+      }
+      return count;
+    })();
   console.error(
     `[hitl] request ${pending.reqId} ${pending.request.agentId}:${pending.request.toolName} delivered=${delivered} connected=${wsClients.size}`,
   );
@@ -155,14 +256,20 @@ function startHitlTimeout(pending: PendingHitlRequest): void {
     if (pending.resolved) return;
     pending.resolved = true;
     hitlPending.delete(pending.reqId);
-    for (const ws of wsClients) {
-      sendWsJson(ws, {
-        type: "hitl_expired",
-        reqId: pending.reqId,
-        agentId: pending.request.agentId,
-        toolName: pending.request.toolName,
-        timeout: pending.request.timeout,
-      });
+    const payload = {
+      type: "hitl_expired",
+      reqId: pending.reqId,
+      agentId: pending.request.agentId,
+      toolName: pending.request.toolName,
+      timeout: pending.request.timeout,
+    };
+    const targetOrgId = pending.request.orgId?.trim();
+    if (targetOrgId) {
+      broadcastToOrg(targetOrgId, payload);
+    } else {
+      for (const ws of wsClients.keys()) {
+        sendWsJson(ws, payload);
+      }
     }
     console.error(`[hitl] request ${pending.reqId} timed out after ${pending.request.timeout}ms`);
     pending.reject(new Error("HITL_TIMEOUT"));
@@ -194,15 +301,22 @@ function resolveHitlRequest(reqId: string, response: { approved: boolean; modifi
   }
   console.error(`[hitl] request ${reqId} response approved=${response.approved}`);
   pending.resolve(response);
-  for (const ws of wsClients) {
-    sendWsJson(ws, { type: "hitl_resolved", reqId, approved: response.approved });
+  const resolvedPayload = { type: "hitl_resolved", reqId, approved: response.approved };
+  const targetOrgId = pending.request.orgId?.trim();
+  if (targetOrgId) {
+    broadcastToOrg(targetOrgId, resolvedPayload);
+  } else {
+    for (const ws of wsClients.keys()) {
+      sendWsJson(ws, resolvedPayload);
+    }
   }
   return true;
 }
 
-function replayPendingHitlToClient(ws: WsClient): void {
+function replayPendingHitlToClient(ws: WsClient, orgId: string): void {
   let replayed = 0;
   for (const pending of hitlPending.values()) {
+    if (pending.request.orgId && pending.request.orgId !== orgId) continue;
     if (sendWsJson(ws, { type: "hitl_request", reqId: pending.reqId, ...pending.request })) replayed += 1;
   }
   if (replayed > 0) {
@@ -230,11 +344,11 @@ function hitlActionDescription(toolName: string, params: Record<string, unknown>
     case "list_directory":
       return `Listar directorio: \`${p.path ?? "."}\``;
     case "search_code":
-      return `Buscar en código: \`${p.query ?? p.pattern ?? ""}\``;
+      return `Buscar en cÃ³digo: \`${p.query ?? p.pattern ?? ""}\``;
     case "delegate":
     case "delegate_task": {
       const task = String(p.task ?? "").slice(0, 150);
-      return `Delegar tarea al agente *${p.agentId ?? "?"}*:\n_${task}${task.length === 150 ? "…" : ""}_`;
+      return `Delegar tarea al agente *${p.agentId ?? "?"}*:\n_${task}${task.length === 150 ? "â€¦" : ""}_`;
     }
     case "browse_url":
       return `Abrir URL: ${p.url ?? ""}`;
@@ -261,7 +375,7 @@ function hitlActionDescription(toolName: string, params: Record<string, unknown>
       return `Eliminar evento del calendario: \`${p.eventId ?? ""}\``;
     case "write_gsheet":
     case "create_gsheet":
-      return `${toolName === "create_gsheet" ? "Crear" : "Escribir en"} hoja de cálculo${p.title ? `: _${p.title}_` : ""}`;
+      return `${toolName === "create_gsheet" ? "Crear" : "Escribir en"} hoja de cÃ¡lculo${p.title ? `: _${p.title}_` : ""}`;
     case "write_gdoc":
     case "create_gdoc":
       return `${toolName === "create_gdoc" ? "Crear" : "Escribir en"} Google Doc${p.title ? `: _${p.title}_` : ""}`;
@@ -303,7 +417,7 @@ function createWebHitlHandler(): HITLHandler {
       }
       const shortRef = reqId.slice(0, 8);
       const waBody = [
-        `🔔 *Aprobación requerida*`,
+        `ðŸ”” *AprobaciÃ³n requerida*`,
         ``,
         hitlActionDescription(request.toolName, request.params),
         ``,
@@ -336,12 +450,27 @@ function createWebHitlHandler(): HITLHandler {
 const runtimeManager = new RuntimeManager({
   hitlHandler: createWebHitlHandler(),
   onChannelEvent: async (event: ChannelDeliveryEvent) => {
-    broadcast({ type: "channel_event", event });
+    broadcastToOrg(event.orgId, { type: "channel_event", event });
   },
   onCommunicationIntent: async (intent: CommunicationIntentLog) => {
-    broadcast({ type: "communication_intent", intent });
+    broadcastToOrg(intent.orgId, { type: "communication_intent", intent });
   },
 });
+
+async function resolveKapsoWebhookSecret(
+  key: "KAPSO_PROJECT_WEBHOOK_SECRET" | "KAPSO_PHONE_WEBHOOK_SECRET",
+  context?: { orgId?: string; userId?: string; orchestratorId?: string },
+): Promise<string | undefined> {
+  const scoped = await runtimeManager.resolveEnvOverride(key, context);
+  if (typeof scoped === "string" && scoped.trim().length > 0) return scoped.trim();
+
+  const generic = await runtimeManager.resolveEnvOverride("KAPSO_WEBHOOK_SECRET", context);
+  if (typeof generic === "string" && generic.trim().length > 0) return generic.trim();
+
+  return key === "KAPSO_PROJECT_WEBHOOK_SECRET"
+    ? KAPSO_PROJECT_WEBHOOK_SECRET
+    : KAPSO_PHONE_WEBHOOK_SECRET;
+}
 
 async function getRuntime(orgId: string): Promise<MultiAgentRuntime> {
   const orgRuntime = await runtimeManager.getOrgRuntime(orgId);
@@ -359,8 +488,48 @@ async function applyKapsoChannelBootstrapFromEnv(): Promise<void> {
   if (!ownerNumber || !kapsoCustomerId) return;
 
   try {
+    const rank = (role: string) => (role === "owner" ? 0 : role === "admin" ? 1 : 2);
+    let resolvedOrgId: string | undefined;
+    let resolvedUserId: string | undefined;
+    const existingByCustomer = await runtimeManager.findChannelByKapsoCustomerId(kapsoCustomerId);
+    if (!resolvedOrgId && existingByCustomer) {
+      resolvedOrgId = existingByCustomer.orgId;
+      resolvedUserId = existingByCustomer.userId;
+    }
+    if (resolvedOrgId && !resolvedUserId) {
+      const { data: members, error: memberErr } = await supabaseAdmin
+        .from("org_memberships")
+        .select("user_id, role, created_at")
+        .eq("org_id", resolvedOrgId)
+        .order("created_at", { ascending: true });
+      if (memberErr) {
+        throw new Error(`Failed to resolve bootstrap user for org '${resolvedOrgId}': ${memberErr.message}`);
+      }
+      const preferred = (members ?? [])
+        .map((row) => row as { user_id: string; role: string })
+        .sort((a, b) => rank(a.role) - rank(b.role))[0];
+      resolvedUserId = preferred?.user_id;
+    }
+    if (!resolvedOrgId || !resolvedUserId) {
+      const { data: members, error: memberErr } = await supabaseAdmin
+        .from("org_memberships")
+        .select("org_id, user_id, role, created_at")
+        .order("created_at", { ascending: true });
+      if (memberErr) {
+        throw new Error(`Failed to resolve bootstrap org/user from memberships: ${memberErr.message}`);
+      }
+      const preferred = (members ?? [])
+        .map((row) => row as { org_id: string; user_id: string; role: string })
+        .sort((a, b) => rank(a.role) - rank(b.role))[0];
+      if (!preferred?.org_id || !preferred?.user_id) {
+        throw new Error("No org_memberships found to resolve bootstrap org/user.");
+      }
+      resolvedOrgId = preferred.org_id;
+      resolvedUserId = preferred.user_id;
+    }
     const config = await runtimeManager.upsertOrchestratorChannel({
-      orgId: KAPSO_BOOTSTRAP_ORG_ID,
+      orgId: resolvedOrgId,
+      userId: resolvedUserId,
       orchestratorId: KAPSO_BOOTSTRAP_ORCHESTRATOR_ID,
       ownerNumber,
       kapsoCustomerId,
@@ -381,7 +550,7 @@ function patchRuntime(orgId: string, runtime: MultiAgentRuntime): void {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (runtime.store as any).appendTrace = async (event: TraceEvent) => {
     await appendTrace(event);
-    broadcast({ type: "trace", orgId, event });
+    broadcastToOrg(orgId, { type: "trace", orgId, event });
 
     if (
       event.type === "tool_start" &&
@@ -406,7 +575,7 @@ function patchRuntime(orgId: string, runtime: MultiAgentRuntime): void {
         timestamp: event.timestamp,
       };
       delegationStarts.set(makeDelegationKey(orgId, event.toolCallId), start);
-      broadcast({
+      broadcastToOrg(orgId, {
         type: "delegation_start",
         orgId,
         runId: start.runId,
@@ -423,7 +592,7 @@ function patchRuntime(orgId: string, runtime: MultiAgentRuntime): void {
       if (!start) return;
       delegationStarts.delete(key);
       const details = event.details as Record<string, unknown> | undefined;
-      broadcast({
+      broadcastToOrg(orgId, {
         type: "delegation_end",
         orgId,
         runId: start.runId,
@@ -439,14 +608,14 @@ function patchRuntime(orgId: string, runtime: MultiAgentRuntime): void {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (runtime.store as any).appendChatRecord = async (chat: AgentChat) => {
     await appendChatRecord(chat);
-    broadcast({ type: "chat_lifecycle", orgId, chat });
+    broadcastToOrg(orgId, { type: "chat_lifecycle", orgId, chat });
   };
 
   const appendJob = runtime.store.appendJob.bind(runtime.store);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (runtime.store as any).appendJob = async (job: ScheduledJob) => {
     await appendJob(job);
-    broadcast({ type: "job_lifecycle", orgId, job });
+    broadcastToOrg(orgId, { type: "job_lifecycle", orgId, job });
   };
 }
 
@@ -457,14 +626,25 @@ Bun.serve({
   port: PORT,
   routes: {
     "/": index,
-    "/ws": (req, server) => {
-      if (server.upgrade(req)) return;
+    "/ws": async (req, server) => {
+      const auth = await authorizeOrgRequest(req, undefined, { allowQueryToken: true });
+      if (auth instanceof Response) return auth;
+      if ((server as any).upgrade(req, { data: { orgId: auth.orgId, userId: auth.userId } })) return;
       return new Response("WebSocket upgrade failed", { status: 400 });
+    },
+    "/api/auth/config": {
+      GET: async () => Response.json({
+        enabled: Boolean(SUPABASE_PUBLIC_URL && SUPABASE_PUBLISHABLE_KEY),
+        supabaseUrl: SUPABASE_PUBLIC_URL || undefined,
+        supabasePublishableKey: SUPABASE_PUBLISHABLE_KEY || undefined,
+      }),
     },
     "/api/orgs/:orgId/orchestrators": {
       GET: async (req) => {
         try {
-          const orchestrators = await runtimeManager.listOrchestrators(req.params.orgId);
+          const auth = await authorizeOrgRequest(req, req.params.orgId);
+          if (auth instanceof Response) return auth;
+          const orchestrators = await runtimeManager.listOrchestrators(auth.orgId);
           return Response.json(orchestrators);
         } catch (err) {
           return Response.json({ error: errorMessage(err) }, { status: 500 });
@@ -474,14 +654,17 @@ Bun.serve({
     "/api/orgs/:orgId/orchestrators/:orchestratorId/setup-link": {
       POST: async (req) => {
         try {
+          const auth = await authorizeOrgRequest(req, req.params.orgId);
+          if (auth instanceof Response) return auth;
           const body = await req.json().catch(() => ({})) as Record<string, unknown>;
           const ownerNumber = typeof body.ownerNumber === "string" ? body.ownerNumber : "";
           const result = await runtimeManager.createOrchestratorWithSetupLink({
-            orgId: req.params.orgId,
+            orgId: auth.orgId,
+            userId: auth.userId,
             orchestratorId: req.params.orchestratorId,
             ownerNumber,
           });
-          await getRuntime(req.params.orgId);
+          await getRuntime(auth.orgId);
           return Response.json(result);
         } catch (err) {
           return Response.json({ error: errorMessage(err) }, { status: 400 });
@@ -491,20 +674,31 @@ Bun.serve({
     "/api/orgs/:orgId/orchestrators/:orchestratorId/channel": {
       POST: async (req) => {
         try {
+          const auth = await authorizeOrgRequest(req, req.params.orgId);
+          if (auth instanceof Response) return auth;
           const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+          const requestedUserId = typeof body.userId === "string" ? body.userId.trim() : "";
+          const channelUserId = requestedUserId || auth.userId;
+          if (!channelUserId) {
+            return Response.json({ error: "missing_user_id" }, { status: 400 });
+          }
+          if (!await runtimeManager.isUserMemberOfOrg(channelUserId, auth.orgId)) {
+            return Response.json({ error: "user_not_member_of_org" }, { status: 403 });
+          }
           const ownerNumber = typeof body.ownerNumber === "string" ? body.ownerNumber : "";
           const kapsoCustomerId = typeof body.kapsoCustomerId === "string" ? body.kapsoCustomerId : "";
           const phoneNumberId = typeof body.phoneNumberId === "string" ? body.phoneNumberId : undefined;
           const active = typeof body.active === "boolean" ? body.active : undefined;
           const channel = await runtimeManager.upsertOrchestratorChannel({
-            orgId: req.params.orgId,
+            orgId: auth.orgId,
+            userId: channelUserId,
             orchestratorId: req.params.orchestratorId,
             ownerNumber,
             kapsoCustomerId,
             phoneNumberId,
             active,
           });
-          await getRuntime(req.params.orgId);
+          await getRuntime(auth.orgId);
           return Response.json(channel);
         } catch (err) {
           return Response.json({ error: errorMessage(err) }, { status: 400 });
@@ -515,16 +709,30 @@ Bun.serve({
       POST: async (req) => {
         const rawBody = await req.text();
         const signature = req.headers.get("X-Webhook-Signature");
-        if (!verifyWebhookSignature(rawBody, signature, KAPSO_PROJECT_WEBHOOK_SECRET)) {
+        let payload: Record<string, unknown>;
+        try {
+          payload = JSON.parse(rawBody) as Record<string, unknown>;
+        } catch {
+          return Response.json({ ok: false, error: "invalid_payload" }, { status: 400 });
+        }
+
+        const data = (typeof payload.data === "object" && payload.data !== null ? payload.data : payload) as Record<string, unknown>;
+        const customerObj = data.customer as Record<string, unknown> | undefined;
+        const customerId = typeof customerObj?.id === "string" ? customerObj.id : "";
+        const channel = customerId
+          ? await runtimeManager.findChannelByKapsoCustomerId(customerId)
+          : undefined;
+        const secret = await resolveKapsoWebhookSecret("KAPSO_PROJECT_WEBHOOK_SECRET", channel
+          ? { orgId: channel.orgId, userId: channel.userId, orchestratorId: channel.orchestratorId }
+          : undefined);
+
+        if (!verifyWebhookSignature(rawBody, signature, secret)) {
           return Response.json({ ok: false, error: "invalid_signature" }, { status: 401 });
         }
-        const payload = JSON.parse(rawBody) as Record<string, unknown>;
+
         const eventName = req.headers.get("X-Webhook-Event")
           ?? (typeof payload.event === "string" ? payload.event : "");
         if (eventName === "whatsapp.phone_number.created") {
-          const data = (typeof payload.data === "object" && payload.data !== null ? payload.data : payload) as Record<string, unknown>;
-          const customerObj = data.customer as Record<string, unknown> | undefined;
-          const customerId = typeof customerObj?.id === "string" ? customerObj.id : "";
           const phoneNumberId = typeof data.phone_number_id === "string"
             ? data.phone_number_id
             : typeof payload.phone_number_id === "string"
@@ -534,7 +742,7 @@ Bun.serve({
             const updated = await runtimeManager.bindPhoneNumberByCustomer(customerId, phoneNumberId);
             if (updated) {
               await getRuntime(updated.orgId);
-              broadcast({
+              broadcastToOrg(updated.orgId, {
                 type: "kapso_phone_bound",
                 orgId: updated.orgId,
                 orchestratorId: updated.orchestratorId,
@@ -551,7 +759,12 @@ Bun.serve({
       POST: async (req) => {
         const rawBody = await req.text();
         const signature = req.headers.get("X-Webhook-Signature");
-        if (!verifyWebhookSignature(rawBody, signature, KAPSO_PHONE_WEBHOOK_SECRET)) {
+        const phoneNumberId = req.params.phoneNumberId;
+        const channel = await runtimeManager.findChannelByPhoneNumberId(phoneNumberId);
+        const secret = await resolveKapsoWebhookSecret("KAPSO_PHONE_WEBHOOK_SECRET", channel
+          ? { orgId: channel.orgId, userId: channel.userId, orchestratorId: channel.orchestratorId }
+          : undefined);
+        if (!verifyWebhookSignature(rawBody, signature, secret)) {
           return Response.json({ ok: false, error: "invalid_signature" }, { status: 401 });
         }
 
@@ -563,8 +776,6 @@ Bun.serve({
         const payload = JSON.parse(rawBody) as Record<string, unknown>;
         const eventName = req.headers.get("X-Webhook-Event")
           ?? (typeof payload.event === "string" ? payload.event : "");
-        const phoneNumberId = req.params.phoneNumberId;
-        const channel = await runtimeManager.findChannelByPhoneNumberId(phoneNumberId);
         if (!channel) {
           return Response.json({ ok: true, ignored: "phone_number_not_mapped" });
         }
@@ -594,7 +805,7 @@ Bun.serve({
             const hitlQueue = hitlContactIndex.get(normalizedContact);
             if (hitlQueue && hitlQueue.length > 0) {
               const trimmed = textContent.trim().toLowerCase();
-              const approveAll = ["si todo", "sí todo", "yes all", "aprobar todo", "all"].includes(trimmed);
+              const approveAll = ["si todo", "sÃ­ todo", "yes all", "aprobar todo", "all"].includes(trimmed);
               const denyAll = ["no todo", "rechazar todo", "deny all"].includes(trimmed);
               if (approveAll || denyAll) {
                 // Resolve every pending HITL for this contact at once
@@ -603,7 +814,7 @@ Bun.serve({
                 console.error(`[hitl] WA bulk reply from ${normalizedContact}: approved=${approveAll} resolved=${ids.length}`);
                 return Response.json({ ok: true, hitl_resolved: true, approved: approveAll, resolved: ids.length });
               }
-              const approved = ["si", "sí", "s", "yes", "y", "ok", "aprobar"].includes(trimmed);
+              const approved = ["si", "sÃ­", "s", "yes", "y", "ok", "aprobar"].includes(trimmed);
               const denied = ["no", "n", "nope", "rechazar", "denegar"].includes(trimmed);
               if (approved || denied) {
                 // Resolve the oldest pending HITL for this contact (FIFO)
@@ -619,7 +830,7 @@ Bun.serve({
             // channel_event messages arrive.
             const waRunId = messageId ?? crypto.randomUUID();
             const waStart = Date.now();
-            broadcast({
+            broadcastToOrg(channel.orgId, {
               type: "chat_sending",
               runId: waRunId,
               orgId: channel.orgId,
@@ -643,7 +854,7 @@ Bun.serve({
             }).then(() => {
               // Answer is already in the UI via channel_event outbound "sent".
               // Send stream_end with empty answer to reset the streaming indicator.
-              broadcast({
+              broadcastToOrg(channel.orgId, {
                 type: "stream_end",
                 runId: waRunId,
                 orgId: channel.orgId,
@@ -652,7 +863,7 @@ Bun.serve({
               });
             }).catch((err) => {
               console.error("[kapso] processExternalMessage failed:", errorMessage(err));
-              broadcast({
+              broadcastToOrg(channel.orgId, {
                 type: "stream_error",
                 runId: waRunId,
                 orgId: channel.orgId,
@@ -691,17 +902,19 @@ Bun.serve({
     },
     "/api/agents": {
       GET: async (req) => {
-        const orgId = getOrgIdFromRequest(req);
-        const runtime = await getRuntime(orgId);
+        const auth = await authorizeOrgRequest(req);
+        if (auth instanceof Response) return auth;
+        const runtime = await getRuntime(auth.orgId);
         return Response.json(runtime.listAgents());
       },
     },
     "/api/conversations": {
       GET: async (req) => {
         try {
-          const orgId = getOrgIdFromRequest(req);
+          const auth = await authorizeOrgRequest(req);
+          if (auth instanceof Response) return auth;
           const { orchestratorId } = getThreadContextFromRequest(req);
-          const conversations = await runtimeManager.listConversations(orgId, orchestratorId);
+          const conversations = await runtimeManager.listConversations(auth.orgId, orchestratorId);
           return Response.json(conversations);
         } catch (err) {
           return Response.json({ error: errorMessage(err) }, { status: 500 });
@@ -711,8 +924,9 @@ Bun.serve({
     "/api/channel-events": {
       GET: async (req) => {
         try {
-          const orgId = getOrgIdFromRequest(req);
-          const events = await runtimeManager.listChannelEvents(orgId);
+          const auth = await authorizeOrgRequest(req);
+          if (auth instanceof Response) return auth;
+          const events = await runtimeManager.listChannelEvents(auth.orgId);
           return Response.json(events);
         } catch (err) {
           return Response.json({ error: errorMessage(err) }, { status: 500 });
@@ -722,8 +936,9 @@ Bun.serve({
     "/api/communication-intents": {
       GET: async (req) => {
         try {
-          const orgId = getOrgIdFromRequest(req);
-          const intents = await runtimeManager.listCommunicationIntents(orgId);
+          const auth = await authorizeOrgRequest(req);
+          if (auth instanceof Response) return auth;
+          const intents = await runtimeManager.listCommunicationIntents(auth.orgId);
           return Response.json(intents);
         } catch (err) {
           return Response.json({ error: errorMessage(err) }, { status: 500 });
@@ -732,8 +947,9 @@ Bun.serve({
     },
     "/api/agents/:id/activity": {
       GET: async (req) => {
-        const orgId = getOrgIdFromRequest(req);
-        const runtime = await getRuntime(orgId);
+        const auth = await authorizeOrgRequest(req);
+        if (auth instanceof Response) return auth;
+        const runtime = await getRuntime(auth.orgId);
         const agentId = req.params.id;
         const allTraces = await runtime.getTraces();
         const agentTraces = allTraces.filter((trace) => trace.agentId === agentId).slice(-100);
@@ -745,23 +961,26 @@ Bun.serve({
     },
     "/api/chats": {
       GET: async (req) => {
-        const orgId = getOrgIdFromRequest(req);
-        const runtime = await getRuntime(orgId);
+        const auth = await authorizeOrgRequest(req);
+        if (auth instanceof Response) return auth;
+        const runtime = await getRuntime(auth.orgId);
         return Response.json(runtime.listChats());
       },
     },
     "/api/chats/:id": {
       GET: async (req) => {
-        const orgId = getOrgIdFromRequest(req);
-        const runtime = await getRuntime(orgId);
+        const auth = await authorizeOrgRequest(req);
+        if (auth instanceof Response) return auth;
+        const runtime = await getRuntime(auth.orgId);
         const chat = runtime.getChat(req.params.id);
         return chat
           ? Response.json(chat)
           : Response.json({ error: "not found" }, { status: 404 });
       },
       DELETE: async (req) => {
-        const orgId = getOrgIdFromRequest(req);
-        const runtime = await getRuntime(orgId);
+        const auth = await authorizeOrgRequest(req);
+        if (auth instanceof Response) return auth;
+        const runtime = await getRuntime(auth.orgId);
         const chat = runtime.closeChat(req.params.id);
         return chat
           ? Response.json(chat)
@@ -770,30 +989,34 @@ Bun.serve({
     },
     "/api/threads": {
       GET: async (req) => {
-        const orgId = getOrgIdFromRequest(req);
-        const runtime = await getRuntime(orgId);
+        const auth = await authorizeOrgRequest(req);
+        if (auth instanceof Response) return auth;
+        const runtime = await getRuntime(auth.orgId);
         return Response.json(await runtime.listThreadIds());
       },
     },
     "/api/threads/:id": {
       GET: async (req) => {
-        const orgId = getOrgIdFromRequest(req);
-        const runtime = await getRuntime(orgId);
+        const auth = await authorizeOrgRequest(req);
+        if (auth instanceof Response) return auth;
+        const runtime = await getRuntime(auth.orgId);
         return Response.json(await runtime.getThread(decodeURIComponent(req.params.id)));
       },
     },
     "/api/traces": {
       GET: async (req) => {
-        const orgId = getOrgIdFromRequest(req);
-        const runtime = await getRuntime(orgId);
+        const auth = await authorizeOrgRequest(req);
+        if (auth instanceof Response) return auth;
+        const runtime = await getRuntime(auth.orgId);
         return Response.json(await runtime.getTraces());
       },
     },
     "/api/ui-state": {
       GET: async (req) => {
-        const orgId = getOrgIdFromRequest(req);
-        const runtime = await getRuntime(orgId);
-        const orchestrators = await runtimeManager.listOrchestrators(orgId);
+        const auth = await authorizeOrgRequest(req);
+        if (auth instanceof Response) return auth;
+        const runtime = await getRuntime(auth.orgId);
+        const orchestrators = await runtimeManager.listOrchestrators(auth.orgId);
         const selectedOrchestratorId = getThreadContextFromRequest(req).orchestratorId
           ?? orchestrators[0]?.orchestratorId
           ?? runtime.getPrimaryOrchestratorId();
@@ -807,11 +1030,11 @@ Bun.serve({
         const traces = threadRunIds.size === 0
           ? []
           : (await runtime.getTraces()).filter((trace) => threadRunIds.has(trace.runId));
-        const conversations = await runtimeManager.listConversations(orgId, selectedOrchestratorId);
+        const conversations = await runtimeManager.listConversations(auth.orgId, selectedOrchestratorId);
         return Response.json(buildHydratedUiState({
           agents: runtime.listAgents(),
           sessionId: runtime.sessionId,
-          orgId,
+          orgId: auth.orgId,
           selectedOrchestratorId,
           selectedContact,
           threadMessages,
@@ -830,26 +1053,30 @@ Bun.serve({
     },
     "/api/jobs": {
       GET: async (req) => {
-        const orgId = getOrgIdFromRequest(req);
-        const runtime = await getRuntime(orgId);
+        const auth = await authorizeOrgRequest(req);
+        if (auth instanceof Response) return auth;
+        const runtime = await getRuntime(auth.orgId);
         return Response.json(runtime.scheduler?.listJobs() ?? []);
       },
     },
     "/api/jobs/:id": {
       GET: async (req) => {
-        const orgId = getOrgIdFromRequest(req);
-        const runtime = await getRuntime(orgId);
+        const auth = await authorizeOrgRequest(req);
+        if (auth instanceof Response) return auth;
+        const runtime = await getRuntime(auth.orgId);
         const job = runtime.scheduler?.getJob(req.params.id);
         return job ? Response.json(job) : Response.json({ error: "not found" }, { status: 404 });
       },
       DELETE: async (req) => {
-        const orgId = getOrgIdFromRequest(req);
-        const runtime = await getRuntime(orgId);
+        const auth = await authorizeOrgRequest(req);
+        if (auth instanceof Response) return auth;
+        const runtime = await getRuntime(auth.orgId);
         const removed = runtime.scheduler?.removeJob(req.params.id);
         return removed ? Response.json({ ok: true }) : Response.json({ error: "not found" }, { status: 404 });
       },
     },
     "/chat": index,
+    "/login": index,
     "/traces": index,
     "/agents": index,
     "/chats": index,
@@ -857,17 +1084,23 @@ Bun.serve({
   },
   websocket: {
     open(ws) {
-      wsClients.add(ws);
-      console.error(`[ws] client connected; total=${wsClients.size}`);
+      const session = wsSessionForClient(ws);
+      if (!session?.orgId || !session.userId) {
+        ws.close(1008, "unauthorized");
+        return;
+      }
+      wsClients.set(ws, session);
+      console.error(`[ws] client connected; org=${session.orgId} user=${session.userId} total=${wsClients.size}`);
       void (async () => {
         try {
-          const runtime = await getRuntime(DEFAULT_ORG_ID);
+          const runtime = await getRuntime(session.orgId);
           ws.send(JSON.stringify({
             type: "agents",
             agents: runtime.listAgents(),
             sessionId: runtime.sessionId,
+            orgId: session.orgId,
           }));
-          replayPendingHitlToClient(ws);
+          replayPendingHitlToClient(ws, session.orgId);
         } catch (err) {
           ws.send(JSON.stringify({
             type: "stream_error",
@@ -878,10 +1111,20 @@ Bun.serve({
       })();
     },
     close(ws) {
+      const session = wsSessionForClient(ws);
       wsClients.delete(ws);
-      console.error(`[ws] client disconnected; total=${wsClients.size}`);
+      if (session) {
+        console.error(`[ws] client disconnected; org=${session.orgId} user=${session.userId} total=${wsClients.size}`);
+      } else {
+        console.error(`[ws] client disconnected; total=${wsClients.size}`);
+      }
     },
     message(ws, data) {
+      const session = wsSessionForClient(ws);
+      if (!session) {
+        ws.close(1008, "unauthorized");
+        return;
+      }
       const text = typeof data === "string" ? data : data.toString();
       let msg: Record<string, unknown>;
       try {
@@ -891,7 +1134,17 @@ Bun.serve({
       }
 
       if (msg.type === "chat") {
-        const orgId = typeof msg.orgId === "string" && msg.orgId.trim() ? msg.orgId.trim() : DEFAULT_ORG_ID;
+        const requestedOrgId = typeof msg.orgId === "string" && msg.orgId.trim() ? msg.orgId.trim() : session.orgId;
+        if (requestedOrgId !== session.orgId) {
+          ws.send(JSON.stringify({
+            type: "stream_error",
+            runId: "",
+            orgId: session.orgId,
+            error: "forbidden_org_scope",
+          }));
+          return;
+        }
+        const orgId = session.orgId;
         const orchestratorId = typeof msg.orchestratorId === "string" && msg.orchestratorId.trim()
           ? msg.orchestratorId.trim()
           : "orchestrator";
@@ -904,6 +1157,7 @@ Bun.serve({
 
         runtimeManager.chatFromUi({
           orgId,
+          userId: session.userId,
           orchestratorId,
           contact,
           content,
@@ -961,14 +1215,21 @@ Bun.serve({
             }));
           });
       } else if (msg.type === "close_chat") {
-        const orgId = typeof msg.orgId === "string" && msg.orgId.trim() ? msg.orgId.trim() : DEFAULT_ORG_ID;
-        void getRuntime(orgId).then((runtime) => {
+        void getRuntime(session.orgId).then((runtime) => {
           runtime.closeChat(msg.chatId as string);
         });
       } else if (msg.type === "hitl_seen") {
-        markHitlSeen(msg.reqId as string);
+        const reqId = String(msg.reqId ?? "");
+        const pending = hitlPending.get(reqId);
+        if (!pending) return;
+        if (pending.request.orgId && pending.request.orgId !== session.orgId) return;
+        markHitlSeen(reqId);
       } else if (msg.type === "hitl_response") {
-        resolveHitlRequest(msg.reqId as string, {
+        const reqId = String(msg.reqId ?? "");
+        const pending = hitlPending.get(reqId);
+        if (!pending) return;
+        if (pending.request.orgId && pending.request.orgId !== session.orgId) return;
+        resolveHitlRequest(reqId, {
           approved: msg.approved as boolean,
           modifiedParams: msg.modifiedParams as Record<string, unknown> | undefined,
         });
@@ -978,4 +1239,8 @@ Bun.serve({
   development: { hmr: true, console: true },
 });
 
-console.log(`[server] pi-agent UI -> http://localhost:${PORT} (default org: ${DEFAULT_ORG_ID})`);
+console.log(
+  `[server] pi-agent UI -> http://localhost:${PORT} (default org policy: supabase-membership)`,
+);
+
+

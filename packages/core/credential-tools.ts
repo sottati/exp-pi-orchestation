@@ -1,6 +1,6 @@
 import { Type, type Static } from "@sinclair/typebox";
 import type { ToolEntry } from "./tool-registry";
-import type { CredentialStore } from "./credential-store";
+import type { CredentialStorePort } from "./credential-store";
 import { errorMessage } from "./errors";
 
 const CREDENTIAL_KEY_PATTERN = /^[a-zA-Z][a-zA-Z0-9_.-]*$/;
@@ -49,7 +49,7 @@ function normalizeDomain(domain: string): string {
 }
 
 export function createCredentialToolEntries(opts?: {
-  credentialStore?: CredentialStore;
+  credentialStore?: CredentialStorePort;
 }): ToolEntry[] {
   const credentialStore = opts?.credentialStore;
 

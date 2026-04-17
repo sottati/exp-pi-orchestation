@@ -1,15 +1,15 @@
 import { Type } from "@sinclair/typebox";
 import type { ToolEntry } from "./tool-registry";
-import type { CredentialStore } from "./credential-store";
+import type { CredentialStorePort } from "./credential-store";
 
 export interface ExplorerToolOptions {
-  credentialStore?: CredentialStore;
+  credentialStore?: CredentialStorePort;
 }
 
 async function resolveTaskCredentialPlaceholders(
   task: string,
   url: string,
-  credentialStore?: CredentialStore,
+  credentialStore?: CredentialStorePort,
 ): Promise<string> {
   if (!credentialStore?.enabled) return task;
   let domain: string;

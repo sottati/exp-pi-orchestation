@@ -1,17 +1,17 @@
 import { Type } from "@sinclair/typebox";
 import type { ToolEntry } from "./tool-registry";
-import type { CredentialStore } from "./credential-store";
+import type { CredentialStorePort } from "./credential-store";
 import { errorMessage } from "./errors";
 
 export interface GraphicDesignerToolOptions {
-  credentialStore?: CredentialStore;
+  credentialStore?: CredentialStorePort;
 }
 
 function textResult(text: string, details?: Record<string, unknown>) {
   return { content: [{ type: "text" as const, text }], details };
 }
 
-async function getGeminiApiKey(credentialStore?: CredentialStore): Promise<string> {
+async function getGeminiApiKey(credentialStore?: CredentialStorePort): Promise<string> {
   if (credentialStore) {
     const cred = await credentialStore.get("gemini");
     const key = cred?.["apiKey"];
@@ -26,7 +26,7 @@ async function getGeminiApiKey(credentialStore?: CredentialStore): Promise<strin
   return key;
 }
 
-async function getCanvaApiKey(credentialStore?: CredentialStore): Promise<string> {
+async function getCanvaApiKey(credentialStore?: CredentialStorePort): Promise<string> {
   if (credentialStore) {
     const cred = await credentialStore.get("canva");
     const key = cred?.["apiKey"];

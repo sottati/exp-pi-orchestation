@@ -7,6 +7,7 @@ import type {
   ScheduledJob,
   TraceEvent,
 } from "../../packages/core/contracts";
+import { readAuthToken } from "./auth-token";
 import { normalizePhoneNumber } from "../../packages/core/phone-utils";
 import type { AgentInfo, ChatItem, DelegationBlock, HydratedUiState, ThinkingTraceBlock, UIMessage } from "./ui-state";
 
@@ -141,6 +142,23 @@ export const initialRuntimeState: RuntimeState = {
   jobs: [],
   hitlQueue: [],
 };
+
+function authHeaders(): HeadersInit {
+  const token = readAuthToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+async function fetchWithAuth(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers ?? {});
+  for (const [key, value] of Object.entries(authHeaders())) {
+    headers.set(key, value);
+  }
+  return fetch(input, { ...init, headers });
+}
 
 function deriveTraceStartTimes(traces: TraceEvent[]): Record<string, number> {
   const startTimes: Record<string, number> = {};
@@ -688,7 +706,8 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     const initialQuery = new URLSearchParams(window.location.search);
-    const initialOrgId = initialQuery.get("orgId") ?? "";
+    const initialOrgIdRaw = initialQuery.get("orgId")?.trim() ?? "";
+    const initialOrgId = isUuid(initialOrgIdRaw) ? initialOrgIdRaw : "";
     const initialOrchestratorId = initialQuery.get("orchestratorId") ?? "";
     const initialContact = initialQuery.get("contact") ?? "";
 
@@ -699,7 +718,7 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
         if (context?.orchestratorId) query.set("orchestratorId", context.orchestratorId);
         if (context?.contact) query.set("contact", context.contact);
         const qs = query.toString();
-        const response = await fetch(`/api/ui-state${qs ? `?${qs}` : ""}`);
+        const response = await fetchWithAuth(`/api/ui-state${qs ? `?${qs}` : ""}`);
         if (!response.ok) return;
         const snapshot = await response.json() as HydratedUiState;
         if (cancelled) return;
@@ -724,7 +743,21 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
       if (cancelled) return;
 
       const wsProtocol = location.protocol === "https:" ? "wss" : "ws";
-      const ws = new WebSocket(`${wsProtocol}://${location.host}/ws`);
+      const wsQuery = new URLSearchParams(window.location.search);
+      const token = readAuthToken();
+      if (!token) {
+        scheduleReconnect(1000);
+        return;
+      }
+      wsQuery.set("token", token);
+      const orgFromQuery = wsQuery.get("orgId")?.trim();
+      if (orgFromQuery && !isUuid(orgFromQuery)) {
+        wsQuery.delete("orgId");
+      } else if (!orgFromQuery && initialOrgId) {
+        wsQuery.set("orgId", initialOrgId);
+      }
+      const wsUrl = `${wsProtocol}://${location.host}/ws${wsQuery.toString() ? `?${wsQuery.toString()}` : ""}`;
+      const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
       ws.onopen = () => {
         dispatch({ type: "ws_connected" });
@@ -816,14 +849,17 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
     window.history.replaceState({}, "", newUrl);
 
     try {
-      const response = await fetch(`/api/ui-state?${query.toString()}`);
+      const response = await fetchWithAuth(`/api/ui-state?${query.toString()}`);
       if (!response.ok) return;
       const snapshot = await response.json() as HydratedUiState;
       dispatch({ type: "hydrate", snapshot });
+      if (normalizedOrg !== state.orgId) {
+        wsRef.current?.close();
+      }
     } catch {
       // ignore
     }
-  }, []);
+  }, [state.orgId]);
 
   const clearPendingAnchorUserMessage = useCallback(() => {
     setPendingAnchorUserMessageId(null);

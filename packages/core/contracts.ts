@@ -10,6 +10,7 @@ export interface RunContext {
     turnId: string;
     sessionId: string;
     orgId?: string;
+    userId?: string;
     channel?: ChannelKind;
     contact?: string;
     orchestratorId?: string;
@@ -105,6 +106,7 @@ export interface TraceEvent {
 
 export interface OrchestratorChannelConfig {
     orgId: string;
+    userId: string;
     orchestratorId: string;
     kapsoCustomerId: string;
     phoneNumberId?: string;

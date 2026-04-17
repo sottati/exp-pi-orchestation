@@ -183,7 +183,7 @@ This repository is a terminal-first multi-agent runtime prototype.
 - Persist thread envelopes, traces, and chat records for auditability.
 - Dithie/orchestrator can inspect local filesystem paths through HITL approvals.
 - Dithie/orchestrator can run terminal commands through HITL (`run_command`, including `powershell`/`bash` shell mode).
-- Dithie/orchestrator can request credentials from the user through HITL forms (`request_credentials`) and persist them encrypted in `CredentialStore`.
+- Dithie/orchestrator can request credentials from the user through HITL forms (`request_credentials`) and persist them encrypted in Supabase (`org_credentials`) via `CredentialStorePort`.
 - `code` and `web-designer` can manage local workspaces and run git/GitHub workflows (`workspace_*`, `git_*`, `github_*`).
 - Runtime defaults to unrestricted filesystem roots for workspace registration; set `WORKSPACE_ALLOWED_ROOTS` to enforce path limits.
 - User→orchestrator turns wait for delegated chats created in that run to close before final reply.
@@ -211,6 +211,7 @@ Use these project scripts:
 - `bun run smoke:graphic-designer`
 - `bun run ui` (Dithie web dashboard with per-agent views)
 - `bun run ui:gate`
+- `bun run seed:env-secrets -- --email user@empresa.com` (resuelve `user_id` + `org_id` desde el email y upsertea claves base en `env_secrets`)
 - `docker compose up --build -d` (backend + explorer support stack)
 - `docker compose down`
 - `PI_BACKEND_PORT=3001 docker compose up --build -d` (optional override if port 3000 is busy)
@@ -321,7 +322,7 @@ Current setup keeps same model for all agents.
 - `writer` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: `read_docx`, `write_docx`, `read_gdoc`, `write_gdoc`, `create_gdoc`, `gmail_send`, `gmail_draft`)
 - `debugger` → `openrouter/google/gemini-3.1-flash-lite-preview`
 - `secretary` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: `gmail_search`, `gmail_read`, calendar, internal contacts, tasks + scheduler tools)
-- `marketing` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: `seo_audit`, `marketing_keywords`, `marketing_competitors`, `marketing_content_calendar`, `search_web`, `browse_url`; delegates to `writer`, `explorer`, `secretary`)
+- `marketing` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: `seo_audit`, `marketing_keywords`, `marketing_competitors`, `marketing_content_calendar`, `search_web`, `browse_url`, `mcp:meta-ads/*` (auto-injected via `meta-ads-mcp-server` when `META_ADS_ACCESS_TOKEN` set); delegates to `writer`, `explorer`, `secretary`)
 - `graphic-designer` → `openrouter/google/gemini-3.1-flash-lite-preview` (tools: `generate_image`, `canva_create`, `canva_get`, `canva_export`, `mcp:figma/*` (auto-injected via `@figma/mcp` when `FIGMA_ACCESS_TOKEN` set), `search_web`, `browse_url`; delegates to `explorer`)
 
 ## Agent Builder Pattern
@@ -452,10 +453,13 @@ This section supersedes older single-orchestrator assumptions for backend/UI run
 Architecture updates:
 
 - New `RuntimeManager` (`packages/core/runtime-manager.ts`) manages `orgId -> OrgRuntime` with lazy load.
-- Persisted data for backend/UI is isolated per org under `.runtime-data/orgs/<orgId>/`.
+- Org config/channels/credentials/env-overrides are stored in Supabase (`orgs`, `orchestrator_channels`, `org_credentials`, `env_secrets`).
+- Runtime state (`threads`, `traces`, `chats`, `scheduled_jobs`, `workspaces`) remains in JSONL under `.runtime-data/orgs/<orgId>/` in v1.
 - Orchestrators are dynamic per org (`orchestrator:<id>`), not only `orchestrator`.
 - Specialists remain shared per org, with FIFO queueing enforced by chat manager per specialist.
 - Runtime turn context includes external channel metadata (`initiator: "external"`, `channel`, `contact`, `orchestratorId`).
+- Credentials resolve with scope precedence: orchestrator override -> org scope (`OrgCredentialStore`).
+- Env overrides resolve from `env_secrets` by `org_id` (+ optional `user_id`) -> `process.env` fallback.
 
 Kapso adapter updates:
 
@@ -478,6 +482,11 @@ UI + channel behavior:
 - UI chat now sends the currently selected `orchestratorId` in WS `type: "chat"` payloads (instead of hardcoding `orchestrator`), avoiding registry mismatches in multi-orchestrator orgs.
 - UI-originated messages must stay internal (do not dispatch to WhatsApp transport).
 - WS events include channel activity and delivery states (`sent`, `delivered`, `read`, `failed`) plus `communication_intent`.
+- REST endpoints require Bearer token (Supabase Auth) and membership validation (`org_memberships`) with `401/403` handling.
+- WebSocket `/ws` requires token and authorized `orgId`; broadcasts are scoped per org (no global cross-org broadcast).
+- Web UI waits for auth token before opening `/ws` and drops non-UUID `orgId` query params to avoid invalid explicit org scopes.
+- Web UI includes `/login` (Supabase email/password) and uses publishable key from `/api/auth/config`.
+- After login, the UI stores `PI_AUTH_TOKEN` in `localStorage` for immediate authenticated REST/WS calls.
 
 New/updated backend routes:
 
@@ -495,15 +504,22 @@ Kapso env vars:
 
 - `KAPSO_API_KEY` (required for setup link and outbound send)
 - `KAPSO_API_BASE_URL` (optional, default `https://api.kapso.ai`)
-- `KAPSO_PROJECT_WEBHOOK_SECRET`, `KAPSO_PHONE_WEBHOOK_SECRET` (or fallback `KAPSO_WEBHOOK_SECRET`)
-- `DEFAULT_ORG_ID` for backend/UI default org selection
+- `KAPSO_PROJECT_WEBHOOK_SECRET`, `KAPSO_PHONE_WEBHOOK_SECRET` (or fallback `KAPSO_WEBHOOK_SECRET`); in multi-org they resolve from `env_secrets` by `org_id`/`orchestrator_id` with `process.env` fallback
+- Backend/UI resolve org from Supabase `org_memberships` (no `DEFAULT_ORG_ID` dependency)
 - Optional local/sandbox bootstrap (persisted channel upsert at backend start):
-  - `KAPSO_BOOTSTRAP_ORG_ID` (default `DEFAULT_ORG_ID`)
+  - bootstrap resolves org/user from Supabase (`org_memberships` and/or existing channel by `kapso_customer_id`)
   - `KAPSO_BOOTSTRAP_ORCHESTRATOR_ID` (default `main`)
   - `KAPSO_BOOTSTRAP_OWNER_NUMBER`
   - `KAPSO_BOOTSTRAP_CUSTOMER_ID`
   - `KAPSO_BOOTSTRAP_PHONE_NUMBER_ID` (optional)
   - `KAPSO_BOOTSTRAP_ACTIVE` (`true`/`false`, optional)
+
+Supabase/Auth env vars:
+
+- `SUPABASE_URL` (required)
+- `SUPABASE_PUBLISHABLE_KEY` (required for frontend auth; fallback supported: `SUPABASE_ANON_KEY`)
+- `SUPABASE_SECRET_KEY` (required for backend server-side access; fallback legacy `SUPABASE_SERVICE_ROLE_KEY`)
+- `MASTER_ENCRYPTION_KEY` (required for encrypt/decrypt in `org_credentials`)
 
 ## Business + deployment model (cloud multi-tenant)
 

@@ -1,12 +1,12 @@
 import { Type } from "@sinclair/typebox";
 import { google } from "googleapis";
 import type { ToolEntry } from "./tool-registry";
-import type { CredentialStore } from "./credential-store";
+import type { CredentialStorePort } from "./credential-store";
 import { getGoogleAuth } from "./google-auth";
 import { errorMessage } from "./errors";
 
 export interface GoogleContactsToolOptions {
-  credentialStore?: CredentialStore;
+  credentialStore?: CredentialStorePort;
   maxResults?: number;
 }
 

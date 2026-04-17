@@ -1,13 +1,13 @@
 import { Type } from "@sinclair/typebox";
 import type { ToolEntry } from "./tool-registry";
-import type { CredentialStore } from "./credential-store";
+import type { CredentialStorePort } from "./credential-store";
 import { errorMessage } from "./errors";
 import { safeLaunchAndRun } from "./browser";
 import { getGoogleAuth } from "./google-auth";
 import { google } from "googleapis";
 
 export interface MarketingToolOptions {
-  credentialStore?: CredentialStore;
+  credentialStore?: CredentialStorePort;
 }
 
 function textResult(text: string, details?: Record<string, unknown>) {
@@ -25,7 +25,7 @@ export function getSheetId(): string {
 }
 
 interface SheetCrudOpts {
-  credentialStore?: CredentialStore;
+  credentialStore?: CredentialStorePort;
   tab: string;
   headers: string[];
   action: string;

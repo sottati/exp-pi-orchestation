@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import type { CredentialStore } from "./credential-store";
+import type { CredentialStorePort } from "./credential-store";
 
 export const GOOGLE_CREDENTIAL_DOMAIN = "google";
 
@@ -10,10 +10,10 @@ export interface GoogleCredentials {
 }
 
 /**
- * Build an authenticated OAuth2 client from the CredentialStore.
+ * Build an authenticated OAuth2 client from the credential store.
  * Falls back to environment variables if no store entry exists.
  */
-export async function getGoogleAuth(opts?: { credentialStore?: CredentialStore }) {
+export async function getGoogleAuth(opts?: { credentialStore?: CredentialStorePort }) {
   let creds: GoogleCredentials | undefined;
 
   // Try credential store first
@@ -45,3 +45,4 @@ export async function getGoogleAuth(opts?: { credentialStore?: CredentialStore }
   oauth2.setCredentials({ refresh_token: creds.refresh_token });
   return oauth2;
 }
+

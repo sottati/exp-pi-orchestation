@@ -1,5 +1,5 @@
 import { defineAgent, type AgentDefinition, type AgentSkillsConfig } from "./agent-builder";
-import type { CredentialStore } from "./credential-store";
+import type { CredentialStorePort } from "./credential-store";
 import { createExplorerToolEntries } from "./explorer-tools";
 import { createAnalystToolEntries } from "./analyst-tools";
 import { createDebuggerToolEntries } from "./debugger-tools";
@@ -36,7 +36,7 @@ export function makeOrchestratorAgentId(orchestratorId?: string): string {
 }
 
 export function createAgentDefinitions(opts?: {
-  credentialStore?: CredentialStore;
+  credentialStore?: CredentialStorePort;
   workspaceManager?: WorkspaceManager;
   orchestratorIds?: string[];
   skills?: AgentSkillsConfig;
@@ -805,6 +805,7 @@ export function createAgentDefinitions(opts?: {
       "Paid y ads:",
       "- paid-ads: estrategia de campañas en Google, Meta, LinkedIn, Twitter",
       "- ad-creative: generación y variaciones de copy para anuncios a escala",
+      "- meta-ads: gestión y análisis de campañas en Meta Ads (Facebook/Instagram) — requiere herramientas mcp:meta-ads/*",
       "",
       "Crecimiento y retención:",
       "- marketing-ideas: brainstorming de tácticas y canales para crecer",
@@ -834,6 +835,15 @@ export function createAgentDefinitions(opts?: {
       "- marketing_content_calendar: CRUD en Google Sheets pestaña 'Content Calendar' — pipeline (idea → borrador → revisión → publicado).",
       "El acceso a Google Sheets está preconfigurado. Usá las herramientas marketing_* directamente salvo que devuelvan error de autenticación.",
       "",
+      "Meta Ads (cuando META_ADS_ACCESS_TOKEN está configurado):",
+      "- mcp:meta-ads/get_ad_accounts: listá las cuentas publicitarias disponibles.",
+      "- mcp:meta-ads/get_campaigns: campañas de una cuenta — estado, objetivo, budget, fechas.",
+      "- mcp:meta-ads/get_adsets: ad sets de una campaña — targeting, bidding, placements.",
+      "- mcp:meta-ads/get_ads: anuncios individuales con estado y creative.",
+      "- mcp:meta-ads/get_insights: métricas de performance (impresiones, clics, CTR, CPC, ROAS, conversiones) con soporte de rangos de fecha.",
+      "- mcp:meta-ads/get_creatives: assets visuales y copy de cada anuncio.",
+      "Usá mcp:meta-ads/* solo cuando el usuario pide datos reales de sus campañas. Si el server no está disponible, trabajá en modo estratégico.",
+      "",
       "## Cómo combinar skills y herramientas",
       "Las skills te dan el CÓMO (metodología, framework, checklist). Las herramientas te dan los DATOS (qué está pasando realmente).",
       "Flujo ideal para la mayoría de tareas:",
@@ -859,7 +869,7 @@ export function createAgentDefinitions(opts?: {
     ].join("\n"))
     .capabilities([
       "seo-audit", "keyword-research", "competitor-analysis",
-      "content-calendar", "web-search", "content-strategy",
+      "content-calendar", "web-search", "content-strategy", "meta-ads",
     ])
     .localToolEntries([
       ...marketingToolEntries,
@@ -867,6 +877,7 @@ export function createAgentDefinitions(opts?: {
       ...browseUrlForMarketing,
       ...memGetOnly,
     ])
+    .mcpTools(["mcp:meta-ads/*"])
     .permissions({
       seo_audit: "allow",
       marketing_keywords: "allow",
@@ -875,6 +886,7 @@ export function createAgentDefinitions(opts?: {
       search_web: "allow",
       browse_url: "allow",
       mem_get: "allow",
+      "mcp:meta-ads/*": "allow",
     })
     .canDelegateTo(["writer", "explorer", "secretary", "graphic-designer"], { maxDepth: 2 })
     .maxConcurrency(1)
@@ -989,7 +1001,7 @@ import type { SpecialistRegistry } from "./tools";
 
 /** @deprecated Use createAgentDefinitions() instead. */
 export function createSpecialistRegistry(opts?: {
-  credentialStore?: CredentialStore;
+  credentialStore?: CredentialStorePort;
   workspaceManager?: WorkspaceManager;
   orchestratorIds?: string[];
   skills?: AgentSkillsConfig;
@@ -1012,7 +1024,7 @@ export function createSpecialistRegistry(opts?: {
 
 /** @deprecated Use createAgentDefinitions() instead. */
 export function createOrchestratorAgent(tools: AgentTool<any>[] = [], opts?: {
-  credentialStore?: CredentialStore;
+  credentialStore?: CredentialStorePort;
   workspaceManager?: WorkspaceManager;
   orchestratorIds?: string[];
   skills?: AgentSkillsConfig;

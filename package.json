@@ -31,6 +31,7 @@
   "dependencies": {
     "@mariozechner/pi-agent-core": "^0.63.1",
     "@mariozechner/pi-ai": "^0.63.1",
+    "@supabase/supabase-js": "^2.101.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "axe-core": "^4.11.1",

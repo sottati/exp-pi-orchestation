@@ -1,8 +1,9 @@
-import { Moon, Sun } from "lucide-react";
-import { NavLink } from "react-router-dom";
+import { LogOut, Moon, Sun } from "lucide-react";
+import { NavLink, useNavigate } from "react-router-dom";
 import { cn } from "../lib/utils";
 import { useRuntime } from "../runtime-context";
 import { DithieSprite } from "../dithie-sprite";
+import { getSupabaseBrowserClient } from "../supabase-browser";
 
 const NAV_ITEMS = [
   { to: "/", label: "chat", end: true },
@@ -14,6 +15,16 @@ const NAV_ITEMS = [
 
 export function AppHeader() {
   const { state, themeMode, setThemeMode } = useRuntime();
+  const navigate = useNavigate();
+
+  const signOut = async () => {
+    const client = await getSupabaseBrowserClient();
+    if (client) {
+      await client.auth.signOut();
+    }
+    window.localStorage.removeItem("PI_AUTH_TOKEN");
+    navigate("/login", { replace: true });
+  };
 
   return (
     <header className="flex h-[var(--header-h)] shrink-0 items-center justify-between border-b border-theme-border bg-theme-surface px-4">
@@ -95,6 +106,17 @@ export function AppHeader() {
         >
           <Moon className="size-3.5" />
           <span className="max-sm:hidden">dark</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            void signOut();
+          }}
+          className="inline-flex min-h-7 items-center gap-1 whitespace-nowrap border border-theme-border px-2.5 text-[10px] uppercase tracking-[0.08em] text-theme-text-muted transition-colors hover:bg-theme-surface-hover hover:text-theme-text-soft"
+          aria-label="Sign out"
+        >
+          <LogOut className="size-3.5" />
+          <span className="max-sm:hidden">logout</span>
         </button>
       </div>
     </header>
