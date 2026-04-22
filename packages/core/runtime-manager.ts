@@ -466,10 +466,57 @@ export class RuntimeManager {
       hitlHandler: this.hitlHandler,
       deliverResult: async (job, result) => {
         if (!job.contact || !job.orchestratorId) return;
-        await this.sendChannelMessage(orgId, job.orchestratorId, job.contact, result);
+        const trimmed = result.trim();
+        if (!trimmed) return;
+
+        // Emit outbound channel event so the UI mirrors the message immediately,
+        // regardless of whether Kapso is configured (local dev works too).
+        const outboundEvent: ChannelDeliveryEvent = {
+          eventId: createId("ch_evt"),
+          orgId,
+          orchestratorId: job.orchestratorId,
+          channel: "whatsapp",
+          contact: job.contact,
+          direction: "outbound",
+          status: "sent",
+          timestamp: now(),
+          metadata: {
+            source: "scheduler",
+            jobId: job.jobId,
+            text: trimmed,
+          },
+        };
+        await this.emitChannelEvent(outboundEvent);
+
+        // Best-effort WhatsApp delivery — skip gracefully in local dev without Kapso.
+        try {
+          await this.sendChannelMessage(orgId, job.orchestratorId, job.contact, trimmed);
+        } catch (err) {
+          console.error(`[runtime-manager] deliverResult: WhatsApp send failed for job ${job.jobId}: ${errorMessage(err)}`);
+        }
       },
       sendMessage: async (msgOrgId, orchestratorId, contact, body) => {
-        await this.sendChannelMessage(msgOrgId, orchestratorId, contact, body);
+        const trimmed = body.trim();
+        if (!trimmed) return;
+
+        const outboundEvent: ChannelDeliveryEvent = {
+          eventId: createId("ch_evt"),
+          orgId: msgOrgId,
+          orchestratorId,
+          channel: "whatsapp",
+          contact,
+          direction: "outbound",
+          status: "sent",
+          timestamp: now(),
+          metadata: { source: "notify_contact", text: trimmed },
+        };
+        await this.emitChannelEvent(outboundEvent);
+
+        try {
+          await this.sendChannelMessage(msgOrgId, orchestratorId, contact, trimmed);
+        } catch (err) {
+          console.error(`[runtime-manager] sendMessage: WhatsApp send failed: ${errorMessage(err)}`);
+        }
       },
     });
 

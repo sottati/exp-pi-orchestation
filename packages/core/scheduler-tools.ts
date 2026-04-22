@@ -19,12 +19,12 @@ export function createSchedulerToolEntries(opts: SchedulerToolOptions): ToolEntr
   const scheduleTask: ToolEntry = {
     name: "schedule_task",
     source: "local",
-    description: "Schedule a task for an agent (cron, once, or delayed).",
+    description: "Schedule a task for an agent (cron, once, or delayed). IMPORTANT: all times are UTC. For cron patterns, convert the user's local time to UTC (e.g. Argentina UTC-3: 9am local = '0 12 * * *'). For runAt, always include the timezone offset (e.g. '2026-04-22T09:00:00-03:00' for Argentina 9am).",
     parameters: Type.Object({
       targetAgentId: Type.String({ description: "Agent to execute the task." }),
       task: Type.String({ description: "Task description." }),
-      cron: Type.Optional(Type.String({ description: "Cron pattern (5-field)." })),
-      runAt: Type.Optional(Type.String({ description: "ISO date for one-time execution." })),
+      cron: Type.Optional(Type.String({ description: "Cron pattern (5-field) in UTC. Convert local time to UTC before generating the pattern." })),
+      runAt: Type.Optional(Type.String({ description: "ISO 8601 date with timezone offset for one-time execution (e.g. '2026-04-22T09:00:00-03:00'). Always include the offset." })),
       delayMs: Type.Optional(Type.Number({ description: "Delay in ms from now." })),
       contact: Type.Optional(Type.String({ description: "WhatsApp contact number to send the result to. Defaults to the contact who created the reminder." })),
     }),

@@ -77,12 +77,13 @@ export function createGoogleCalendarToolEntries(opts?: GoogleCalendarToolOptions
     description: "Create a new event in Google Calendar.",
     parameters: Type.Object({
       summary: Type.String({ description: "Event title" }),
-      start: Type.String({ description: "Start time (ISO 8601, e.g. '2024-01-15T10:00:00-03:00')" }),
-      end: Type.String({ description: "End time (ISO 8601)" }),
+      start: Type.String({ description: "Start time (ISO 8601 with timezone offset, e.g. '2024-01-15T10:00:00-03:00')" }),
+      end: Type.String({ description: "End time (ISO 8601 with timezone offset)" }),
       description: Type.Optional(Type.String({ description: "Event description" })),
       location: Type.Optional(Type.String({ description: "Event location" })),
       attendees: Type.Optional(Type.Array(Type.String(), { description: "Attendee email addresses" })),
       calendarId: Type.Optional(Type.String({ description: "Calendar ID (default: 'primary')" })),
+      reminderMinutes: Type.Optional(Type.Array(Type.Number(), { description: "List of reminder times in minutes before the event (e.g. [10, 30] for reminders 10 and 30 minutes before). Uses popup notifications." })),
     }),
     defaultPermission: "hitl",
     available: true,
@@ -94,10 +95,18 @@ export function createGoogleCalendarToolEntries(opts?: GoogleCalendarToolOptions
       const location = params.location as string | undefined;
       const attendees = params.attendees as string[] | undefined;
       const calendarId = (params.calendarId as string) ?? "primary";
+      const reminderMinutes = params.reminderMinutes as number[] | undefined;
 
       try {
         const auth = await getGoogleAuth({ credentialStore: opts?.credentialStore });
         const calendar = google.calendar({ version: "v3", auth });
+
+        const reminders = reminderMinutes && reminderMinutes.length > 0
+          ? {
+              useDefault: false,
+              overrides: reminderMinutes.map(minutes => ({ method: "popup" as const, minutes })),
+            }
+          : { useDefault: true };
 
         const res = await calendar.events.insert({
           calendarId,
@@ -108,6 +117,7 @@ export function createGoogleCalendarToolEntries(opts?: GoogleCalendarToolOptions
             start: { dateTime: start },
             end: { dateTime: end },
             attendees: attendees?.map(email => ({ email })),
+            reminders,
           },
         });
 

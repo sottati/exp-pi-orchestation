@@ -50,7 +50,7 @@ export function createAgentDefinitions(opts?: {
 
   /** Skill root directories per agent ID. Falls back to skills/<agentId> for any unknown agent. */
   const AGENT_SKILL_ROOTS: Record<string, string[]> = {
-    marketing: ["skills/marketingskills"],
+    marketing: [".agents/skills", "skills/marketingskills"],
   };
 
   const withSkills = (builder: ReturnType<typeof defineAgent>, agentId: string) => {
@@ -567,7 +567,7 @@ export function createAgentDefinitions(opts?: {
       "",
       "Google Calendar:",
       "- calendar_list: Listá eventos próximos (por defecto: próximos 7 días; admite rango custom).",
-      "- calendar_create: Creá un evento con título, hora, asistentes, ubicación, descripción.",
+      "- calendar_create: Creá un evento con título, hora, asistentes, ubicación, descripción y recordatorios opcionales (reminderMinutes: [10, 30] para alertas 10 y 30 minutos antes). Siempre incluí el offset de zona horaria en start/end (ej: '2026-04-22T09:00:00-03:00' para Argentina).",
       "- calendar_update: Actualizá campos de un evento existente (solo los que cambian).",
       "- calendar_delete: Eliminá un evento.",
       "",
@@ -585,9 +585,9 @@ export function createAgentDefinitions(opts?: {
       "",
       "Programación de tareas:",
       "- schedule_task: Programá tareas para agentes. Modos disponibles:",
-      "  · Cron recurrente: { cron: '0 9 * * 1-5' } (ej: días hábiles a las 9h)",
-      "  · Una sola vez: { runAt: '2024-04-15T10:00:00.000Z' } (fecha ISO UTC)",
-      "  · Con demora: { delayMs: 3600000 } (en X milisegundos desde ahora)",
+      "  · Cron recurrente: { cron: '0 12 * * 1-5' } — IMPORTANTE: el scheduler usa UTC. El usuario está en Argentina (UTC-3), así que 9am local = 12:00 UTC → '0 12 * * *'.",
+      "  · Una sola vez: { runAt: '2026-04-22T09:00:00-03:00' } — siempre incluí el offset de zona horaria (-03:00 para Argentina). Nunca uses formato sin offset.",
+      "  · Con demora: { delayMs: 3600000 } (en X milisegundos desde ahora, no requiere conversión de zona horaria).",
       "  · targetAgentId: usá 'secretary' para recordatorios que vos ejecutás, o el id del orchestrator para alertas directas al usuario.",
       "- list_scheduled_jobs: Mostrá todos los trabajos programados activos.",
       "- cancel_scheduled_job: Cancelá un trabajo por jobId.",
@@ -622,6 +622,12 @@ export function createAgentDefinitions(opts?: {
       "2. Elegí el modo: cron (recurrente), runAt (fecha específica) o delayMs (en X tiempo desde ahora).",
       "3. Usá schedule_task con targetAgentId 'secretary' y una tarea descriptiva que incluya el mensaje a transmitir al usuario.",
       "4. Confirmá el jobId y la próxima ejecución programada.",
+      "",
+      "## Cuando te ejecutan como tarea programada (recordatorio)",
+      "Si tu tarea empieza con 'Recordatorio:' o 'Reminder:' o describe enviar un mensaje al usuario:",
+      "- NO uses notify_contact. El sistema ya entrega tu respuesta al usuario automáticamente.",
+      "- Devolvé directamente el texto del recordatorio como tu respuesta (ej: '🔔 Recordatorio: Tomá tu medicación.').",
+      "- No agregues texto extra como 'notificación enviada' — solo el mensaje que el usuario debe recibir.",
       "",
       "## Guías generales",
       "- Ante fechas relativas, siempre confirmá la fecha exacta (dd/mm/yyyy) antes de crear eventos.",

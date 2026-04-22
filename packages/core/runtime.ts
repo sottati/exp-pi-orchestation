@@ -257,10 +257,21 @@ function isDelegationPlaceholderText(text: string): boolean {
         normalized.includes("delegate") ||
         normalized.includes("delegat") ||
         normalized.includes("delego") ||
-        normalized.includes("deleguÃ©") ||
+        normalized.includes("delegué") ||
         normalized.includes("en cola") ||
         normalized.includes("queued") ||
-        normalized.includes("te aviso")
+        normalized.includes("te aviso") ||
+        // Future-tense variants the model generates after fire-and-forget delegation
+        normalized.includes("avisaré") ||
+        normalized.includes("avisará") ||
+        normalized.includes("notificaré") ||
+        normalized.includes("notificará") ||
+        normalized.includes("informaré") ||
+        normalized.includes("informará") ||
+        normalized.includes("cuando esté list") ||
+        normalized.includes("cuando termine") ||
+        normalized.includes("cuando se complet") ||
+        normalized.includes("cuando finalice")
     );
 }
 
